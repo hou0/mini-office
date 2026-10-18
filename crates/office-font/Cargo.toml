@@ -1,0 +1,11 @@
+[package]
+name = "office-font"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+office-core.workspace = true
+serde.workspace = true
+ttf-parser.workspace = true
+dirs.workspace = true

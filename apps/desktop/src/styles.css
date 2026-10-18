@@ -1,0 +1,112 @@
+@import '../../../packages/design-system/src/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* App-level utility compositions */
+.mo-divider {
+  height: 1px;
+  background: var(--mo-line);
+}
+
+.mo-panel {
+  background: var(--mo-surface);
+  border: 1px solid var(--mo-line);
+  border-radius: var(--mo-radius-lg);
+  box-shadow: var(--mo-shadow-panel);
+}
+
+.mo-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mo-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--mo-text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background var(--mo-motion-fast) ease, border-color var(--mo-motion-fast) ease;
+}
+.mo-toolbar-btn:hover {
+  background: var(--mo-surface-2);
+}
+.mo-toolbar-btn[data-active='true'] {
+  background: var(--mo-accent-soft);
+  color: var(--mo-accent);
+  border-color: color-mix(in srgb, var(--mo-accent) 26%, transparent);
+}
+.mo-toolbar-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.mo-field {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--mo-line-strong);
+  background: var(--mo-surface);
+  color: var(--mo-text-primary);
+  font-size: 12px;
+  transition: border-color var(--mo-motion-fast) ease, box-shadow var(--mo-motion-fast) ease;
+}
+.mo-field:focus {
+  border-color: var(--mo-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mo-accent) 16%, transparent);
+  outline: none;
+}
+
+.mo-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--mo-text-faint) 45%, transparent) transparent;
+}
+.mo-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.mo-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--mo-text-faint) 38%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.mo-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--mo-text-faint) 58%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.mo-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mo-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 20, 33, 0.44);
+  z-index: 60;
+}
+
+/* Ensure printed/exported pages keep exact white paper regardless of theme. */
+.mo-paper {
+  background: #ffffff;
+  color: #1d2939;
+}
+
+@media print {
+  body {
+    overflow: visible;
+    background: #fff;
+  }
+  .mo-no-print {
+    display: none !important;
+  }
+}

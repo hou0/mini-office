@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/desktop/src-tauri",
+  "crates/office-core",
+  "crates/office-ooxml",
+  "crates/office-security",
+  "crates/office-storage",
+  "crates/office-font",
+  "crates/office-pdf",
+  "crates/office-doc",
+  "crates/office-sheet",
+  "crates/office-slides",
+  "crates/office-platform",
+]
+default-members = [
+  "crates/office-core",
+  "crates/office-ooxml",
+  "crates/office-security",
+  "crates/office-storage",
+  "crates/office-font",
+  "crates/office-pdf",
+  "crates/office-doc",
+  "crates/office-sheet",
+  "crates/office-slides",
+  "crates/office-platform",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Mini Office"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"
+dirs = "6"
+ttf-parser = "0.25"
+office-core = { path = "crates/office-core" }
+office-ooxml = { path = "crates/office-ooxml" }
+office-security = { path = "crates/office-security" }
+office-storage = { path = "crates/office-storage" }
+office-font = { path = "crates/office-font" }
+office-pdf = { path = "crates/office-pdf" }
+office-platform = { path = "crates/office-platform" }
+office-doc = { path = "crates/office-doc" }
+office-sheet = { path = "crates/office-sheet" }
+office-slides = { path = "crates/office-slides" }

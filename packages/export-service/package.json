@@ -1,0 +1,14 @@
+{
+  "name": "@mini-office/export-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@mini-office/shared": "workspace:*",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.2",
+    "jszip": "^3.10.1"
+  }
+}

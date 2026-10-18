@@ -1,0 +1,38 @@
+{
+  "name": "mini-office",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "description": "Mini Office — 轻量、离线优先的跨平台办公套件",
+  "scripts": {
+    "dev": "pnpm --filter @mini-office/desktop dev",
+    "build": "pnpm --filter @mini-office/desktop build",
+    "preview": "pnpm --filter @mini-office/desktop preview",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "pnpm --filter @mini-office/desktop tauri",
+    "tauri:dev": "pnpm --filter @mini-office/desktop tauri dev",
+    "tauri:build": "pnpm --filter @mini-office/desktop tauri build",
+    "cargo:test": "cargo test --workspace --exclude mini-office-desktop",
+    "cargo:check": "cargo check --workspace",
+    "verify": "pnpm typecheck && pnpm test && pnpm build",
+    "cargo:verify": "cargo test --workspace",
+    "tauri:check": "pnpm --filter @mini-office/desktop exec tauri build --debug --no-bundle"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^25.0.0",
+    "jszip": "^3.10.2",
+    "playwright-core": "^1.64.1",
+    "postcss": "^8.4.45",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.3",
+    "vitest": "^2.0.5"
+  }
+}

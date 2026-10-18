@@ -1,0 +1,32 @@
+[package]
+name = "mini-office-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Mini Office — 轻量、离线优先的跨平台办公套件"
+
+[lib]
+name = "mini_office_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde.workspace = true
+serde_json.workspace = true
+office-core.workspace = true
+office-ooxml.workspace = true
+office-security.workspace = true
+office-storage.workspace = true
+office-font.workspace = true
+office-pdf.workspace = true
+office-platform.workspace = true
+office-doc.workspace = true
+office-sheet.workspace = true
+office-slides.workspace = true
+uuid.workspace = true
+chrono.workspace = true

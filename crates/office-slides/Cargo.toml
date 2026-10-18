@@ -1,0 +1,10 @@
+[package]
+name = "office-slides"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+office-core.workspace = true
+office-ooxml.workspace = true
+serde.workspace = true

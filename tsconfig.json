@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@mini-office/design-system": ["packages/design-system/src/index.ts"],
+      "@mini-office/shared": ["packages/shared/src/index.ts"],
+      "@mini-office/ui": ["packages/ui/src/index.ts"],
+      "@mini-office/platform-adapter": ["packages/platform-adapter/src/index.ts"],
+      "@mini-office/document-model": ["packages/document-model/src/index.ts"],
+      "@mini-office/ooxml": ["packages/ooxml/src/index.ts"],
+      "@mini-office/editor-shell": ["packages/editor-shell/src/index.ts"],
+      "@mini-office/editor-word": ["packages/editor-word/src/index.ts"],
+      "@mini-office/editor-sheet": ["packages/editor-sheet/src/index.ts"],
+      "@mini-office/editor-slides": ["packages/editor-slides/src/index.ts"],
+      "@mini-office/export-service": ["packages/export-service/src/index.ts"],
+      "@app/*": ["apps/desktop/src/*"]
+    },
+    "types": ["vite/client", "node"]
+  },
+  "include": ["apps/desktop/src", "packages/*/src", "tests", "scripts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "target"]
+}

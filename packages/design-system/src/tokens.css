@@ -1,0 +1,227 @@
+/* Mini Office design tokens — light / dark. */
+:root {
+  --mo-bg: #f6f8fc;
+  --mo-surface: #ffffff;
+  --mo-surface-2: #eef2f9;
+  --mo-surface-3: #e4eaf4;
+  --mo-canvas: #e9edf5;
+  /* Default "mist" palette. Runtime accents override these four variables. */
+  --mo-accent: #2e7d72;
+  --mo-accent-hover: #25665d;
+  --mo-accent-soft: #e6f2ef;
+  --mo-accent-ink: #ffffff;
+  --mo-text-primary: #1d2939;
+  --mo-text-muted: #667085;
+  --mo-text-faint: #98a2b3;
+  --mo-line: #e4e9f2;
+  --mo-line-strong: #cdd5e3;
+  --mo-danger: #d92d20;
+  --mo-danger-soft: #fee4e2;
+  --mo-success: #12b76a;
+  --mo-success-soft: #d1fadf;
+  --mo-warning: #f79009;
+  --mo-warning-soft: #fef0c7;
+
+  --mo-radius-md: 8px;
+  --mo-radius-lg: 12px;
+  --mo-radius-xl: 16px;
+
+  --mo-shadow-panel: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --mo-shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.16), 0 2px 8px rgba(16, 24, 40, 0.08);
+  --mo-shadow-page: 0 1px 2px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.1);
+
+  --mo-motion-fast: 120ms;
+  --mo-motion-base: 180ms;
+
+  --mo-font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', system-ui, sans-serif;
+  --mo-font-doc: 'PingFang SC', 'Songti SC', 'SimSun', 'Microsoft YaHei', 'Noto Sans CJK SC',
+    'Source Han Sans SC', serif;
+  --mo-font-mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Courier New', monospace;
+}
+
+[data-theme='dark'] {
+  --mo-bg: #1c2028;
+  --mo-surface: #262c36;
+  --mo-surface-2: #303641;
+  --mo-surface-3: #3a414e;
+  --mo-canvas: #161a20;
+  --mo-accent: #6cc9bb;
+  --mo-accent-hover: #8adbd0;
+  --mo-accent-soft: #1b3a36;
+  --mo-accent-ink: #10221f;
+  --mo-text-primary: #f2f4f7;
+  --mo-text-muted: #98a2b3;
+  --mo-text-faint: #667085;
+  --mo-line: #333b47;
+  --mo-line-strong: #47505e;
+  --mo-danger: #f97066;
+  --mo-danger-soft: #3d2224;
+  --mo-success: #32d583;
+  --mo-success-soft: #17362a;
+  --mo-warning: #fdb022;
+  --mo-warning-soft: #3b2f18;
+  --mo-shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --mo-shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.48);
+  --mo-shadow-page: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+/*
+ * macOS frosted glass. The native NSVisualEffectView is applied by Tauri;
+ * these tokens only make the web layers translucent enough to reveal it while
+ * keeping text contrast intact. They are intentionally opt-in and cheap.
+ */
+[data-vibrancy='on'] {
+  --mo-bg: rgba(246, 248, 252, 0.72);
+  --mo-surface: rgba(255, 255, 255, 0.8);
+  --mo-surface-2: rgba(238, 242, 249, 0.7);
+  --mo-surface-3: rgba(228, 234, 244, 0.78);
+  --mo-canvas: rgba(233, 237, 245, 0.74);
+  --mo-line: rgba(196, 206, 222, 0.68);
+  --mo-line-strong: rgba(169, 182, 201, 0.82);
+  --mo-shadow-panel: 0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 30px -20px rgba(16, 24, 40, 0.22);
+  --mo-shadow-pop: 0 16px 40px rgba(16, 24, 40, 0.18), 0 2px 8px rgba(16, 24, 40, 0.08);
+}
+
+[data-theme='dark'][data-vibrancy='on'] {
+  --mo-bg: rgba(24, 28, 35, 0.62);
+  --mo-surface: rgba(38, 44, 54, 0.76);
+  --mo-surface-2: rgba(48, 54, 65, 0.7);
+  --mo-surface-3: rgba(58, 65, 78, 0.78);
+  --mo-canvas: rgba(22, 26, 32, 0.72);
+  --mo-line: rgba(94, 106, 124, 0.48);
+  --mo-line-strong: rgba(122, 136, 158, 0.64);
+  --mo-shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --mo-shadow-pop: 0 18px 46px rgba(0, 0, 0, 0.5);
+}
+
+[data-vibrancy='on'] body {
+  background: transparent;
+}
+
+/* Blur is only useful for panels stacked above other app content; the native
+   material already blurs the desktop behind the window itself. */
+[data-vibrancy='on'] .mo-glass {
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  backdrop-filter: blur(22px) saturate(165%);
+}
+
+[data-vibrancy='on'] .mo-scrim {
+  background: rgba(13, 20, 33, 0.32);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* The app shell already paints the translucent base tint; avoid stacking two
+   identical layers on the start page, which would hide the desktop material. */
+[data-vibrancy='on'] .mo-home {
+  background: transparent;
+}
+
+.mo-brand-mark {
+  /* Solid fallback for WebKit versions without color-mix(). */
+  background: var(--mo-accent);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--mo-accent) 76%, white) 0%,
+    var(--mo-accent) 58%,
+    color-mix(in srgb, var(--mo-accent) 82%, black) 100%
+  );
+  color: var(--mo-accent-ink);
+}
+
+* {
+  border-color: var(--mo-line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mo-bg);
+  color: var(--mo-text-primary);
+  font-family: var(--mo-font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--mo-accent) 26%, transparent);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mo-accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--mo-text-muted) 32%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--mo-text-muted) 55%, transparent);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@keyframes mo-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes mo-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes mo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.mo-fade-in {
+  animation: mo-fade-in var(--mo-motion-fast) ease-out;
+}
+.mo-pop-in {
+  animation: mo-pop-in var(--mo-motion-base) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The desktop shell behaves like a native window: no text selection except in documents. */
+.mo-app {
+  user-select: none;
+}
+.mo-selectable {
+  user-select: text;
+}
