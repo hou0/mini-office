@@ -298,6 +298,11 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
             }
           />
         ) : null}
+        {canVibrancy && settings.vibrancy ? (
+          <p className="rounded-md bg-[var(--mo-surface-2)] px-3 py-2 text-[10px] leading-4 text-[var(--mo-text-muted)]">
+            原生磨砂材质在窗口创建时生效。如果刚更新过应用或效果不明显，请完全退出 Mini Office 后重新打开。
+          </p>
+        ) : null}
 
         <Field label="界面语言">
           <Select value={settings.language} onChange={(event) => updateSettings({ language: event.target.value as 'zh-CN' })}>

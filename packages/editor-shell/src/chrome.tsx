@@ -8,6 +8,7 @@ import {
   Monitor,
   Moon,
   MoreHorizontal,
+  Palette,
   Plus,
   Presentation,
   Search,
@@ -23,9 +24,10 @@ import {
   MOD_KEY,
   OFFICE_META,
   formatDateTime,
+  type AccentId,
   type OfficeKind,
 } from '@mini-office/shared';
-import { applyAppearance, resolveTheme } from '@mini-office/design-system';
+import { ACCENT_PRESETS, applyAppearance, resolveTheme } from '@mini-office/design-system';
 import {
   isTauriRuntime,
   startWindowDrag,
@@ -69,6 +71,14 @@ export function TitleBar({
   };
   const toggleTheme = () => {
     applyThemeMode(currentTheme === 'dark' ? 'light' : 'dark');
+  };
+  const applyAccentMode = (accent: AccentId) => {
+    applyAppearance({
+      theme: settings.theme,
+      accent,
+      customAccent: settings.customAccent,
+    });
+    updateSettings({ accent });
   };
 
   const nativeOverlay =
@@ -123,6 +133,50 @@ export function TitleBar({
           {currentTheme === 'dark' ? <Moon size={15} /> : <Sun size={15} />}
         </IconButton>
       </Tooltip>
+      <Dropdown
+        align="right"
+        minWidth={190}
+        items={[
+          { type: 'label', label: '主题色' },
+          ...ACCENT_PRESETS.map((preset) => ({
+            id: `accent-${preset.id}`,
+            label: preset.label,
+            icon: (
+              <span
+                className="h-3.5 w-3.5 rounded-full ring-1 ring-black/10"
+                style={{ background: preset[currentTheme].accent }}
+              />
+            ),
+            checked: settings.accent === preset.id,
+            onSelect: () => applyAccentMode(preset.id),
+          })),
+          { type: 'separator' },
+          {
+            id: 'accent-custom',
+            label: '自定义主题色…',
+            icon: <Palette size={14} />,
+            shortcut: `${MOD_KEY},`,
+            onSelect: () => openDialog({ type: 'settings' }),
+          },
+          { type: 'separator' },
+          ...(canVibrancy
+            ? [
+                {
+                  id: 'vibrancy',
+                  label: '毛玻璃效果',
+                  icon: <Layers size={14} />,
+                  checked: settings.vibrancy,
+                  onSelect: () => updateSettings({ vibrancy: !settings.vibrancy }),
+                },
+              ]
+            : []),
+        ]}
+        trigger={({ toggle }) => (
+          <IconButton label="主题色" onClick={toggle}>
+            <Palette size={15} />
+          </IconButton>
+        )}
+      />
       <Dropdown
         align="right"
         minWidth={190}
