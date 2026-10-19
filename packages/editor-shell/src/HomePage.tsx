@@ -1,3 +1,4 @@
+import { BrandIcon } from '@mini-office/ui';
 import { useMemo, useState } from 'react';
 import {
   ArrowRight,
@@ -375,18 +376,9 @@ export function HomePage() {
   );
 }
 
+/** 功能：首页复用正式品牌图标；时间：2026-10-18；作者：lq。 */
 function LogoMark({ size = 34 }: { size?: number }) {
-  return (
-    <span
-      className="mo-brand-mark relative inline-flex items-center justify-center rounded-[10px] shadow-sm"
-      style={{ width: size, height: size }}
-    >
-      <span className="font-semibold" style={{ fontSize: size * 0.46 }}>
-        M
-      </span>
-      <span className="absolute right-[5px] top-[5px] h-1 w-1 rounded-full bg-white/80" />
-    </span>
-  );
+  return <BrandIcon size={size} />;
 }
 
 function CreateCard({

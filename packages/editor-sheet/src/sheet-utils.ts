@@ -11,6 +11,7 @@ import { columnLabel, parseCellAddress, uid } from '@mini-office/shared';
 import { formatCellValue, isDateFormat } from './format';
 import { dateToSerial, parseDateInput } from './dates';
 import { translateFormula } from './formula/parser';
+import { editWorkbookReferences, moveSortedFormula } from './formula/references';
 
 export interface CellCoord {
   row: number;
@@ -322,7 +323,12 @@ export function usedRange(sheet: SheetModel): CellRange {
 }
 
 export function insertRows(workbook: WorkbookModel, sheetId: string, at: number, count = 1): WorkbookModel {
-  return updateSheet(workbook, sheetId, (sheet) => {
+  // 功能：先维护全工作簿引用，再移动单元格；时间：2026-10-18；作者：lq。
+  if (!Number.isInteger(at) || at < 0 || !Number.isInteger(count) || count < 1) return workbook;
+  const target = getSheet(workbook, sheetId);
+  if (!target) return workbook;
+  const adjusted = editWorkbookReferences(workbook, { kind: 'rows', sheet: target.name, at, count, deleting: false });
+  return updateSheet(adjusted, sheetId, (sheet) => {
     const cells: SheetModel['cells'] = {};
     for (const [key, cell] of Object.entries(sheet.cells)) {
       const [row, col] = key.split(':').map(Number);
@@ -365,7 +371,12 @@ export function insertRows(workbook: WorkbookModel, sheetId: string, at: number,
 
 export function deleteRows(workbook: WorkbookModel, sheetId: string, at: number, count = 1): WorkbookModel {
   const end = at + count - 1;
-  return updateSheet(workbook, sheetId, (sheet) => {
+  // 功能：先维护全工作簿引用，再移动单元格；时间：2026-10-18；作者：lq。
+  if (!Number.isInteger(at) || at < 0 || !Number.isInteger(count) || count < 1) return workbook;
+  const target = getSheet(workbook, sheetId);
+  if (!target) return workbook;
+  const adjusted = editWorkbookReferences(workbook, { kind: 'rows', sheet: target.name, at, count, deleting: true });
+  return updateSheet(adjusted, sheetId, (sheet) => {
     const cells: SheetModel['cells'] = {};
     for (const [key, cell] of Object.entries(sheet.cells)) {
       const [row, col] = key.split(':').map(Number);
@@ -414,7 +425,12 @@ export function deleteRows(workbook: WorkbookModel, sheetId: string, at: number,
 }
 
 export function insertColumns(workbook: WorkbookModel, sheetId: string, at: number, count = 1): WorkbookModel {
-  return updateSheet(workbook, sheetId, (sheet) => {
+  // 功能：先维护全工作簿引用，再移动单元格；时间：2026-10-18；作者：lq。
+  if (!Number.isInteger(at) || at < 0 || !Number.isInteger(count) || count < 1) return workbook;
+  const target = getSheet(workbook, sheetId);
+  if (!target) return workbook;
+  const adjusted = editWorkbookReferences(workbook, { kind: 'columns', sheet: target.name, at, count, deleting: false });
+  return updateSheet(adjusted, sheetId, (sheet) => {
     const cells: SheetModel['cells'] = {};
     for (const [key, cell] of Object.entries(sheet.cells)) {
       const [row, col] = key.split(':').map(Number);
@@ -453,7 +469,12 @@ export function insertColumns(workbook: WorkbookModel, sheetId: string, at: numb
 
 export function deleteColumns(workbook: WorkbookModel, sheetId: string, at: number, count = 1): WorkbookModel {
   const end = at + count - 1;
-  return updateSheet(workbook, sheetId, (sheet) => {
+  // 功能：先维护全工作簿引用，再移动单元格；时间：2026-10-18；作者：lq。
+  if (!Number.isInteger(at) || at < 0 || !Number.isInteger(count) || count < 1) return workbook;
+  const target = getSheet(workbook, sheetId);
+  if (!target) return workbook;
+  const adjusted = editWorkbookReferences(workbook, { kind: 'columns', sheet: target.name, at, count, deleting: true });
+  return updateSheet(adjusted, sheetId, (sheet) => {
     const cells: SheetModel['cells'] = {};
     for (const [key, cell] of Object.entries(sheet.cells)) {
       const [row, col] = key.split(':').map(Number);
@@ -681,9 +702,10 @@ export function sortRange(
   ascending: boolean,
 ): WorkbookModel {
   const normalized = normalizeRange(range);
-  const rows: Array<{ cells: Array<{ col: number; cell: Cell | undefined }>; key: string | number }> = [];
+  // 功能：记录原始行号，排序后同步平移相对公式；时间：2026-10-18；作者：lq。
+  const rows: Array<{ row: number; cells: Array<{ col: number; cell: Cell | undefined }>; key: string | number }> = [];
   for (let row = normalized.r1; row <= normalized.r2; row += 1) {
-    const entry = { cells: [] as Array<{ col: number; cell: Cell | undefined }>, key: 0 as string | number };
+    const entry = { row, cells: [] as Array<{ col: number; cell: Cell | undefined }>, key: 0 as string | number };
     for (let col = normalized.c1; col <= normalized.c2; col += 1) {
       const cell = sheet.cells[cellKey(row, col)];
       entry.cells.push({ col, cell });
@@ -705,7 +727,10 @@ export function sortRange(
   const updates: CellUpdate[] = [];
   rows.forEach((entry, rowOffset) => {
     entry.cells.forEach(({ col, cell }) => {
-      updates.push({ row: normalized.r1 + rowOffset, col, cell: cell ?? null });
+      const row = normalized.r1 + rowOffset;
+      updates.push({ row, col, cell: cell?.formula
+        ? { ...cell, formula: moveSortedFormula(cell.formula, row - entry.row) }
+        : cell ?? null });
     });
   });
   return applyCellUpdates(workbook, sheet.id, updates);
@@ -777,16 +802,31 @@ export function nextSheetName(workbook: WorkbookModel): string {
 }
 
 export function renameSheet(workbook: WorkbookModel, sheetId: string, name: string): WorkbookModel {
-  return updateSheet(workbook, sheetId, (sheet) => ({ ...sheet, name: name.trim() || sheet.name }));
+  // 功能：验证名称唯一性并维护跨表公式；时间：2026-10-18；作者：lq。
+  const target = getSheet(workbook, sheetId);
+  const nextName = name.trim();
+  if (!target || nextName === target.name) return workbook;
+  if (!nextName || nextName.length > 31 || /[\[\]:*?/\\]/.test(nextName) || /^'|'$/.test(nextName)) {
+    throw new Error('工作表名应为 1–31 个字符，不能包含 []:*?/\\ 或以单引号开头、结尾。');
+  }
+  if (workbook.sheets.some((sheet) => sheet.id !== sheetId && sheet.name.toLowerCase() === nextName.toLowerCase())) {
+    throw new Error('工作表名称已存在。');
+  }
+  const adjusted = editWorkbookReferences(workbook, { kind: 'rename', sheet: target.name, name: nextName });
+  return updateSheet(adjusted, sheetId, (sheet) => ({ ...sheet, name: nextName }));
 }
 
 export function deleteSheet(workbook: WorkbookModel, sheetId: string): WorkbookModel {
   if (workbook.sheets.length <= 1) return workbook;
-  const sheets = workbook.sheets
+  // 功能：删除工作表后将相关跨表引用标记为 REF；时间：2026-10-18；作者：lq。
+  const target = getSheet(workbook, sheetId);
+  if (!target) return workbook;
+  const adjusted = editWorkbookReferences(workbook, { kind: 'delete-sheet', sheet: target.name });
+  const sheets = adjusted.sheets
     .filter((sheet) => sheet.id !== sheetId)
     .map((sheet, index) => ({ ...sheet, order: index }));
   return {
-    ...workbook,
+    ...adjusted,
     sheets,
     activeSheetId: workbook.activeSheetId === sheetId ? sheets[0].id : workbook.activeSheetId,
   };

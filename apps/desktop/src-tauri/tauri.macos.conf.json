@@ -17,5 +17,46 @@
         "hiddenTitle": true
       }
     ]
+  },
+  "bundle": {
+    "fileAssociations": [
+      {
+        "ext": [
+          "docx",
+          "dotx"
+        ],
+        "name": "Word 文档",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "xlsx",
+          "csv"
+        ],
+        "name": "电子表格",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "pptx",
+          "potx"
+        ],
+        "name": "PowerPoint 演示文稿",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "docm",
+          "xlsm",
+          "pptm"
+        ],
+        "name": "含宏 Office 文档（只读）",
+        "role": "Viewer",
+        "rank": "Alternate"
+      }
+    ]
   }
 }

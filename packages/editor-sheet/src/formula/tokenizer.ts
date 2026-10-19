@@ -19,7 +19,8 @@ export type Token =
   | { type: 'string'; value: string; pos: number }
   | { type: 'boolean'; value: boolean; pos: number }
   | { type: 'error'; value: string; pos: number }
-  | { type: 'ref'; value: CellReferenceToken; pos: number }
+  // 功能：保留引用的原文结束位置，避免结构编辑改写其他公式文本；时间：2026-10-18；作者：lq。
+  | { type: 'ref'; value: CellReferenceToken; pos: number; end: number }
   | { type: 'name'; value: string; pos: number }
   | { type: 'op'; value: string; pos: number }
   | { type: 'lparen'; pos: number }
@@ -102,6 +103,7 @@ export class FormulaTokenizer {
     }
 
     const rest = input.slice(position);
+    // 功能：列字母前的 $ 锁定列，行号前的 $ 锁定行；时间：2026-10-18；作者：lq。
     const cell = CELL_PATTERN.exec(rest);
     if (cell) {
       let end = position + cell[0].length;
@@ -114,12 +116,12 @@ export class FormulaTokenizer {
         return {
           token: {
             sheet,
-            rowAbs1: cell[1] === '$',
-            colAbs1: cell[3] === '$',
+            rowAbs1: cell[3] === '$',
+            colAbs1: cell[1] === '$',
             r1: Number(cell[4]) - 1,
             c1: columnToIndex(cell[2]),
-            rowAbs2: rangeTail[1] === '$',
-            colAbs2: rangeTail[3] === '$',
+            rowAbs2: rangeTail[3] === '$',
+            colAbs2: rangeTail[1] === '$',
             r2: Number(rangeTail[4]) - 1,
             c2: columnToIndex(rangeTail[2]),
           },
@@ -132,14 +134,14 @@ export class FormulaTokenizer {
       return {
         token: {
           sheet,
-          rowAbs1: cell[1] === '$',
-          colAbs1: cell[3] === '$',
+          rowAbs1: cell[3] === '$',
+          colAbs1: cell[1] === '$',
           r1: Number(cell[4]) - 1,
           c1: columnToIndex(cell[2]),
           r2: Number(cell[4]) - 1,
           c2: columnToIndex(cell[2]),
-          rowAbs2: cell[1] === '$',
-          colAbs2: cell[3] === '$',
+          rowAbs2: cell[3] === '$',
+          colAbs2: cell[1] === '$',
         },
         end,
       };
@@ -250,7 +252,7 @@ export class FormulaTokenizer {
     const reference = this.tryRef(start);
     if (reference) {
       this.position = reference.end;
-      return { type: 'ref', value: reference.token, pos: start };
+      return { type: 'ref', value: reference.token, pos: start, end: reference.end };
     }
 
     const number = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(input.slice(start));

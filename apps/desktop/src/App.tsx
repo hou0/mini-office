@@ -1,9 +1,11 @@
+import { BrandIcon } from '@mini-office/ui';
 import { useEffect } from 'react';
 import { useWorkspaceStore } from '@mini-office/document-model';
 import {
   applyWindowVibrancy,
   isTauriRuntime,
   supportsWindowVibrancy,
+  watchDesktopFiles,
 } from '@mini-office/platform-adapter';
 import { AppShell } from '@mini-office/editor-shell';
 import { applyAppearance } from '@mini-office/design-system';
@@ -70,12 +72,23 @@ export default function App() {
     };
   }, [openPath]);
 
+  // 功能：工作区初始化后领取访达双击文件，监听注册失败时明确提示；时间：2026-10-18；作者：lq。
+  useEffect(() => {
+    if (!hydrated || !isTauriRuntime()) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void watchDesktopFiles(openPath).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    }).catch((error) => useWorkspaceStore.getState().notify('error', '文件关联监听失败', String(error)));
+    return () => { disposed = true; stop?.(); };
+  }, [hydrated, openPath]);
+
   if (!hydrated) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--mo-bg)]">
-        <div className="mo-brand-mark flex h-14 w-14 items-center justify-center rounded-2xl text-[24px] font-semibold shadow-pop">
-          M
-        </div>
+        {/* 功能：启动页显示正式品牌图标；时间：2026-10-18；作者：lq。 */}
+        <BrandIcon size={64} />
         <div className="text-[13px] font-medium text-[var(--mo-text-primary)]">Mini Office</div>
         <div className="flex items-center gap-2 text-[11px] text-[var(--mo-text-muted)]">
           <span className="h-3 w-3 animate-[mo-spin_0.9s_linear_infinite] rounded-full border-2 border-[var(--mo-line-strong)] border-t-[var(--mo-accent)]" />

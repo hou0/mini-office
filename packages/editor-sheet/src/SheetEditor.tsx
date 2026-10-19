@@ -369,18 +369,25 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     }
   }, [active.col, active.row, commit, latestWorkbook, sheet]);
 
+  /** 功能：结构变更无法安全维护引用时保留原文档并提示原因；时间：2026-10-18；作者：lq。 */
+  const changeStructure = useCallback((change: () => void) => {
+    try { change(); } catch (error) {
+      notify('warning', '未执行结构变更', error instanceof Error ? error.message : String(error));
+    }
+  }, [notify]);
+
   const insertRow = useCallback(() => {
-    commit(insertRows(latestWorkbook(), sheet.id, active.row, 1), { key: 'structure' });
-  }, [active.row, commit, latestWorkbook, sheet.id]);
+    changeStructure(() => commit(insertRows(latestWorkbook(), sheet.id, active.row, 1), { key: 'structure' }));
+  }, [active.row, changeStructure, commit, latestWorkbook, sheet.id]);
   const deleteRow = useCallback(() => {
-    commit(deleteRows(latestWorkbook(), sheet.id, active.row, 1), { key: 'structure' });
-  }, [active.row, commit, latestWorkbook, sheet.id]);
+    changeStructure(() => commit(deleteRows(latestWorkbook(), sheet.id, active.row, 1), { key: 'structure' }));
+  }, [active.row, changeStructure, commit, latestWorkbook, sheet.id]);
   const insertColumn = useCallback(() => {
-    commit(insertColumns(latestWorkbook(), sheet.id, active.col, 1), { key: 'structure' });
-  }, [active.col, commit, latestWorkbook, sheet.id]);
+    changeStructure(() => commit(insertColumns(latestWorkbook(), sheet.id, active.col, 1), { key: 'structure' }));
+  }, [active.col, changeStructure, commit, latestWorkbook, sheet.id]);
   const deleteColumn = useCallback(() => {
-    commit(deleteColumns(latestWorkbook(), sheet.id, active.col, 1), { key: 'structure' });
-  }, [active.col, commit, latestWorkbook, sheet.id]);
+    changeStructure(() => commit(deleteColumns(latestWorkbook(), sheet.id, active.col, 1), { key: 'structure' }));
+  }, [active.col, changeStructure, commit, latestWorkbook, sheet.id]);
 
   const sortByActive = useCallback(
     (ascending: boolean) => {
@@ -400,10 +407,12 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         notify('warning', '无法排序', '排序区域包含合并单元格，请先取消合并。');
         return;
       }
-      commit(sortRange(current, currentSheet, target, active.col, ascending), { key: 'sort' });
-      notify('success', ascending ? '已按当前列升序排序' : '已按当前列降序排序');
+      changeStructure(() => {
+        commit(sortRange(current, currentSheet, target, active.col, ascending), { key: 'sort' });
+        notify('success', ascending ? '已按当前列升序排序' : '已按当前列降序排序');
+      });
     },
-    [active.col, commit, latestWorkbook, notify, range, sheet],
+    [active.col, changeStructure, commit, latestWorkbook, notify, range, sheet],
   );
 
   const openFilter = useCallback(() => {
@@ -676,17 +685,19 @@ export function SheetEditor({ session }: { session: SheetSession }) {
 
   const confirmSheetDialog = useCallback(() => {
     if (!sheetDialog) return;
-    if (sheetDialog.type === 'rename') {
-      commit(renameSheet(latestWorkbook(), sheetDialog.sheetId, sheetDialog.name), { key: 'rename-sheet' });
-    } else {
-      const next = deleteSheet(latestWorkbook(), sheetDialog.sheetId);
-      commit(next);
-      if (sheetDialog.sheetId === sheet.id) {
-        setSheetId(next.sheets[0].id);
+    changeStructure(() => {
+      if (sheetDialog.type === 'rename') {
+        commit(renameSheet(latestWorkbook(), sheetDialog.sheetId, sheetDialog.name), { key: 'rename-sheet' });
+      } else {
+        const next = deleteSheet(latestWorkbook(), sheetDialog.sheetId);
+        commit(next);
+        if (sheetDialog.sheetId === sheet.id) {
+          setSheetId(next.sheets[0].id);
+        }
       }
-    }
-    setSheetDialog(null);
-  }, [commit, latestWorkbook, sheetDialog, sheet.id]);
+      setSheetDialog(null);
+    });
+  }, [changeStructure, commit, latestWorkbook, sheetDialog, sheet.id]);
 
   const openExport = useCallback(() => {
     setExportState({ open: true, name: `${stripExtension(session.displayName)}.pdf`, progress: null, busy: false });

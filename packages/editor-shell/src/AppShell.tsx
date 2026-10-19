@@ -18,6 +18,8 @@ import {
 import { CommandPalette } from './CommandPalette';
 import { WorkspaceDialogs } from './dialogs';
 import { HomePage } from './HomePage';
+import { watchDesktopClose, finishDesktopClose } from '@mini-office/platform-adapter';
+import { confirmWorkspaceClose, type CloseChoice } from './close-workspace';
 
 export function AppShell() {
   const sessions = useWorkspaceStore((state) => state.sessions);
@@ -45,6 +47,56 @@ export function AppShell() {
   const [dragging, setDragging] = useState(false);
   const previousActive = useRef<string | null>(activeId);
   const dragDepth = useRef(0);
+  // 功能：复用保存弹窗处理整个应用退出，阻止重复退出请求；时间：2026-10-18；作者：lq。
+  const nativeCloseRunning = useRef(false);
+  const nativeCloseChoice = useRef<((choice: CloseChoice) => void) | null>(null);
+
+  const cancelClose = useCallback(() => {
+    if (useWorkspaceStore.getState().sessions[closeRequestId ?? '']?.state === 'SAVING') return;
+    nativeCloseChoice.current?.('cancel');
+    nativeCloseChoice.current = null;
+    setCloseRequestId(null);
+  }, [closeRequestId]);
+
+  // 功能：关窗、程序坞退出和 Cmd+Q 逐份确认，保存失败和取消均保留窗口；时间：2026-10-18；作者：lq。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const request = async () => {
+      if (nativeCloseRunning.current) return;
+      nativeCloseRunning.current = true;
+      try {
+        const approved = await confirmWorkspaceClose(
+          () => Object.values(useWorkspaceStore.getState().sessions),
+          (session) => new Promise<CloseChoice>((resolve) => {
+            nativeCloseChoice.current = resolve;
+            setCloseRequestId(session.id);
+          }),
+          async (id) => {
+            setClosing(true);
+            try { return await useWorkspaceStore.getState().saveSession(id); }
+            finally { setClosing(false); }
+          },
+        );
+        if (approved && !disposed) await finishDesktopClose();
+      } catch (error) {
+        useWorkspaceStore.getState().notify('error', '暂未退出应用', String(error));
+      } finally {
+        nativeCloseRunning.current = false;
+        nativeCloseChoice.current = null;
+        setCloseRequestId(null);
+      }
+    };
+    void watchDesktopClose(() => { void request(); }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((error) => useWorkspaceStore.getState().notify('error', '退出保护监听失败', String(error)));
+    return () => {
+      disposed = true;
+      unlisten?.();
+      nativeCloseChoice.current?.('cancel');
+    };
+  }, []);
 
   const activeSession = activeId ? sessions[activeId] : undefined;
   const closeRequestSession = closeRequestId ? sessions[closeRequestId] : undefined;
@@ -157,7 +209,7 @@ export function AppShell() {
           return;
         }
         if (closeRequestId) {
-          setCloseRequestId(null);
+          cancelClose();
           return;
         }
       }
@@ -187,20 +239,36 @@ export function AppShell() {
     setCommandPalette,
     tabOrder,
     requestClose,
+    cancelClose,
   ]);
 
   const discardAndClose = async () => {
     if (!closeRequestId) return;
+    // 功能：应用退出时暂存逐份选择，全部确认前不移除任何标签；时间：2026-10-18；作者：lq。
+    if (closing) return;
+    if (nativeCloseChoice.current) {
+      nativeCloseChoice.current('discard');
+      nativeCloseChoice.current = null;
+      setCloseRequestId(null);
+      return;
+    }
     await closeTab(closeRequestId, true);
     setCloseRequestId(null);
   };
 
   const saveAndClose = async () => {
     if (!closeRequestId) return;
+    if (closing) return;
+    if (nativeCloseChoice.current) {
+      nativeCloseChoice.current('save');
+      nativeCloseChoice.current = null;
+      setCloseRequestId(null);
+      return;
+    }
     setClosing(true);
     const saved = await saveSession(closeRequestId);
     setClosing(false);
-    if (saved) {
+    if (saved && !useWorkspaceStore.getState().sessions[closeRequestId]?.dirty) {
       await closeTab(closeRequestId, true);
       setCloseRequestId(null);
     }
@@ -285,7 +353,7 @@ export function AppShell() {
         <CloseConfirmDialog
           session={closeRequestSession}
           saving={closing}
-          onCancel={() => setCloseRequestId(null)}
+          onCancel={cancelClose}
           onDiscard={() => void discardAndClose()}
           onSave={() => void saveAndClose()}
         />

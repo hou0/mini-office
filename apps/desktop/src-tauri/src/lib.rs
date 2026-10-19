@@ -4,11 +4,49 @@ use office_storage::{
 };
 use serde::Serialize;
 use std::path::Path;
-use tauri::{Manager, State};
+use std::sync::{atomic::{AtomicBool, Ordering}, Mutex};
+use tauri::{Emitter, Manager, State};
 
 struct AppState {
     recent: RecentStore,
     recovery: RecoveryStore,
+    // 功能：在前端就绪前暂存系统文件事件，并统一保护窗口关闭和退出；时间：2026-10-18；作者：lq。
+    pending_files: Mutex<Vec<String>>,
+    close_authorized: AtomicBool,
+}
+
+/// 功能：原子领取待打开文件，避免冷启动时系统事件先于页面监听而丢失；时间：2026-10-18；作者：lq。
+#[tauri::command]
+fn take_pending_files(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let mut pending = state.pending_files.lock().map_err(|error| error.to_string())?;
+    Ok(std::mem::take(&mut *pending))
+}
+
+/// 功能：前端逐份完成保存确认后允许应用退出；时间：2026-10-18；作者：lq。
+#[tauri::command]
+fn confirm_app_close(app: tauri::AppHandle, state: State<'_, AppState>) {
+    state.close_authorized.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// 功能：接收 macOS 文件 URL 并唤醒应用，中文与空格路径由 URL 库解码；时间：2026-10-18；作者：lq。
+#[cfg(target_os = "macos")]
+fn queue_open_files(app: &tauri::AppHandle, urls: Vec<tauri::Url>) {
+    let state = app.state::<AppState>();
+    if let Ok(mut pending) = state.pending_files.lock() {
+        for url in urls {
+            let Ok(path) = url.to_file_path() else { continue };
+            if !path.is_file() { continue; }
+            let path = path.canonicalize().unwrap_or(path).to_string_lossy().into_owned();
+            if !pending.contains(&path) { pending.push(path); }
+        }
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit("mo:open-files", ());
 }
 
 #[derive(Debug, Serialize)]
@@ -193,6 +231,8 @@ pub fn run() {
             let state = AppState {
                 recent: RecentStore::open(&app_data)?,
                 recovery: RecoveryStore::open(&app_data)?,
+                pending_files: Mutex::new(Vec::new()),
+                close_authorized: AtomicBool::new(false),
             };
             app.manage(state);
             Ok(())
@@ -211,8 +251,30 @@ pub fn run() {
             recovery_load,
             recovery_delete,
             export_pdf,
-            print_window
+            print_window,
+            take_pending_files,
+            confirm_app_close
         ])
-        .run(tauri::generate_context!())
-        .expect("Mini Office failed to start");
+        .build(tauri::generate_context!())
+        .expect("Mini Office failed to start")
+        .run(|app, event| {
+            // 功能：原生关窗和 Cmd+Q 均等待前端保存确认，不直接结束进程；时间：2026-10-18；作者：lq。
+            match event {
+                tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => {
+                    if !app.state::<AppState>().close_authorized.load(Ordering::SeqCst) {
+                        api.prevent_close();
+                        let _ = app.emit("mo:request-close", ());
+                    }
+                }
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !app.state::<AppState>().close_authorized.load(Ordering::SeqCst) {
+                        api.prevent_exit();
+                        let _ = app.emit("mo:request-close", ());
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Opened { urls } => queue_open_files(app, urls),
+                _ => {}
+            }
+        });
 }

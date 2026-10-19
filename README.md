@@ -77,7 +77,7 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 当前验证结果：
 
 - `tsc --noEmit`：通过
-- Vitest：36 个测试全部通过（公式引擎、主题/强调色对比度、OOXML、XLSX 往返、真实 DOCX/XLSX/PPTX 兼容样例）
+- Vitest：69 个测试全部通过（公式引擎、主题/强调色对比度、OOXML、XLSX 往返、真实 DOCX/XLSX/PPTX 兼容样例）
 - `cargo test --workspace`：19 个 Rust 测试全部通过
 - `vite build`：通过
 - Tauri 2 debug 二进制与 `.app` bundle：构建通过（`target/debug/bundle/macos/Mini Office.app`）
@@ -86,6 +86,14 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
   Word/Excel/PPT 的 PDF 导出与 PPT 图片 ZIP 导出均已实际生成文件
 - 浏览器实测：PPT 进入/退出系统全屏、弹窗在 750px 小窗口无横向溢出、工具栏颜色/下拉菜单与悬停提示可用
 - 桌面能力：窗口拖动、原生打印、原生全屏与毛玻璃效果已接入；其中原生毛玻璃/打印对话框仍需 macOS 实机视觉验收
+
+### macOS 默认文档打开
+
+已接入文档关联和访达文件打开事件，并为原生关窗/Cmd+Q 添加逐份保存确认。默认应用需要用户在访达“显示简介 → 打开方式 → 全部更改”中设置，无需付费开发者证书。无证书不免除首次启动的系统安全检查。
+
+本轮实现、构建证据及待验收范围见 [macOS 文档关联与安全退出](docs/macos-file-associations.md)。
+
+关于页现显示“非人类程序出品”，正式图标已统一接入；Word 支持跨段、跨页选择和正文全选。验证记录见 [Word 选区与品牌更新](docs/word-selection-and-brand.md)。
 
 ## 功能完成情况
 

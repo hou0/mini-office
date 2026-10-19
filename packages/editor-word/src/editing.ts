@@ -496,3 +496,17 @@ export function selectRangeByOffset(
   }
 }
 
+
+/** 功能：将跨段落 DOM 选区转换为各段原子偏移，不包含页眉页脚；时间：2026-10-18；作者：lq。 */
+export function selectedParagraphSlices(root: HTMLElement, range: Range): Array<{ paragraphId: string; start: number; end: number }> {
+  if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return [];
+  const slices: Array<{ paragraphId: string; start: number; end: number }> = [];
+  root.querySelectorAll<HTMLElement>('[data-paragraph-id]').forEach((element) => {
+    if (!range.intersectsNode(element)) return;
+    const start = element.contains(range.startContainer) ? offsetAt(element, range.startContainer, range.startOffset) : 0;
+    const end = element.contains(range.endContainer) ? offsetAt(element, range.endContainer, range.endOffset)
+      : offsetAt(element, element, element.childNodes.length);
+    if (end > start || !element.textContent) slices.push({ paragraphId: element.dataset.paragraphId!, start, end });
+  });
+  return slices;
+}

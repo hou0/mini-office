@@ -8,7 +8,7 @@
 pnpm test
 ```
 
-环境：Vitest 2 + jsdom。当前基线：**6 个测试文件 / 36 项通过**。覆盖：
+环境：Vitest 2 + jsdom。当前基线：**11 个测试文件 / 69 项通过**。覆盖：
 
 | 文件 | 内容 |
 |---|---|
@@ -17,6 +17,11 @@ pnpm test
 | `tests/office-fixtures.test.ts` | 真实 DOCX 合同、XLSX 工作簿的解析与保存；页眉页脚/图片/表格；工作簿样式与公式缓存 |
 | `tests/pptx.test.ts` | 真实 PPTX 的主题、形状、图片、表格、备注与标题推导 |
 | `tests/ooxml.test.ts` | 空白 DOCX/XLSX 往返、宏文档 L1、分页、CSV 引号、行列插入、排序/筛选 |
+| `tests/structure-references.test.ts` | 插删行列、跨表引用、命名区域、更名/删除工作表、排序及保存重开 |
+| `tests/close-workspace.test.ts` | 多文档退出、保存失败/取消、确认期间再次编辑 |
+| `tests/desktop-events.test.ts` | 冷启动队列、运行中多文件串行打开、退出桥接、Web 回退 |
+| `tests/save-lifecycle.test.ts` | 保存时继续编辑、重复保存拦截、打开已有路径保留未保存内容 |
+| `tests/word-selection.test.ts` | 跨段偏移、纯文本/富文本复制、替换/删除/多行粘贴、表格保护 |
 | `tests/theme.test.ts` | 主题色预设与深色变体、自定义色派生、对比度、CSS 变量落盘、默认设置 |
 
 ### Rust

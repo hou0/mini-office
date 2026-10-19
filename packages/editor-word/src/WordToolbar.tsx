@@ -18,15 +18,17 @@ import {
   Redo2,
   Search,
   Strikethrough,
-  Table2,
   Underline,
   Undo2,
   ZoomIn,
   PanelRight,
   Scissors,
+  Highlighter,
+  Baseline,
 } from 'lucide-react';
 import { ColorField, Dropdown, IconButton, Kbd, Select, Tooltip } from '@mini-office/ui';
 import type { MenuItem } from '@mini-office/ui';
+import { TablePicker } from './TablePicker';
 
 const FONT_SIZES = [9, 10.5, 11, 12, 14, 16, 18, 22, 24, 28, 36, 48];
 
@@ -46,7 +48,8 @@ export interface WordToolbarProps {
   onColorFormat: (patch: Partial<RunStyle>, kind: 'color' | 'highlight') => void;
   onFontFormat: (patch: Partial<RunStyle>) => void;
   onParagraphFormat: (patch: Partial<ParagraphStyle>) => void;
-  onInsertTable: () => void;
+  /** 功能：按选择的行列数插入表格；时间：2026-10-19；作者：lq。 */
+  onInsertTable: (rows: number, columns: number) => void;
   onInsertImage: () => void;
   onPageBreak: () => void;
   onUndo: () => void;
@@ -198,12 +201,19 @@ export function WordToolbar(props: WordToolbarProps) {
         <Strikethrough size={15} />
       </IconButton>
       <ColorField
+        // 功能：用文字及荧光笔图标区分颜色工具并显示当前色条；时间：2026-10-19；作者：lq。
         label="字体颜色"
+        icon={<Baseline size={16} />}
+        indicatorColor={activeStyle.color ?? '#1D2939'}
+        disabled={readonly}
         value={activeStyle.color}
         onChange={(color) => props.onColorFormat({ color }, 'color')}
       />
       <ColorField
-        label="突出显示"
+        label="文本背景颜色（突出显示）"
+        icon={<Highlighter size={16} />}
+        indicatorColor={activeStyle.highlight ?? 'transparent'}
+        disabled={readonly}
         value={activeStyle.highlight}
         onChange={(color) => props.onColorFormat({ highlight: color }, 'highlight')}
       />
@@ -293,9 +303,7 @@ export function WordToolbar(props: WordToolbarProps) {
       <IconButton label="编号" disabled={readonly} onClick={props.onAddNumbering}>
         <span className="text-[11px] font-semibold">1.</span>
       </IconButton>
-      <IconButton label="插入表格" disabled={readonly} onClick={props.onInsertTable}>
-        <Table2 size={15} />
-      </IconButton>
+      <TablePicker disabled={readonly} onInsert={props.onInsertTable} />
       <IconButton label="插入图片" disabled={readonly} onClick={props.onInsertImage}>
         <ImagePlus size={15} />
       </IconButton>

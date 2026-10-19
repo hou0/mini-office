@@ -60,6 +60,8 @@ const sourceBuffers = new Map<string, Uint8Array>();
 const fileHandles = new Map<string, FileSystemFileHandle>();
 const snapshotTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const snapshotInFlight = new Set<string>();
+// 功能：独立记录写盘任务，避免编辑状态改变后重复发起保存；时间：2026-10-18；作者：lq。
+const saveInFlight = new Set<string>();
 
 export function registerFormatHandler(handler: AnyFormatHandler): void {
   handlers[handler.kind] = handler;
@@ -490,6 +492,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
     },
 
     async openPath(path) {
+      // 功能：访达重复打开已打开文件时激活标签，避免覆盖未保存编辑；时间：2026-10-18；作者：lq。
+      const existing = Object.values(get().sessions).find((session) => session.path === path);
+      if (existing) {
+        get().activateTab(existing.id);
+        return existing.id;
+      }
       try {
         const opened = await getPlatformAdapter().openPath(path);
         if (!opened) {
@@ -639,7 +647,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
       patchSession(id, {
         data: next,
         dirty,
-        state: dirty ? 'DIRTY' : 'EDIT_READY',
+        // 功能：写盘期间允许编辑，但保持忙状态供退出保护判断；时间：2026-10-18；作者：lq。
+        state: saveInFlight.has(id) ? 'SAVING' : dirty ? 'DIRTY' : 'EDIT_READY',
       });
       if (dirty) scheduleSnapshot(id);
     },
@@ -653,6 +662,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
     async saveSession(id, options) {
       const session = get().sessions[id];
       if (!session) return false;
+      // 功能：阻止并发保存，确保关闭确认等待真实保存结果；时间：2026-10-18；作者：lq。
+      if (saveInFlight.has(id) || session.state === 'SAVING') return false;
       if (session.readonly) {
         get().notify(
           'warning',
@@ -667,6 +678,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
         return false;
       }
       const previousState = session.state;
+      saveInFlight.add(id);
       patchSession(id, { state: 'SAVING', saveError: undefined, updatedAt: Date.now() });
       try {
         const bytes = await handler.serialize(session.data, {
@@ -693,18 +705,20 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
         if (nextHandle) fileHandles.set(id, nextHandle);
         sourceBuffers.set(id, bytes.slice());
         const displayName = outcome.displayName || suggestedName;
+        // 功能：保存期间继续编辑时保留脏标记，防止关闭窗口丢失新内容；时间：2026-10-18；作者：lq。
+        const changedDuringSave = get().sessions[id]?.data !== session.data;
         patchSession(id, {
           displayName,
           path: outcome.path ?? (outcome.location === 'in-place' ? session.path : undefined),
-          dirty: false,
-          state: 'SAVED',
+          dirty: changedDuringSave,
+          state: changedDuringSave ? 'DIRTY' : 'SAVED',
           lastSavedAt: Date.now(),
           saveError: undefined,
           saveAsCopyRequired: false,
           canSaveInPlace:
             outcome.location !== 'download' && !!(nextHandle || outcome.path || session.path),
         });
-        await persistSnapshot(id, { dirty: false, bytes });
+        await persistSnapshot(id, { dirty: changedDuringSave, bytes });
         get().notify(
           'success',
           outcome.location === 'download' ? '已下载副本' : '已保存',
@@ -714,7 +728,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
       } catch (error) {
         const officeError = error instanceof OfficeError ? error : null;
         if (officeError?.code === ErrorCodes.CANCELLED) {
-          patchSession(id, { state: previousState });
+          patchSession(id, { state: get().sessions[id]?.dirty ? 'DIRTY' : previousState });
           return false;
         }
         patchSession(id, {
@@ -727,6 +741,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
           officeError?.message ?? (error instanceof Error ? error.message : String(error)),
         );
         return false;
+      } finally {
+        saveInFlight.delete(id);
       }
     },
 

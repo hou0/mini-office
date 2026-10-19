@@ -1,5 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#5FB9AB"/><stop offset=".6" stop-color="#2E7D72"/><stop offset="1" stop-color="#1F5D55"/></linearGradient></defs>
-  <rect width="64" height="64" rx="16" fill="url(#g)"/>
-  <text x="32" y="43" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif" font-size="34" font-weight="600" fill="#fff" text-anchor="middle">M</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <!-- 功能：Mini Office 折页 M 品牌图标，透明外沿适配 macOS；时间：2026-10-18；作者：lq。 -->
+  <defs>
+    <linearGradient id="tile" x1="152" y1="88" x2="850" y2="950" gradientUnits="userSpaceOnUse"><stop stop-color="#204E53"/><stop offset="1" stop-color="#102E36"/></linearGradient>
+    <linearGradient id="paper" x1="334" y1="302" x2="703" y2="746" gradientUnits="userSpaceOnUse"><stop stop-color="#FAF9F2"/><stop offset="1" stop-color="#DDEBE5"/></linearGradient>
+    <linearGradient id="fold" x1="450" y1="350" x2="680" y2="704" gradientUnits="userSpaceOnUse"><stop stop-color="#A1E9D5"/><stop offset="1" stop-color="#53BBA9"/></linearGradient>
+  </defs>
+  <rect x="64" y="72" width="896" height="896" rx="202" fill="#071C24" fill-opacity=".13"/>
+  <rect x="64" y="64" width="896" height="896" rx="202" fill="url(#tile)"/>
+  <rect x="66" y="66" width="892" height="892" rx="200" stroke="#D7F2E8" stroke-opacity=".15" stroke-width="4"/>
+  <path d="M270 726V310C270 290 292 278 308 290L512 440L716 290C732 278 754 290 754 310V726H634V469L512 557L390 469V726H270Z" fill="url(#paper)"/>
+  <path d="M512 440L716 290C732 278 754 290 754 310V441L512 616V440Z" fill="url(#fold)"/>
+  <path d="M512 440V557L390 469V726L512 616V440Z" fill="#12373C" fill-opacity=".12"/>
+  <path d="M290 310V704" stroke="#FFFFFF" stroke-opacity=".38" stroke-width="4" stroke-linecap="round"/>
 </svg>

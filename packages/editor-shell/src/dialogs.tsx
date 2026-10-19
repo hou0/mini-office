@@ -1,3 +1,4 @@
+import { BrandIcon } from '@mini-office/ui';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -742,11 +743,11 @@ function AboutContent() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 rounded-lg bg-[var(--mo-surface-2)] p-3">
-        <span className="mo-brand-mark flex h-12 w-12 items-center justify-center rounded-xl text-[22px] font-semibold">
-          M
-        </span>
+        {/* 功能：关于页使用正式图标并标明出品方；时间：2026-10-18；作者：lq。 */}
+        <BrandIcon size={52} />
         <div>
           <div className="text-[15px] font-semibold">Mini Office</div>
+          <div className="mt-0.5 text-[12px] font-medium text-[var(--mo-accent)]">非人类程序出品</div>
           <div className="text-[11px] text-[var(--mo-text-muted)]">版本 0.1.0 · 离线优先的轻量办公套件</div>
         </div>
       </div>
@@ -765,7 +766,7 @@ function AboutContent() {
         </div>
         <div className="rounded-md border border-[var(--mo-line)] p-2.5">
           <div className="text-[var(--mo-text-muted)]">公式引擎</div>
-          <div className="mt-0.5 font-medium">50+ 常用函数</div>
+          <div className="mt-0.5 font-medium">60+ 常用函数</div>
         </div>
         <div className="rounded-md border border-[var(--mo-line)] p-2.5">
           <div className="text-[var(--mo-text-muted)]">导出</div>

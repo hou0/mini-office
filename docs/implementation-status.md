@@ -15,7 +15,7 @@
 | 项目 | 结果 |
 |---|---|
 | TypeScript 严格检查 | 通过 |
-| Vitest | **36 项通过 / 6 个测试文件** |
+| Vitest | **69 项通过 / 11 个测试文件** |
 | Rust workspace 测试 | **19 项通过** |
 | Web 生产构建 | 通过 |
 | Tauri debug `.app` | 构建通过，约 30.9 MB |
@@ -59,7 +59,7 @@
 | 首页、最近文件、模板 | ✅ | 合同/费用报销模板 |
 | 多格式标签页/关闭确认 | ✅ | 长文件名解码/截断 |
 | 命令面板/快捷键 | ✅ | 文件、编辑、视图命令 |
-| 主题/强调色 | ✅ | 5 套预设 + 自定义；36 项测试含对比度 |
+| 主题/强调色 | ✅ | 5 套预设 + 自定义；69 项测试含对比度 |
 | 原生毛玻璃 | 🟡 | Tauri `setEffects` 已接入并通过构建；macOS 实机视觉验收待补 |
 | 窗口拖动/双击最大化 | 🟡 | 标题栏/标签栏空白区调用 `startDragging`/`toggleMaximize`；实机拖拽待补 |
 | 工具栏悬浮提示 | ✅ | Portal Tooltip，不受横向滚动裁剪 |
@@ -114,6 +114,14 @@
 | PPT 图片 ZIP | ✅ | 3 页 JPEG |
 | LibreOffice 对照后端 | 🟡 | PoC 命令存在，不参与正式导出 |
 
+### 3.6 本轮基础能力补齐（2026-10-18）
+
+- Excel 结构引用、工作表更名/删除和排序公式维护已实现，含保存重开回归。
+- Word 跨段/跨页选择、全选、模型替换及剪贴板已补齐；关于页与正式品牌图标已更新，见 [本轮记录](word-selection-and-brand.md)。
+- 保存期间继续编辑保留未保存状态；重复保存拦截已实现。
+- macOS 文件关联、冷启动文件队列、原生退出确认已实现并编译打包，桌面交互验收待补。
+- 详细证据与默认应用设置步骤见 [macOS 文档关联与安全退出](macos-file-associations.md)。
+
 ## 4. 未完成项与发布门槛
 
 | 项目 | 状态 | 后续 |
@@ -132,7 +140,7 @@
 ## 5. 回归与验收命令
 
 ```bash
-pnpm verify                 # typecheck + 36 Vitest + web build
+pnpm verify                 # typecheck + 69 Vitest + web build
 cargo test --workspace      # 19 Rust tests
 pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 ```

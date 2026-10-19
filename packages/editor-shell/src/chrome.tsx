@@ -1,3 +1,4 @@
+import { BrandIcon } from '@mini-office/ui';
 import { useEffect, type ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -107,9 +108,8 @@ export function TitleBar({
         className="flex shrink-0 items-center gap-2 rounded-md px-1.5 py-1 hover:bg-[var(--mo-surface-2)]"
         title="返回首页"
       >
-        <span className="mo-brand-mark relative inline-flex h-[26px] w-[26px] items-center justify-center rounded-[7px]">
-          <span className="text-[13px] font-semibold">M</span>
-        </span>
+        {/* 功能：标题栏统一品牌图标；时间：2026-10-18；作者：lq。 */}
+        <BrandIcon size={30} />
         <span className="hidden text-[12px] font-semibold sm:block">Mini Office</span>
       </button>
       <div className="h-5 w-px bg-[var(--mo-line)]" />
@@ -555,14 +555,15 @@ export function CloseConfirmDialog({
   return (
     <Dialog
       open
-      onClose={onCancel}
+      // 功能：保存过程中禁用关闭弹窗，避免重复处理退出选择；时间：2026-10-18；作者：lq。
+      onClose={() => { if (!saving) onCancel(); }}
       title="保存更改？"
       icon={<AlertTriangle size={17} />}
       width="sm"
       closeOnBackdrop={false}
       footer={
         <>
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+          <Button variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
             取消
           </Button>
           <Button
@@ -570,6 +571,7 @@ export function CloseConfirmDialog({
             size="sm"
             className="text-[var(--mo-danger)] hover:bg-[var(--mo-danger-soft)]"
             onClick={onDiscard}
+            disabled={saving}
           >
             不保存
           </Button>

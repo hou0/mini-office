@@ -110,3 +110,14 @@
     display: none !important;
   }
 }
+
+/* 功能：Safari/WebKit 下允许正文跨段选区，应用外壳仍保持原生窗口选择行为；时间：2026-10-18；作者：lq。 */
+[data-word-editor], [data-word-editor] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+[data-word-editor] [contenteditable="false"],
+[data-word-editor] [contenteditable="false"] * {
+  -webkit-user-select: none;
+  user-select: none;
+}

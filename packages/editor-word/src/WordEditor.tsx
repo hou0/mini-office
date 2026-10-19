@@ -23,6 +23,7 @@ import {
 } from './doc-utils';
 import {
   getCaretOffset,
+  selectedParagraphSlices,
   getSelectionOffsets,
   replaceInRuns,
   runsPlainText,
@@ -37,6 +38,7 @@ import {
   paragraphWrapperStyle,
   renderParagraphHtml,
 } from './html';
+import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
 import { pageMetrics, paginateBlocks, type PageSlice } from './pagination';
 import { WordToolbar } from './WordToolbar';
 import { useWorkspaceStore, type WordSession } from '@mini-office/document-model';
@@ -299,12 +301,16 @@ const EditableParagraph = memo(function EditableParagraph({
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const focused = element.contains(document.activeElement);
+    // 功能：共享编辑宿主下按选区判断焦点，避免跨段格式化时重置选区；时间：2026-10-18；作者：lq。
+    const selection = window.getSelection();
+    const focused = element.contains(document.activeElement) || !!(
+      document.activeElement?.closest('[data-word-editor]') && selection?.rangeCount && selection.getRangeAt(0).intersectsNode(element)
+    );
     const force = handlers.syncToken !== lastSyncToken.current;
     if (focused && !force) return;
     const offset = focused ? getCaretOffset(element) : 0;
     if (element.innerHTML !== html) element.innerHTML = html;
-    if (focused) {
+    if (focused && selection?.isCollapsed) {
       element.focus({ preventScroll: true });
       setCaretAtOffset(element, offset);
     }
@@ -315,7 +321,8 @@ const EditableParagraph = memo(function EditableParagraph({
     <div style={paragraphWrapperStyle(paragraph)}>
       <div
         ref={ref}
-        contentEditable={!readonly}
+        // 功能：继承整篇文档的编辑宿主，允许跨段和跨页选区；时间：2026-10-18；作者：lq。
+        tabIndex={-1}
         suppressContentEditableWarning
         spellCheck={false}
         data-paragraph-id={paragraph.id}
@@ -325,8 +332,6 @@ const EditableParagraph = memo(function EditableParagraph({
         style={{ ...paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt), outline: 'none' }}
         onInput={(event) => handlers.onInput(paragraph.id, event.currentTarget)}
         onBlur={() => handlers.onBlur(paragraph.id)}
-        onKeyDown={(event) => handlers.onKeyDown(event, paragraph.id, event.currentTarget)}
-        onPaste={handlers.onPaste}
       />
     </div>
   );
@@ -448,7 +453,7 @@ function HeaderFooterView({
   totalPages: number;
 }) {
   return (
-    <div>
+    <div contentEditable={false}>
       {blocks.map((block) =>
         block.type === 'paragraph' ? (
           <StaticParagraph
@@ -1272,7 +1277,11 @@ export function WordEditor({ session }: { session: WordSession }) {
 
   const handleParagraphBlur = useCallback(() => {
     setTimeout(() => {
+      // 功能：鼠标跨段拖选或段落内移焦时不重新分页和强制移动光标；时间：2026-10-18；作者：lq。
+      const selection = window.getSelection();
+      if (selection?.rangeCount && !selection.isCollapsed && pagesRef.current?.contains(selection.anchorNode)) return;
       const active = document.activeElement as HTMLElement | null;
+      if (active && pagesRef.current?.contains(active)) return;
       const editable = active?.closest<HTMLElement>('[data-paragraph-id]');
       if (editable?.dataset.paragraphId) {
         focusRequestRef.current = {
@@ -1379,6 +1388,81 @@ export function WordEditor({ session }: { session: WordSession }) {
     execCommand('insertText', text.replace(/\r?\n/g, ' '));
   }, [execCommand]);
 
+  /** 功能：跨段选区始终在模型层替换，随后统一分页并恢复插入点；时间：2026-10-18；作者：lq。 */
+  const replaceCrossSelection = useCallback((text: string): boolean => {
+    const container = pagesRef.current;
+    const selection = window.getSelection();
+    if (readonly || !container || !selection?.rangeCount) return false;
+    const slices = selectedParagraphSlices(container, selection.getRangeAt(0));
+    if (slices.length < 2) return false;
+    const result = replaceDocumentSelection(latestDoc(), slices, text);
+    if (!result) return false;
+    savedRangeRef.current = null;
+    savedSelectionRef.current = null;
+    selection.removeAllRanges();
+    focusRequestRef.current = { paragraphId: result.paragraphId, offset: result.offset };
+    commit(result.doc, { reflow: true });
+    setSyncToken((value) => value + 1);
+    return true;
+  }, [commit, latestDoc, readonly]);
+
+  /** 功能：键盘全选限定正文，跨段删除/输入由模型接管；时间：2026-10-18；作者：lq。 */
+  const handleDocumentKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const root = pagesRef.current;
+    if (!root) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+      const paragraphs = root.querySelectorAll<HTMLElement>('[data-paragraph-id]');
+      if (!paragraphs.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const range = document.createRange();
+      range.setStart(paragraphs[0], 0);
+      range.setEnd(paragraphs[paragraphs.length - 1], paragraphs[paragraphs.length - 1].childNodes.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      captureSelection();
+      return;
+    }
+    if (!readonly && ['Backspace', 'Delete', 'Enter'].includes(event.key) && replaceCrossSelection(event.key === 'Enter' ? '\n' : '')) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const node = window.getSelection()?.anchorNode;
+    const paragraph = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLDivElement>('[data-paragraph-id]');
+    if (paragraph && root.contains(paragraph)) handleKeyDown(event, paragraph.dataset.paragraphId!, paragraph);
+  }, [captureSelection, handleKeyDown, readonly, replaceCrossSelection]);
+
+  /** 功能：beforeinput 覆盖键入、触屏删除及跨段替换，阻止浏览器合并分页容器；时间：2026-10-18；作者：lq。 */
+  useEffect(() => {
+    const root = pagesRef.current;
+    if (!root) return;
+    const beforeInput = (event: InputEvent) => {
+      if (!event.cancelable || readonly) return;
+      if (event.inputType.startsWith('insert') && event.inputType !== 'insertFromPaste') {
+        const text = ['insertParagraph', 'insertLineBreak'].includes(event.inputType) ? '\n' : event.data;
+        if (text !== null && replaceCrossSelection(text)) event.preventDefault();
+      } else if (event.inputType.startsWith('delete') && replaceCrossSelection('')) event.preventDefault();
+    };
+    root.addEventListener('beforeinput', beforeInput);
+    return () => root.removeEventListener('beforeinput', beforeInput);
+  }, [readonly, replaceCrossSelection]);
+
+  /** 功能：跨段复制/剪切保留正文文本和文字样式，取消系统对分页结构的直接删除；时间：2026-10-18；作者：lq。 */
+  const handleDocumentCopy = useCallback((event: React.ClipboardEvent<HTMLDivElement>, cut = false) => {
+    const root = pagesRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection?.rangeCount) return;
+    const slices = selectedParagraphSlices(root, selection.getRangeAt(0));
+    if (slices.length < 2) return;
+    event.preventDefault();
+    const current = latestDoc();
+    event.clipboardData.setData('text/plain', selectionText(current, slices));
+    event.clipboardData.setData('text/html', selectionHtml(current, slices));
+    if (cut && !readonly) replaceCrossSelection('');
+  }, [latestDoc, readonly, replaceCrossSelection]);
+
   const applyParagraphFormat = useCallback(
     (patch: Partial<ParagraphStyle>) => {
       if (readonly) return;
@@ -1407,14 +1491,16 @@ export function WordEditor({ session }: { session: WordSession }) {
     [commit, latestDoc],
   );
 
-  const insertTable = useCallback(() => {
-    if (readonly) return;
+  // 功能：校验行列尺寸并按页面内容宽度生成等宽表格；时间：2026-10-19；作者：lq。
+  const insertTable = useCallback((rows: number, columns: number) => {
+    if (readonly || !Number.isInteger(rows) || !Number.isInteger(columns)
+      || rows < 1 || rows > 100 || columns < 1 || columns > 63) return;
     const current = latestDoc();
-    const columnWidth = metrics.contentWidth / 3;
+    const columnWidth = metrics.contentWidth / columns;
     const table: DocTable = {
       type: 'table',
       id: uid('tbl'),
-      columnWidthsPx: [columnWidth, columnWidth, columnWidth],
+      columnWidthsPx: Array.from({ length: columns }, () => columnWidth),
       alignment: 'left',
       borders: {
         top: { style: 'single', widthPx: 0.75, color: '#1D2939' },
@@ -1424,9 +1510,9 @@ export function WordEditor({ session }: { session: WordSession }) {
         insideH: { style: 'single', widthPx: 0.75, color: '#1D2939' },
         insideV: { style: 'single', widthPx: 0.75, color: '#1D2939' },
       },
-      rows: Array.from({ length: 3 }, () => ({
+      rows: Array.from({ length: rows }, () => ({
         id: uid('row'),
-        cells: Array.from({ length: 3 }, () => ({
+        cells: Array.from({ length: columns }, () => ({
           id: uid('cell'),
           blocks: [makeParagraph()],
           colSpan: 1,
@@ -1765,7 +1851,30 @@ export function WordEditor({ session }: { session: WordSession }) {
         >
           <div
             ref={pagesRef}
-            className="mo-word-pages mx-auto flex min-h-full w-fit flex-col items-center gap-6 px-8 py-8"
+            data-word-editor
+            contentEditable={!readonly}
+            suppressContentEditableWarning
+            role="textbox"
+            aria-label="文档正文"
+            aria-multiline="true"
+            tabIndex={0}
+            onKeyDown={handleDocumentKeyDown}
+            onInput={(event) => {
+              // 功能：共享编辑区的原生 input 事件按当前段落写回模型；时间：2026-10-18；作者：lq。
+              if (event.target !== event.currentTarget) return;
+              const node = window.getSelection()?.anchorNode;
+              const paragraph = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-paragraph-id]');
+              if (paragraph && event.currentTarget.contains(paragraph)) handleParagraphInput(paragraph.dataset.paragraphId!, paragraph);
+            }}
+            onPaste={(event) => {
+              if (readonly) { event.preventDefault(); return; }
+              if (replaceCrossSelection(event.clipboardData.getData('text/plain'))) event.preventDefault();
+              else handlePaste(event);
+            }}
+            onCopy={(event) => handleDocumentCopy(event)}
+            onCut={(event) => handleDocumentCopy(event, true)}
+            onBlur={handleParagraphBlur}
+            className="mo-selectable outline-none mo-word-pages mx-auto flex min-h-full w-fit flex-col items-center gap-6 px-8 py-8"
           >
             {pages.map((page, index) => (
               <WordPageView

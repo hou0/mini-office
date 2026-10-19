@@ -115,3 +115,6 @@ export async function printCurrentView(): Promise<boolean> {
   }
   return false;
 }
+
+// 功能：导出桌面文档关联和退出保护桥接；时间：2026-10-18；作者：lq。
+export * from './desktop-events';

@@ -16,3 +16,6 @@ apps/desktop/src-tauri/target/
 tests/output/
 .pnpm-home/
 .tauri-home/
+
+# 功能：忽略浏览器自动化会话临时状态；时间：2026-10-18；作者：lq。
+.playwright-cli/

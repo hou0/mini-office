@@ -1,4 +1,5 @@
 import {
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -36,12 +37,19 @@ export function ColorField({
   label,
   allowClear = true,
   className,
+  icon,
+  indicatorColor,
+  disabled = false,
 }: {
   value?: string;
   onChange: (color: string | undefined) => void;
   label?: string;
   allowClear?: boolean;
   className?: string;
+  /** 功能：工具栏图标及当前颜色标识，兼容原有色值展示；时间：2026-10-19；作者：lq。 */
+  icon?: ReactNode;
+  indicatorColor?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -103,25 +111,34 @@ export function ColorField({
         ref={buttonRef}
         type="button"
         aria-label={label ?? '选择颜色'}
+        disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
         data-tooltip={label ?? '选择颜色'}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          'flex h-7 items-center gap-1.5 rounded-md border bg-[var(--mo-surface)] px-1.5 text-[11px] text-[var(--mo-text-muted)] transition-colors duration-fast hover:bg-[var(--mo-surface-2)]',
+          'flex h-7 shrink-0 items-center gap-1.5 rounded-md border bg-[var(--mo-surface)] px-1.5 text-[11px] text-[var(--mo-text-primary)] transition-colors duration-fast hover:bg-[var(--mo-surface-2)] disabled:pointer-events-none disabled:opacity-40',
           open
             ? 'border-[var(--mo-accent)] ring-2 ring-[color-mix(in_srgb,var(--mo-accent)_16%,transparent)]'
             : 'border-[var(--mo-line-strong)]',
         )}
       >
+        {icon ? (
+          <span aria-hidden="true" className="flex w-4 flex-col items-center gap-0.5">
+            {icon}
+            <span className="h-[3px] w-4 rounded-sm border border-[var(--mo-line)]"
+              style={{ background: indicatorColor ?? value ?? 'transparent' }} />
+          </span>
+        ) : <>
         <span
           className="h-4 w-4 rounded-sm border border-[var(--mo-line)]"
           style={{ background: value ?? 'transparent' }}
         />
         <span className="w-[48px] truncate font-mono text-[10px]">{value ?? '自动'}</span>
+        </>}
         <ChevronDown size={10} className="shrink-0 opacity-60" />
       </button>
-      {open
+      {open && !disabled
         ? createPortal(
             <div
               ref={panelRef}
