@@ -1,5 +1,8 @@
 import { ErrorCodes, OfficeError, type ExportProgress } from '@mini-office/shared';
 
+/** 功能：PDF 以 300 DPI 输出，提升中文文字和表格细线清晰度；时间：2026-10-19；作者：lq。 */
+export const PDF_CAPTURE_SCALE = 300 / 96;
+
 export interface ElementPdfOptions {
   pages: HTMLElement[];
   fileName: string;
@@ -49,28 +52,43 @@ async function waitForLayout(): Promise<void> {
 async function capturePage(
   element: HTMLElement,
   scale: number,
+  imageType: 'png' | 'jpeg' = 'png',
 ): Promise<{ dataUrl: string; width: number; height: number }> {
   const { default: html2canvas } = await import('html2canvas');
   const width = element.offsetWidth || element.getBoundingClientRect().width;
   const height = element.offsetHeight || element.getBoundingClientRect().height;
-  const canvas = await html2canvas(element, {
-    scale,
-    backgroundColor: '#FFFFFF',
-    useCORS: true,
-    allowTaint: false,
-    logging: false,
-    width,
-    height,
-    windowWidth: width,
-    windowHeight: height,
-    scrollX: 0,
-    scrollY: 0,
-  });
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.94), width, height };
+  // 功能：只修正截图库动态创建的隐藏 1px 基线探针，不改变文档中的真实图片；时间：2026-10-19；作者：lq。
+  // html2canvas 在原始 document 中测量基线，因此仅修改克隆文档无法修复 Tailwind 的 img display:block 干扰。
+  const metricsStyle = document.createElement('style');
+  metricsStyle.dataset.pdfFontMetrics = 'true';
+  metricsStyle.textContent = 'body > div[style*="visibility: hidden"] > img[width="1"][height="1"] { display: inline-block !important; }';
+  document.head.appendChild(metricsStyle);
+  let canvas: HTMLCanvasElement | undefined;
+  try {
+    canvas = await html2canvas(element, {
+      scale,
+      backgroundColor: '#FFFFFF',
+      useCORS: true,
+      allowTaint: false,
+      logging: false,
+      width,
+      height,
+      windowWidth: width,
+      windowHeight: height,
+      scrollX: 0,
+      scrollY: 0,
+    });
+    // 功能：PDF 使用无损 PNG 保留细线和文字，图片 ZIP 继续使用 JPEG；时间：2026-10-19；作者：lq。
+    return { dataUrl: canvas.toDataURL(`image/${imageType}`, imageType === 'jpeg' ? 0.94 : undefined), width, height };
+  } finally {
+    // 功能：成功或失败均清理临时样式和大画布，避免后续页面累积占用；时间：2026-10-19；作者：lq。
+    metricsStyle.remove();
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
+  }
 }
 
 export async function exportElementsToPdf(options: ElementPdfOptions): Promise<Uint8Array> {
-  const { pages, fileName, pageRange, scale = 2, onProgress, isCancelled } = options;
+  const { pages, fileName, pageRange, scale = PDF_CAPTURE_SCALE, onProgress, isCancelled } = options;
   if (pages.length === 0) {
     throw new OfficeError(ErrorCodes.EXPORT_FAILED, '没有可导出的页面。');
   }
@@ -108,7 +126,7 @@ export async function exportElementsToPdf(options: ElementPdfOptions): Promise<U
     } else {
       pdf.addPage([width, height], width >= height ? 'landscape' : 'portrait');
     }
-    pdf.addImage(capture.dataUrl, 'JPEG', 0, 0, width, height, undefined, 'FAST');
+    pdf.addImage(capture.dataUrl, 'PNG', 0, 0, width, height, undefined, 'FAST');
   }
   if (!pdf) throw new OfficeError(ErrorCodes.EXPORT_FAILED, 'PDF 生成失败。');
   onProgress?.({ phase: 'assembling', current: selected.length, total: selected.length, message: '正在写入 PDF…' });
@@ -130,7 +148,7 @@ export async function exportElementsToZip(options: ElementImagesOptions): Promis
       total: pages.length,
       message: `正在渲染第 ${index + 1} 页…`,
     });
-    const capture = await capturePage(pages[index], scale);
+    const capture = await capturePage(pages[index], scale, 'jpeg');
     const base64 = capture.dataUrl.split(',')[1] ?? '';
     zip.file(`page-${String(index + 1).padStart(2, '0')}.jpg`, base64, { base64: true });
   }

@@ -41,6 +41,9 @@ import {
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
 import { pageMetrics, paginateBlocks, type PageSlice } from './pagination';
 import { WordToolbar } from './WordToolbar';
+// 功能：接入表格选区与网格编辑工具；时间：2026-10-19；作者：lq。
+import { TableTools } from './TableTools';
+import { editTable, findTable, formatTable, intersects, tableSelectionRect, type TableAction, type TableSelection } from './table-editing';
 import { useWorkspaceStore, type WordSession } from '@mini-office/document-model';
 import { printCurrentView } from '@mini-office/platform-adapter';
 import type {
@@ -50,6 +53,7 @@ import type {
   DocParagraph,
   DocRun,
   DocTable,
+  DocTableCell,
   ParagraphStyle,
   RunStyle,
   TableBorderSide,
@@ -247,7 +251,10 @@ interface ParagraphHandlers {
   onInput: (paragraphId: string, element: HTMLElement) => void;
   onBlur: (paragraphId: string) => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>, paragraphId: string, element: HTMLDivElement) => void;
-  onTableContextMenu: (event: React.MouseEvent, table: DocTable, rowIndex: number) => void;
+  onTableContextMenu: (event: React.MouseEvent, table: DocTable, rowIndex: number, cellId: string) => void;
+  // 功能：共享选区及尺寸拖动入口；时间：2026-10-19；作者：lq。
+  tableSelection?: TableSelection | null;
+  onTableResize: (event: React.PointerEvent, table: DocTable, index: number, axis: 'row' | 'column') => void;
   onPaste?: (event: React.ClipboardEvent<HTMLDivElement>) => void;
 }
 
@@ -365,12 +372,16 @@ function TableGrid({
   const gridStyle: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: widths.map((width) => `${width}px`).join(' '),
+    // 功能：按行高设置最小轨道高度，内容较多时自动撑开；时间：2026-10-19；作者：lq。
+    gridTemplateRows: table.rows.map((row) => `minmax(${row.heightPx ?? 28}px, auto)`).join(' '),
     width: totalWidth,
     maxWidth: '100%',
     marginLeft: table.alignment === 'center' ? 'auto' : table.alignment === 'right' ? 'auto' : undefined,
     marginRight: table.alignment === 'right' ? '0' : table.alignment === 'center' ? 'auto' : undefined,
   };
 
+  // 功能：高亮矩形单元格选区，不影响打印和 PDF；时间：2026-10-19；作者：lq。
+  const selectionRect = !readonly && !staticMode && handlers?.tableSelection?.tableId === table.id ? tableSelectionRect(table, handlers.tableSelection) : undefined;
   return (
     <div style={gridStyle} data-table-id={table.id}>
       {placements.map((placement: CellPlacement) => {
@@ -384,10 +395,13 @@ function TableGrid({
             data-cell-id={cell.id}
             onContextMenu={
               handlers
-                ? (event) => handlers.onTableContextMenu(event, table, row)
+                ? (event) => handlers.onTableContextMenu(event, table, row, cell.id)
                 : undefined
             }
             style={{
+              // 功能：单元格选区轮廓与边缘拖动定位；时间：2026-10-19；作者：lq。
+              position: 'relative',
+              boxShadow: selectionRect && intersects(placement, selectionRect) ? 'inset 0 0 0 2px #3478f6' : undefined,
               gridColumn: `${col + 1} / span ${cell.colSpan}`,
               gridRow: `${row + 1} / span ${cell.rowSpan}`,
               display: 'flex',
@@ -400,6 +414,11 @@ function TableGrid({
               ...cellBorderStyle(cell, table, row, col),
             }}
           >
+            {/* 功能：提供列右边界、行下边界拖柄；时间：2026-10-19；作者：lq。 */}
+            {!readonly && !staticMode && handlers ? <>
+              <span data-table-resize contentEditable={false} title="拖动调整列宽" onPointerDown={(event) => handlers.onTableResize(event, table, col + cell.colSpan - 1, 'column')} style={{ position: 'absolute', zIndex: 2, right: -3, top: 0, bottom: 6, width: 6, cursor: 'col-resize', touchAction: 'none' }} />
+              <span data-table-resize contentEditable={false} title="拖动调整行高" onPointerDown={(event) => handlers.onTableResize(event, table, row + cell.rowSpan - 1, 'row')} style={{ position: 'absolute', zIndex: 2, bottom: -3, left: 0, right: 6, height: 6, cursor: 'row-resize', touchAction: 'none' }} />
+            </> : null}
             {cell.blocks.map((block) =>
               block.type === 'paragraph' ? (
                 staticMode || !handlers ? (
@@ -834,6 +853,9 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [replacement, setReplacement] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [findActive, setFindActive] = useState(0);
+  // 功能：保存独立于文本焦点的表格矩形选区；时间：2026-10-19；作者：lq。
+  const explicitTableSelectionRef = useRef(false);
+  const [tableSelection, setTableSelection] = useState<TableSelection | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -937,6 +959,13 @@ export function WordEditor({ session }: { session: WordSession }) {
   const refreshSelection = useCallback(() => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
+    // 功能：从原生拖选的两端解析同表单元格，支持跨单元格合并；时间：2026-10-19；作者：lq。
+    const cellAt = (node: Node | null) => (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-cell-id]');
+    const anchorCell = cellAt(selection.anchorNode), focusCell = cellAt(selection.focusNode);
+    if (!explicitTableSelectionRef.current && anchorCell && focusCell && pagesRef.current?.contains(anchorCell)) {
+      const table = anchorCell.closest<HTMLElement>('[data-table-id]');
+      if (table && table === focusCell.closest('[data-table-id]')) setTableSelection({ tableId: table.dataset.tableId!, anchorId: anchorCell.dataset.cellId!, focusId: focusCell.dataset.cellId! });
+    } else if (!explicitTableSelectionRef.current && pagesRef.current?.contains(selection.anchorNode)) setTableSelection(null);
     const node = selection.anchorNode;
     const element = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>(
       '[data-paragraph-id]',
@@ -1005,7 +1034,7 @@ export function WordEditor({ session }: { session: WordSession }) {
       element.scrollIntoView({ block: 'nearest' });
     }
     focusRequestRef.current = null;
-  }, [pages]);
+  }, [pages, syncToken]);
 
   useEffect(() => {
     const container = measureRef.current;
@@ -1410,6 +1439,35 @@ export function WordEditor({ session }: { session: WordSession }) {
   const handleDocumentKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     const root = pagesRef.current;
     if (!root) return;
+    // 功能：Tab 在表格单元格间导航，末格 Tab 自动追加一行；时间：2026-10-19；作者：lq。
+    if (!readonly && event.key === 'Tab') {
+      const node = window.getSelection()?.anchorNode;
+      const cell = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-cell-id]');
+      const tableElement = cell?.closest<HTMLElement>('[data-table-id]');
+      const current = latestDoc();
+      const table = tableElement ? findTable(current.blocks, tableElement.dataset.tableId!) : undefined;
+      if (table && cell) {
+        event.preventDefault(); event.stopPropagation();
+        const placements = tableCellPlacements(table);
+        const index = placements.findIndex((p) => p.cell.id === cell.dataset.cellId);
+        let target: DocTableCell | undefined = placements[index + (event.shiftKey ? -1 : 1)]?.cell;
+        if (!target && !event.shiftKey) {
+          const last = placements[index];
+          const next = editTable(table, { tableId: table.id, anchorId: last.cell.id, focusId: last.cell.id }, 'row-below');
+          if (next) {
+            target = next.rows.at(-1)?.cells[0];
+            commit({ ...current, blocks: replaceTableInBlocks(current.blocks, table.id, () => next) }, { reflow: true });
+          }
+        }
+        const paragraph = target?.blocks.find((block): block is DocParagraph => block.type === 'paragraph');
+        if (paragraph) {
+          focusRequestRef.current = { paragraphId: paragraph.id, offset: 0 };
+          setTableSelection({ tableId: table.id, anchorId: target!.id, focusId: target!.id });
+          setSyncToken((value) => value + 1);
+        }
+        return;
+      }
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
       const paragraphs = root.querySelectorAll<HTMLElement>('[data-paragraph-id]');
       if (!paragraphs.length) return;
@@ -1432,7 +1490,7 @@ export function WordEditor({ session }: { session: WordSession }) {
     const node = window.getSelection()?.anchorNode;
     const paragraph = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLDivElement>('[data-paragraph-id]');
     if (paragraph && root.contains(paragraph)) handleKeyDown(event, paragraph.dataset.paragraphId!, paragraph);
-  }, [captureSelection, handleKeyDown, readonly, replaceCrossSelection]);
+  }, [captureSelection, commit, handleKeyDown, latestDoc, readonly, replaceCrossSelection]);
 
   /** 功能：beforeinput 覆盖键入、触屏删除及跨段替换，阻止浏览器合并分页容器；时间：2026-10-18；作者：lq。 */
   useEffect(() => {
@@ -1614,21 +1672,108 @@ export function WordEditor({ session }: { session: WordSession }) {
   );
 
   const handleTableContextMenu = useCallback(
-    (event: React.MouseEvent, table: DocTable, rowIndex: number) => {
+    (event: React.MouseEvent, table: DocTable, rowIndex: number, cellId: string) => {
       if (readonly) return;
       event.preventDefault();
+      // 功能：右键保留已有矩形选区，否则定位当前单元格；时间：2026-10-19；作者：lq。
+      explicitTableSelectionRef.current = true;
+      const rect = tableSelection?.tableId === table.id ? tableSelectionRect(table, tableSelection) : undefined;
+      const placement = tableCellPlacements(table).find((p) => p.cell.id === cellId);
+      if (!rect || !placement || !intersects(placement, rect)) setTableSelection({ tableId: table.id, anchorId: cellId, focusId: cellId });
       setTableMenu({ x: event.clientX, y: event.clientY, tableId: table.id, rowIndex });
     },
-    [readonly],
+    [readonly, tableSelection],
   );
 
   const mutateTable = useCallback(
     (tableId: string, updater: (table: DocTable) => DocTable | null) => {
       const current = latestDoc();
-      commit({ ...current, blocks: replaceTableInBlocks(current.blocks, tableId, updater) }, { reflow: true });
+      // 功能：结构编辑刷新段落 DOM，避免合并后仍显示旧内容；时间：2026-10-19；作者：lq。
+      const blocks = replaceTableInBlocks(current.blocks, tableId, updater);
+      commit({ ...current, blocks: blocks.length ? blocks : [makeParagraph()] }, { reflow: true });
+      setSyncToken((value) => value + 1);
     },
     [commit, latestDoc],
   );
+
+  /** 功能：执行表格命令并在结构变化后保留有效选区；时间：2026-10-19；作者：lq。 */
+  const runTableAction = useCallback((action: TableAction) => {
+    if (readonly || !tableSelection) return;
+    if (action.startsWith('select-')) {
+      const table = findTable(latestDoc().blocks, tableSelection.tableId);
+      const rect = table && tableSelectionRect(table, tableSelection);
+      if (!table || !rect) return;
+      const area = { top: action === 'select-rows' ? rect.top : 0, bottom: action === 'select-rows' ? rect.bottom : table.rows.length, left: action === 'select-columns' ? rect.left : 0, right: action === 'select-columns' ? rect.right : totalTableColumns(table) };
+      const cells = tableCellPlacements(table).filter((p) => intersects(p, area));
+      if (cells.length) {
+        explicitTableSelectionRef.current = true;
+        window.getSelection()?.removeAllRanges();
+        setTableSelection({ tableId: table.id, anchorId: cells[0].cell.id, focusId: cells.at(-1)!.cell.id });
+      }
+      return;
+    }
+    let nextSelection: TableSelection | null = null;
+    let focusParagraph: string | undefined;
+    mutateTable(tableSelection.tableId, (table) => {
+      const rect = tableSelectionRect(table, tableSelection);
+      const next = editTable(table, tableSelection, action, metrics.contentWidth);
+      if (next) {
+        const placements = tableCellPlacements(next);
+        const cell = placements.find((p) => p.cell.id === tableSelection.anchorId) ?? placements.find((p) => p.row >= Math.min(rect?.top ?? 0, next.rows.length - 1)) ?? placements[0];
+        if (cell) {
+          nextSelection = { tableId: next.id, anchorId: cell.cell.id, focusId: cell.cell.id };
+          focusParagraph = cell.cell.blocks.find((block): block is DocParagraph => block.type === 'paragraph')?.id;
+        }
+      }
+      return next;
+    });
+    // 功能：结构操作后将光标放回有效单元格，允许继续输入；时间：2026-10-19；作者：lq。
+    if (focusParagraph) focusRequestRef.current = { paragraphId: focusParagraph, offset: 0 };
+    explicitTableSelectionRef.current = true;
+    window.getSelection()?.removeAllRanges();
+    savedRangeRef.current = null;
+    savedSelectionRef.current = null;
+    setTableSelection(nextSelection);
+    setTableMenu(null);
+  }, [readonly, tableSelection, latestDoc, mutateTable, metrics.contentWidth]);
+
+  /** 功能：拖动边缘时即时预览，松开仅产生一次可撤销尺寸变更；时间：2026-10-19；作者：lq。 */
+  const handleTableResize = useCallback((event: React.PointerEvent, table: DocTable, index: number, axis: 'row' | 'column') => {
+    if (readonly || event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const grid = event.currentTarget.closest<HTMLElement>('[data-table-id]');
+    if (!grid) return;
+    const start = axis === 'column' ? event.clientX : event.clientY;
+    const tracks = axis === 'column' ? Array.from({ length: totalTableColumns(table) }, (_, c) => table.columnWidthsPx[c] ?? 100) : getComputedStyle(grid).gridTemplateRows.split(' ').map(Number.parseFloat);
+    const originalStyle = grid.getAttribute('style');
+    const initial = tracks[index] || (axis === 'column' ? 100 : 28);
+    let value = initial;
+    const move = (pointer: PointerEvent) => {
+      const max = axis === 'column' ? (tracks[index + 1] !== undefined ? initial + tracks[index + 1] - 24 : Math.max(initial, metrics.contentWidth - tracks.reduce((sum, width, i) => sum + (i === index ? 0 : width), 0))) : 1900;
+      value = Math.min(max, Math.max(axis === 'column' ? 24 : 16, initial + ((axis === 'column' ? pointer.clientX : pointer.clientY) - start) / effectiveZoom));
+      const preview = [...tracks]; preview[index] = value;
+      if (axis === 'column' && preview[index + 1] !== undefined) preview[index + 1] = tracks[index + 1] + initial - value;
+      if (axis === 'column') { grid.style.gridTemplateColumns = preview.map((w) => `${w}px`).join(' '); grid.style.width = `${preview.reduce((a, b) => a + b, 0)}px`; }
+      else grid.style.gridTemplateRows = preview.map((h) => `minmax(${h}px, auto)`).join(' ');
+    };
+    const finish = (pointer: PointerEvent) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', finish); window.removeEventListener('pointercancel', finish);
+      if (originalStyle !== null) grid.setAttribute('style', originalStyle);
+      if (pointer.type === 'pointercancel' || value === initial) return;
+      mutateTable(table.id, (current) => {
+        // 功能：只变更指定逻辑行列，保留其余尺寸与合并关系；时间：2026-10-19；作者：lq。
+        const widths = [...current.columnWidthsPx];
+        if (axis === 'column') {
+          widths[index] = value;
+          if (widths[index + 1] !== undefined) widths[index + 1] = tracks[index + 1] + initial - value;
+        }
+        return { ...current, widthPct: axis === 'column' ? undefined : current.widthPct, columnWidthsPx: widths, rows: current.rows.map((row, r) => ({ ...row, heightPx: axis === 'row' && r === index ? value : row.heightPx, cells: row.cells.map((cell) => ({ ...cell, widthPx: undefined })) })) };
+      });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', finish); window.addEventListener('pointercancel', finish);
+  }, [readonly, effectiveZoom, metrics.contentWidth, mutateTable]);
+
+  const activeTable = tableSelection ? findTable(doc.blocks, tableSelection.tableId) : undefined;
 
   const fontFallback = useMemo(() => {
     const fallbackParagraph =
@@ -1644,9 +1789,11 @@ export function WordEditor({ session }: { session: WordSession }) {
       onBlur: handleParagraphBlur,
       onKeyDown: handleKeyDown,
       onTableContextMenu: handleTableContextMenu,
+      tableSelection,
+      onTableResize: handleTableResize,
       onPaste: handlePaste,
     }),
-    [handleParagraphBlur, handleParagraphInput, handleKeyDown, handlePaste, handleTableContextMenu, syncToken],
+    [handleParagraphBlur, handleParagraphInput, handleKeyDown, handlePaste, handleTableContextMenu, handleTableResize, tableSelection, syncToken],
   );
 
   const handleReplaceCurrent = useCallback(() => {
@@ -1707,7 +1854,7 @@ export function WordEditor({ session }: { session: WordSession }) {
         fileName: ensureExtension(stripExtension(exportName || session.displayName), '.pdf'),
         title: session.displayName,
         pageRange: exportRange,
-        scale: 2,
+        // 功能：使用导出服务默认 300 DPI 无损画质；时间：2026-10-19；作者：lq。
         pageWidthPx: doc.page.widthPx,
         pageHeightPx: doc.page.heightPx,
         onProgress: setExportProgress,
@@ -1736,68 +1883,9 @@ export function WordEditor({ session }: { session: WordSession }) {
     setExportName(`${stripExtension(session.displayName)}.pdf`);
   }, [session.displayName]);
 
-  const tableMenuItems: MenuItem[] = tableMenu
-    ? [
-        {
-          id: 'row-above',
-          label: '在上方插入行',
-          onSelect: () =>
-            mutateTable(tableMenu.tableId, (table) => {
-              const template = table.rows[tableMenu.rowIndex];
-              if (!template) return table;
-              const row = {
-                id: uid('row'),
-                cells: template.cells.map(() => ({
-                  id: uid('cell'),
-                  blocks: [makeParagraph()],
-                  colSpan: 1,
-                  rowSpan: 1,
-                })),
-              };
-              const rows = [...table.rows];
-              rows.splice(tableMenu.rowIndex, 0, row);
-              return { ...table, rows };
-            }),
-        },
-        {
-          id: 'row-below',
-          label: '在下方插入行',
-          onSelect: () =>
-            mutateTable(tableMenu.tableId, (table) => {
-              const template = table.rows[tableMenu.rowIndex];
-              if (!template) return table;
-              const row = {
-                id: uid('row'),
-                cells: template.cells.map(() => ({
-                  id: uid('cell'),
-                  blocks: [makeParagraph()],
-                  colSpan: 1,
-                  rowSpan: 1,
-                })),
-              };
-              const rows = [...table.rows];
-              rows.splice(tableMenu.rowIndex + 1, 0, row);
-              return { ...table, rows };
-            }),
-        },
-        {
-          id: 'row-delete',
-          label: '删除当前行',
-          danger: true,
-          onSelect: () =>
-            mutateTable(tableMenu.tableId, (table) => {
-              const rows = table.rows.filter((_row, index) => index !== tableMenu.rowIndex);
-              return rows.length > 0 ? { ...table, rows } : null;
-            }),
-        },
-        { type: 'separator' },
-        {
-          id: 'table-delete',
-          label: '删除表格',
-          danger: true,
-          onSelect: () => mutateTable(tableMenu.tableId, () => null),
-        },
-      ]
+  // 功能：右键菜单与工具栏共用安全的网格编辑命令；时间：2026-10-19；作者：lq。
+  const tableMenuItems: MenuItem[] = tableMenu && tableSelection && activeTable
+    ? ([['merge', '合并选中单元格'], ['split', '拆分已合并单元格'], ['row-above', '在上方插入行'], ['row-below', '在下方插入行'], ['column-before', '在左侧插入列'], ['column-after', '在右侧插入列'], ['row-delete', '删除选中行'], ['column-delete', '删除选中列'], ['table-delete', '删除表格']] as [TableAction, string][]).map(([id, label]) => ({ id, label, danger: id.endsWith('delete'), onSelect: () => runTableAction(id) }))
     : [];
 
   return (
@@ -1844,6 +1932,8 @@ export function WordEditor({ session }: { session: WordSession }) {
           onBeforeInteraction={captureSelection}
         />
         ) : null}
+        {/* 功能：选中表格自动显示专属工具；时间：2026-10-19；作者：lq。 */}
+        {!readonly && activeTable && tableSelection ? <TableTools table={activeTable} selection={tableSelection} onAction={runTableAction} onFormat={(format) => mutateTable(activeTable.id, (table) => formatTable(table, tableSelection, format, metrics.contentWidth))} /> : null}
         <div
           ref={scrollRef}
           onScroll={handleScroll}
@@ -1858,6 +1948,22 @@ export function WordEditor({ session }: { session: WordSession }) {
             aria-label="文档正文"
             aria-multiline="true"
             tabIndex={0}
+            // 功能：Shift 点击扩展单元格选区，普通点击定位表格；时间：2026-10-19；作者：lq。
+            onPointerDownCapture={(event) => {
+              if (readonly || event.button !== 0 || (event.target as HTMLElement).closest('[data-table-resize]')) return;
+              const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell-id]');
+              const table = cell?.closest<HTMLElement>('[data-table-id]');
+              if (!cell || !table) { explicitTableSelectionRef.current = false; setTableSelection(null); return; }
+              if (event.shiftKey && tableSelection && tableSelection.tableId === table.dataset.tableId) {
+                event.preventDefault();
+                explicitTableSelectionRef.current = true;
+                window.getSelection()?.removeAllRanges();
+                setTableSelection({ ...tableSelection, focusId: cell.dataset.cellId! });
+              } else {
+                explicitTableSelectionRef.current = false;
+                setTableSelection({ tableId: table.dataset.tableId!, anchorId: cell.dataset.cellId!, focusId: cell.dataset.cellId! });
+              }
+            }}
             onKeyDown={handleDocumentKeyDown}
             onInput={(event) => {
               // 功能：共享编辑区的原生 input 事件按当前段落写回模型；时间：2026-10-18；作者：lq。
@@ -1885,7 +1991,7 @@ export function WordEditor({ session }: { session: WordSession }) {
                 blockMap={blockMap}
                 doc={doc}
                 zoom={effectiveZoom}
-                readonly={readonly}
+                readonly={readonly || exporting}
                 handlers={paragraphHandlers}
               />
             ))}
@@ -2047,7 +2153,10 @@ export function WordEditor({ session }: { session: WordSession }) {
       </Dialog>
 
       <style>{`
+        /* 功能：导出打印隐藏表格选区与交互柄；时间：2026-10-19；作者：lq。 */
         @media print {
+          [data-table-resize] { display: none !important; }
+          [data-cell-id] { box-shadow: none !important; }
           body * { visibility: hidden !important; }
           .mo-word-pages, .mo-word-pages * { visibility: visible !important; }
           .mo-word-pages {

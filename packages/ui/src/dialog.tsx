@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from './primitives';
@@ -37,13 +37,18 @@ export function Dialog({
 }: DialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  // 功能：保存最新关闭行为，避免表单输入生成新回调时重新执行弹窗聚焦；时间：2026-10-19；作者：lq。
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
       }
       if (event.key === 'Tab' && panelRef.current) {
         const focusables = panelRef.current.querySelectorAll<HTMLElement>(
@@ -63,14 +68,17 @@ export function Dialog({
     };
     document.addEventListener('keydown', onKeyDown, true);
     const timer = setTimeout(() => {
-      const preferred = panelRef.current?.querySelector<HTMLElement>('[data-autofocus]');
-      (preferred ?? panelRef.current)?.focus({ preventScroll: true });
+      // 功能：只在打开时初始化焦点，用户已点击表单时不抢走输入焦点；时间：2026-10-19；作者：lq。
+      const panel = panelRef.current;
+      if (!panel || panel.contains(document.activeElement)) return;
+      const preferred = panel.querySelector<HTMLElement>('[data-autofocus]');
+      (preferred ?? panel).focus({ preventScroll: true });
     }, 30);
     return () => {
       document.removeEventListener('keydown', onKeyDown, true);
       clearTimeout(timer);
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === 'undefined') return null;
 

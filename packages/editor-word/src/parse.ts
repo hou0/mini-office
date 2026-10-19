@@ -972,7 +972,8 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
       }
       column += span;
     }
-    if (cells.length > 0) {
+    // 功能：保留完全被纵向合并覆盖的行，防止保存重开后表格坍缩；时间：2026-10-19；作者：lq。
+    {
       rows.push({
         id: uid('row'),
         cells,

@@ -338,7 +338,8 @@ async function cellXml(
   continuation = false,
 ): Promise<string> {
   const props: string[] = [];
-  const width = cell.widthPx ?? columnWidthPx;
+  // 功能：以网格列宽优先保存合并区域总宽度，避免旧 tcW 覆盖尺寸调整；时间：2026-10-19；作者：lq。
+  const width = columnWidthPx ?? cell.widthPx;
   if (width) props.push(`<w:tcW w:w="${Math.round(width * 15)}" w:type="dxa"/>`);
   if (cell.colSpan > 1) props.push(`<w:gridSpan w:val="${cell.colSpan}"/>`);
   if (continuation) props.push('<w:vMerge/>');
@@ -372,6 +373,8 @@ async function tableXml(table: DocTable, state: SerializeState): Promise<string>
     const map = { left: 'left', center: 'center', right: 'right', justify: 'left' } as const;
     props.push(`<w:jc w:val="${map[table.alignment]}"/>`);
   }
+  // 功能：固定网格布局确保 Office 按用户设置的列宽打开表格；时间：2026-10-19；作者：lq。
+  props.push('<w:tblLayout w:type="fixed"/>');
   const borders = tableBordersXml(table.borders);
   if (borders) props.push(borders);
   const grid = table.columnWidthsPx
@@ -402,7 +405,7 @@ async function tableXml(table: DocTable, state: SerializeState): Promise<string>
               rowSpan: 1,
             },
             state,
-            table.columnWidthsPx[column],
+            table.columnWidthsPx.slice(column, column + spanning.span).reduce((sum, width) => sum + width, 0),
             true,
           ),
         );
@@ -412,7 +415,7 @@ async function tableXml(table: DocTable, state: SerializeState): Promise<string>
       }
       const cell = row.cells[cellIndex];
       if (!cell) break;
-      cellsXml.push(await cellXml(cell, state, table.columnWidthsPx[column]));
+      cellsXml.push(await cellXml(cell, state, table.columnWidthsPx.slice(column, column + cell.colSpan).reduce((sum, width) => sum + width, 0)));
       if (cell.rowSpan > 1) {
         active.push({ start: column, span: cell.colSpan, remaining: cell.rowSpan - 1 });
       }
