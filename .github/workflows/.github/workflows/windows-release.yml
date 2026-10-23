@@ -1,0 +1,76 @@
+# 功能：手动构建 Windows x64 版本并上传已有 Release。
+# 时间：2026-10-23
+# 作者：lq
+name: Windows Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      # 功能：使用已发布版本的源代码；时间：2026-10-23；作者：lq。
+      - name: Checkout v0.1.0
+        uses: actions/checkout@v4
+        with:
+          ref: v0.1.0
+
+      # 功能：安装项目指定的 pnpm；时间：2026-10-23；作者：lq。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # 功能：安装 Node.js；时间：2026-10-23；作者：lq。
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      # 功能：安装 Windows Rust 编译工具链；时间：2026-10-23；作者：lq。
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # 功能：按锁文件安装依赖；时间：2026-10-23；作者：lq。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 功能：构建 Windows x64 程序和 NSIS 安装包；时间：2026-10-23；作者：lq。
+      - name: Build Windows
+        run: pnpm tauri:build --target x86_64-pc-windows-msvc --bundles nsis
+
+      # 功能：整理安装包、运行包及校验清单；时间：2026-10-23；作者：lq。
+      - name: Prepare downloads
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $buildDir = "target/x86_64-pc-windows-msvc/release"
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+
+          $installers = @(Get-ChildItem "$buildDir/bundle/nsis/*-setup.exe")
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer."
+          }
+
+          Copy-Item $installers[0].FullName "release-assets/Mini-Office_0.1.0_windows-x64-setup.exe"
+          Compress-Archive -Path "$buildDir/mini-office-desktop.exe" -DestinationPath "release-assets/Mini-Office_0.1.0_windows-x64.zip"
+
+          Get-ChildItem release-assets -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content "release-assets/SHA256SUMS-windows.txt" -Encoding ascii
+
+      # 功能：上传到现有版本，保留 macOS 下载文件；时间：2026-10-23；作者：lq。
+      - name: Upload to Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload v0.1.0 (Get-ChildItem release-assets -File).FullName
