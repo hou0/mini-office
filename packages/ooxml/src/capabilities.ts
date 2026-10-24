@@ -229,9 +229,16 @@ async function scanXlsx(pkg: OoxmlPackage, state: ScanState): Promise<void> {
       'warning',
     );
   }
-  if (pkg.names().some((name) => /^xl\/drawings\//.test(name))) {
-    addFeature(state, 'xlsx.drawings', '图片与图形', false, 'warning');
+  // 功能：内嵌图片可编辑，图表和其他图形继续单独标识兼容范围；时间：2026-10-24；作者：lq。
+  const drawingParts = pkg.names().filter((name) => /^xl\/drawings\/[^/]+\.xml$/.test(name));
+  let hasPictures = false; let hasOtherDrawings = false;
+  for (const part of drawingParts) {
+    const xml = await pkg.text(part);
+    if (/<(?:\w+:)?pic\b/.test(xml)) hasPictures = true;
+    if (/<(?:\w+:)?(?:sp|graphicFrame|grpSp|cxnSp)\b/.test(xml)) hasOtherDrawings = true;
   }
+  if (hasPictures) addFeature(state, 'xlsx.images', '内嵌图片', true, 'info');
+  if (hasOtherDrawings) addFeature(state, 'xlsx.drawings', '图形与图表对象', false, 'warning');
   if (pkg.names().some((name) => name.startsWith('xl/comments'))) {
     addFeature(state, 'xlsx.comments', '批注', false, 'warning');
   }

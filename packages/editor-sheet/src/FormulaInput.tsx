@@ -7,6 +7,7 @@ import {
   type CSSProperties, type InputHTMLAttributes,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { formulaReferenceSpan, registerReferencePicker } from './formula/reference-picking';
 import { Input } from '@mini-office/ui';
 import { applyFormulaCompletion, getFormulaCompletion, type FunctionSuggestion } from './formula/completion';
 
@@ -22,6 +23,8 @@ export const FormulaInput = forwardRef<HTMLInputElement, FormulaInputProps>(func
 ) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // 功能：拖选期间始终替换本次引用，保留公式前缀、后缀和已有参数；时间：2026-10-24；作者：lq。
+  const referenceSession = useRef<{ text: string; start: number; end: number } | null>(null);
   const pendingCaret = useRef<number | null>(null);
   const [focused, setFocused] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -43,6 +46,30 @@ export const FormulaInput = forwardRef<HTMLInputElement, FormulaInputProps>(func
     inputRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current);
     pendingCaret.current = null;
   }, [value]);
+
+  // 功能：点选引用不触发失焦提交，并将光标留在新引用之后继续输入；时间：2026-10-24；作者：lq。
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input || composing || props.disabled || props.readOnly) return;
+    return registerReferencePicker(input, (phase, reference) => {
+      if (phase === 'end') { referenceSession.current = null; return true; }
+      if (phase === 'start') {
+        const span = formulaReferenceSpan(value, input.selectionStart ?? value.length, input.selectionEnd ?? value.length);
+        if (!span) return false;
+        referenceSession.current = { text: value, ...span };
+      }
+      const session = referenceSession.current;
+      if (!session) return false;
+      const next = session.text.slice(0, session.start) + reference + session.text.slice(session.end);
+      const nextCaret = session.start + reference.length;
+      pendingCaret.current = nextCaret;
+      setCaret(nextCaret); setCollapsed(true); setDismissed(null);
+      onValueChange(next);
+      // 功能：重复点选同一引用时受控值可能不变，仍同步恢复光标；时间：2026-10-24；作者：lq。
+      if (next === value) { input.setSelectionRange(nextCaret, nextCaret); pendingCaret.current = null; }
+      return true;
+    });
+  }, [value, composing, props.disabled, props.readOnly, onValueChange]);
 
   // 功能：弹层挂载至 body，跟随输入框滚动/缩放定位，并在窗口底部自动向上展开；时间：2026-10-24；作者：lq。
   useLayoutEffect(() => {
@@ -95,6 +122,7 @@ export const FormulaInput = forwardRef<HTMLInputElement, FormulaInputProps>(func
           if (typeof forwardedRef === 'function') forwardedRef(element);
           else if (forwardedRef) forwardedRef.current = element;
         }}
+        data-sheet-formula-input="true"
         value={value}
         autoComplete="off"
         spellCheck={false}
@@ -117,6 +145,7 @@ export const FormulaInput = forwardRef<HTMLInputElement, FormulaInputProps>(func
           onSelect?.(event);
         }}
         onChange={(event) => {
+          referenceSession.current = null;
           setCaret(event.currentTarget.selectionStart ?? event.target.value.length);
           setCollapsed(event.currentTarget.selectionStart === event.currentTarget.selectionEnd);
           setDismissed(null);

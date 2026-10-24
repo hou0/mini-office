@@ -27,6 +27,9 @@ import {
 import { baseName, stripExtension } from '@mini-office/shared';
 import { BUILTIN_NUMBER_FORMATS } from './format';
 import { recalculateWorkbook } from './formula/engine';
+// 功能：重开文件时恢复筛选勾选项及可清除的隐藏状态；时间：2026-10-24；作者：lq。
+import { parseSheetImages } from './sheet-images';
+import { cellDisplay } from './sheet-utils';
 import { translateFormula } from './formula/parser';
 
 const EXCEL_INDEXED_COLORS = [
@@ -254,6 +257,8 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
       horizontalAlign: horizontalMap[horizontalRaw ?? 'general'] ?? 'general',
       verticalAlign: verticalMap[verticalRaw ?? 'bottom'] ?? 'bottom',
       wrapText: getAttr(alignment, 'wrapText') === '1',
+      // 功能：读取缩小字体填充设置；时间：2026-10-24；作者：lq。
+      shrinkToFit: getAttr(alignment, 'shrinkToFit') === '1',
       indent: Number(getAttr(alignment, 'indent') ?? '0') || undefined,
       borders: border && Object.keys(border).length > 0 ? border : undefined,
       xfIndex: index,
@@ -490,6 +495,27 @@ async function parseSheet(
     }
   }
 
+  // 功能：读取标准值列表筛选，恢复各字段的勾选条件；时间：2026-10-24；作者：lq。
+  if (sheet.autoFilter) {
+    const criteria: Record<number, string[]> = {};
+    for (const node of Array.from(firstChild(worksheet, 'autoFilter')?.children ?? [])) {
+      if (node.localName !== 'filterColumn') continue;
+      const filters = firstChild(node, 'filters');
+      if (!filters) continue;
+      const column = sheet.autoFilter.c1 + Number(getAttr(node, 'colId'));
+      criteria[column] = Array.from(filters.children).filter((item) => item.localName === 'filter').map((item) => getAttr(item, 'val') ?? '');
+      if (getAttr(filters, 'blank') === '1') criteria[column].push('');
+    }
+    if (Object.keys(criteria).length) sheet.filterCriteria = criteria;
+  }
+
+  // 功能：加载工作表图片及其锚点；时间：2026-10-24；作者：lq。
+  sheet.images = await parseSheetImages(pkg, descriptor.part, worksheet, sheet);
+  // 功能：标签颜色存放在标准 sheetPr 节点，兼容无 sheetView 的工作表；时间：2026-10-24；作者：lq。
+  const propertyColor = excelColor(firstChild(firstChild(worksheet, 'sheetPr'), 'tabColor'), theme);
+  if (propertyColor) sheet.tabColor = propertyColor;
+
+  for (const image of sheet.images) { maxRow = Math.max(maxRow, image.row); maxCol = Math.max(maxCol, image.col); }
   sheet.dimension = {
     rows: Math.min(1_048_576, Math.max(maxRow + 80, 100)),
     cols: Math.min(16_384, Math.max(maxCol + 20, 26)),
@@ -586,7 +612,26 @@ export async function parseWorkbookPackage(
       sheets: sheets.length,
     },
   };
-  return recalculateWorkbook(model);
+  const calculated = recalculateWorkbook(model);
+  // 功能：将文件内原始筛选值还原为菜单显示值，区分筛选隐藏与手动隐藏；时间：2026-10-24；作者：lq。
+  for (const sheet of calculated.sheets) {
+    if (!sheet.autoFilter || !sheet.filterCriteria) continue;
+    const rawCriteria = Object.entries(sheet.filterCriteria).map(([column, values]) => [Number(column), new Set(values)] as const);
+    const criteria: Record<number, string[]> = {};
+    const baseHidden = { ...sheet.hiddenRows };
+    for (const [col, raw] of rawCriteria) {
+      const displays = new Set<string>();
+      for (let row = sheet.autoFilter.r1 + 1; row <= sheet.autoFilter.r2; row += 1) {
+        const value = calculated.computed?.[sheet.id]?.[`${row}:${col}`]?.value ?? sheet.cells[`${row}:${col}`]?.value ?? '';
+        if (raw.has(String(value))) displays.add(cellDisplay(calculated, sheet, row, col));
+        else delete baseHidden[row];
+      }
+      criteria[col] = [...displays];
+    }
+    sheet.filterCriteria = criteria;
+    sheet.filterBaseHiddenRows = baseHidden;
+  }
+  return calculated;
 }
 
 // ---- CSV ---------------------------------------------------------------

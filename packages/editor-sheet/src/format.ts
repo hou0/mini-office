@@ -191,16 +191,33 @@ function formatScientific(value: number, section: string): string {
 export function formatNumeric(value: number, pattern: string | undefined, date1904 = false): string {
   if (!Number.isFinite(value)) return '#NUM!';
   if (!pattern || pattern === 'General' || pattern === 'general') return formatGeneralNumber(value);
+  // 功能：文本格式保留数值原貌，不按整数四舍五入；时间：2026-10-24；作者：lq。
+  if (pattern === '@') return formatGeneralNumber(value);
   if (isDateFormat(pattern)) return formatDateSerial(value, pattern, date1904);
   const sections = splitSections(pattern);
   let section = sections[0] ?? 'General';
   if (value < 0 && sections[1]) section = sections[1];
   else if (value === 0 && sections[2]) section = sections[2];
-  const negative = value < 0 && !sections[1];
-  const absolute = negative ? Math.abs(value) : value;
+  // 功能：负数格式使用绝对值套用负数节，避免会计格式出现重复负号；时间：2026-10-24；作者：lq。
+  const negative = value < 0;
+  const absolute = Math.abs(value);
+  const fraction = /([?0#]+)\/([?0#]+)/.exec(section);
+  if (fraction) {
+    const whole = Math.floor(absolute);
+    const maxDenominator = Math.min(999, 10 ** fraction[2].length - 1);
+    let numerator = 0; let denominator = 1; let best = Infinity;
+    for (let candidate = 1; candidate <= maxDenominator; candidate++) {
+      const current = Math.round((absolute - whole) * candidate);
+      const error = Math.abs(absolute - whole - current / candidate);
+      if (error < best) { best = error; numerator = current; denominator = candidate; }
+    }
+    const integer = whole + (numerator === denominator ? 1 : 0);
+    const remainder = numerator === denominator ? 0 : numerator;
+    return `${negative ? '-' : ''}${integer || !remainder ? integer : ''}${integer && remainder ? ' ' : ''}${remainder ? `${remainder}/${denominator}` : ''}`;
+  }
   if (/E[+-]0+/i.test(section)) return formatScientific(absolute, section);
   const percent = section.includes('%');
-  const digits = countDecimals(section);
+  const digits = Math.min(20, countDecimals(section));
   const useThousands = section.includes(',');
   const currencyMatch = /[¥￥$€£]/.exec(section);
   const displayValue = percent ? absolute * 100 : absolute;
@@ -211,7 +228,7 @@ export function formatNumeric(value: number, pattern: string | undefined, date19
   } else if (negative) {
     text = `-${text}`;
   }
-  if (currencyMatch) text = `${currencyMatch[0]}${text}`;
+  if (currencyMatch) text = text.startsWith('(') ? `(${currencyMatch[0]}${text.slice(1)}` : `${currencyMatch[0]}${text}`;
   if (percent) text = `${text}%`;
   return text.replace(/"([^"]*)"/g, '$1');
 }

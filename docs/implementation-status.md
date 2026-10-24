@@ -1,6 +1,8 @@
 # Mini Office V1 实施完成度
 
-> 状态日期：2026-10-18 ｜ 版本：0.1.0 ｜ 对应设计：[`Mini_Office_完整版产品需求与技术设计.md`](../Mini_Office_完整版产品需求与技术设计.md)
+<!-- 功能：更新功能完成度与验证范围；时间：2026-10-24；作者：lq。 -->
+
+> 状态日期：2026-10-24 ｜ 版本：0.1.3 ｜ 对应设计：[`Mini_Office_完整版产品需求与技术设计.md`](../Mini_Office_完整版产品需求与技术设计.md)
 
 ## 1. 总体结论
 
@@ -10,13 +12,15 @@
 - 尚未完成：三平台安装包签名/公证、自动更新、Windows/Linux 实机验收、10 万行性能基准、截图视觉回归 CI、复杂 DOCX 编辑与 XLSX 图表/透视表渲染。
 - 按当前范围明确不做：VBA 执行、云端协作、AI 助手；PPTX 已支持基础内容编辑，复杂动画/媒体/图表仍保留原部件。
 
-**当前验证基线：**
+**当前源码检查与历史验证记录：**
+
+本轮重跑 TypeScript、Vitest 和 Web 构建；Rust、桌面 bundle、Office 回读及浏览器记录为历史证据，本轮未重新执行。
 
 | 项目 | 结果 |
 |---|---|
 | TypeScript 严格检查 | 通过 |
-| Vitest | **69 项通过 / 11 个测试文件** |
-| Rust workspace 测试 | **19 项通过** |
+| Vitest | **160 项通过 / 26 个测试文件** |
+| Rust workspace 测试 | 历史记录：19 项通过 |
 | Web 生产构建 | 通过 |
 | Tauri debug `.app` | 构建通过，约 30.9 MB |
 | 真实 DOCX 往返 | 通过（python-docx 复核页眉、表格、图片、字体/字号） |
@@ -31,7 +35,7 @@
 | 设计任务 | 状态 | 说明与证据 |
 |---|---|---|
 | INIT-001 单仓库与 Rust/Node 工作区 | ✅ | pnpm + Cargo workspace，`pnpm verify` / `cargo test --workspace` |
-| INIT-002 Tauri 三系统构建与 CI | 🟡 | macOS `.app` 构建/启动通过；Windows/Linux 与 CI 待补 |
+| INIT-002 Tauri 三系统构建与 CI | 🟡 | macOS 历史 `.app` 构建/启动通过；已有 macOS Universal/arm64 与 Windows x64 手动工作流，目标设备验收待补 |
 | ARCH-001 平台调用抽象与权限模型 | ✅ | `PlatformAdapter` 隔离 Web/Tauri；最小权限含 dialog/opener/window effects/fullscreen |
 | FORMAT-001 OOXML 能力扫描器 | ✅ | TS + Rust 双实现；宏/签名/外部链接/压缩炸弹/修订等 |
 | FORMAT-002 真实兼容测试样例集 | ✅ | DOCX 合同、XLSX 三表、PPTX 三页，均来自真实库生成 |
@@ -48,7 +52,7 @@
 | EXPORT-001 统一 PDF 后端 | ✅ | Word/Excel/PPT 实际 PDF；PPT 图片 ZIP；打印复用分页 DOM |
 | STORAGE-001 原子写入及自动恢复 | ✅ | 临时文件 + fsync + rename + 备份；IndexedDB 快照恢复 |
 | QA-001 跨平台格式与视觉回归 | 🟡 | 真实样例/手动 Playwright 验证；视觉快照 CI 未建立 |
-| RELEASE-001 签名、安装、自动更新 | ⬜ | 尚未签名/公证，无自动更新；DMG 受沙箱 `hdiutil` 限制 |
+| RELEASE-001 签名、安装、自动更新 | ⬜ | 已有安装包工作流；macOS 临时签名，Developer ID/公证、Windows 签名与自动更新未完成 |
 
 ## 3. 模块完成情况
 
@@ -59,7 +63,7 @@
 | 首页、最近文件、模板 | ✅ | 合同/费用报销模板 |
 | 多格式标签页/关闭确认 | ✅ | 长文件名解码/截断 |
 | 命令面板/快捷键 | ✅ | 文件、编辑、视图命令 |
-| 主题/强调色 | ✅ | 5 套预设 + 自定义；69 项测试含对比度 |
+| 主题/强调色 | ✅ | 5 套预设 + 自定义；含对比度测试 |
 | 原生毛玻璃 | 🟡 | Tauri `setEffects` 已接入并通过构建；macOS 实机视觉验收待补 |
 | 窗口拖动/双击最大化 | 🟡 | 标题栏/标签栏空白区调用 `startDragging`/`toggleMaximize`；实机拖拽待补 |
 | 工具栏悬浮提示 | ✅ | Portal Tooltip，不受横向滚动裁剪 |
@@ -74,7 +78,8 @@
 | 文字与段落格式 | ✅ | 字体、字号、颜色、高亮、对齐、缩进、行距 |
 | 表格/图片/分页符 | ✅ | 插入后保存并经 python-docx 复核 |
 | 查找替换/撤销重做 | ✅ | 模型级撤销，DOM 同步修复 |
-| 页眉页脚/页码 | 🟡 | 可显示并保留引用；V1 不提供页眉页脚编辑 |
+| 页眉页脚/页码 | ✅ | 文字、预设页码与起始页码；复杂内容保留，见专门说明 |
+| 邮件合并/批量报告 | ✅ | XLSX/CSV、模板字段、筛选、预览、打印与 DOCX/PDF/ZIP |
 | 修订/批注/内容控件 | 🟡 | 保留/L2 提示；不编辑 |
 | 打印/PDF | ✅ | 分页 DOM 打印 + Canvas PDF |
 | DOCX 保存 | ✅ | 保留未知部件、页眉页脚引用、媒体 |
@@ -85,7 +90,8 @@
 |---|---|---|
 | XLSX/CSV 打开与保存 | ✅ | 二次往返测试；CSV UTF-8 BOM |
 | 虚拟网格/编辑/选区 | ✅ | 行/列/区域操作 |
-| 格式/合并/冻结/筛选/排序 | ✅ | 真实工作簿验证 |
+| 格式/合并/冻结/筛选/排序 | ✅ | 格式弹窗、边框预设、多列筛选与自定义单字段排序，含往返回归 |
+| 图片/工作表标签/公式点选 | ✅ | 图片定位与保存、原位改名/颜色、引用拖选与括号补全，含自动回归 |
 | 公式引擎 | ✅ | 60+ 函数、跨表、循环、日期、错误值 |
 | 图表/透视表/条件格式 | 🟡 | 保留原始部件并提示；不渲染/不刷新 |
 | 外部链接/宏 | 🟡 | 外部链接不自动加载；宏只读 |
@@ -127,12 +133,12 @@
 | 项目 | 状态 | 后续 |
 |---|---|---|
 | Windows/Linux 实机 | ⬜ | 三平台字体/窗口/打印/安装包回归 |
-| macOS 签名、公证、DMG/MSI/AppImage | ⬜ | RELEASE-001；当前仅 macOS `.app` |
+| 安装包与正式签名、公证 | 🟡 | 已有 macOS DMG/ZIP 与 Windows NSIS/ZIP 工作流；正式签名、公证与 Linux 发布工程待补 |
 | 自动更新/崩溃报告 | ⬜ | 签名密钥、更新服务、回滚 |
 | 10 万行 XLSX 性能基准 | ⬜ | 虚拟滚动已有，需数据与 CI 门槛 |
 | 截图视觉回归 | ⬜ | Playwright 快照 + 基线管理 |
 | CSP 收紧 | ⬜ | 当前 Tauri `csp: null`，发布前配置 |
-| DOCX 页眉页脚/修订/批注编辑 | ⬜ | 兼容性深化 |
+| DOCX 复杂页眉页脚/修订/批注编辑 | 🟡 | 基础页眉页脚与页码已支持；复杂分节、修订/批注专用编辑待补 |
 | XLSX 图表/透视表/条件格式渲染 | ⬜ | 兼容性深化 |
 | PPTX 高级编辑 | 部分 | 图片裁剪、表格结构、动画、媒体和图表编辑待后续 |
 | 许可审核 | ⬜ | 分发前复核依赖许可证 |
@@ -140,8 +146,8 @@
 ## 5. 回归与验收命令
 
 ```bash
-pnpm verify                 # typecheck + 69 Vitest + web build
-cargo test --workspace      # 19 Rust tests
+pnpm verify                 # typecheck + Vitest + web build
+cargo test --workspace      # Rust workspace 回归
 pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 ```
 
@@ -151,4 +157,4 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 target/debug/bundle/macos/Mini Office.app
 ```
 
-> 当前 DSH 沙箱禁止写入 `~/Library` 与调用 `hdiutil`；`.app` 启动使用可写 HOME 做过冒烟验证，DMG 需在正常 macOS 用户环境生成。
+> 历史本地构建曾受沙箱写入和 `hdiutil` 权限限制。现有 GitHub Actions 可在 macOS runner 生成安装包；工作流配置完成不代表本版本已构建、公开发布或通过实机验收。

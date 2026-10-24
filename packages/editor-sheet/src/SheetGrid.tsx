@@ -14,16 +14,23 @@ import type {
   CellRange,
   CellStyle,
   SheetModel,
+  SheetImage,
   WorkbookModel,
 } from '@mini-office/document-model';
 import { columnLabel } from '@mini-office/shared';
 import { cellKey } from '@mini-office/document-model';
+// 功能：在表头显示筛选入口与激活状态；时间：2026-10-24；作者：lq。
+import { ChevronDown, Filter } from 'lucide-react';
 // 功能：为单元格内的公式编辑启用函数智能提示；时间：2026-10-24；作者：lq。
+// 功能：渲染可编辑浮动图片；时间：2026-10-24；作者：lq。
+import { pickFormulaReference } from './formula/reference-picking';
+import { SheetImageLayer } from './SheetImageLayer';
 import { FormulaInput } from './FormulaInput';
 import {
   cellDisplay,
   cellStyle,
   selectionRange,
+  rangeRef,
   type Selection,
 } from './sheet-utils';
 
@@ -55,12 +62,27 @@ export interface SheetGridProps {
   onStartEdit: (row: number, col: number, initialText?: string) => void;
   onCommitEdit: (value: string, move: 'down' | 'right' | 'up' | 'left' | 'none') => void;
   onCancelEdit: () => void;
+  // 功能：单元格编辑与顶部公式栏同步同一份草稿；时间：2026-10-24；作者：lq。
+  formulaDraft?: string;
+  onDraftChange?: (value: string) => void;
   onColumnResize: (col: number, width: number) => void;
   onRowResize: (row: number, height: number) => void;
   onCellContextMenu: (event: ReactMouseEvent, row: number, col: number) => void;
   onHeaderContextMenu: (event: ReactMouseEvent, kind: 'row' | 'col', index: number) => void;
   onAction: (action: GridAction) => void;
+  // 功能：在筛选区域表头打开列筛选菜单；时间：2026-10-24；作者：lq。
+  onFilterColumn?: (col: number, anchor: DOMRect) => void;
+  // 功能：图片编辑回调及缩放坐标换算参数；时间：2026-10-24；作者：lq。
+  readonly?: boolean;
+  zoom?: number;
+  onImageChange?: (id: string, patch: Partial<SheetImage>) => void;
+  onImageDelete?: (id: string) => void;
   onFill: (source: CellRange, target: CellRange) => void;
+}
+
+// 功能：单个引用显示 B1，矩形引用显示 B1:C3，与 Excel 输入习惯一致；时间：2026-10-24；作者：lq。
+function referenceAddress(range: CellRange): string {
+  return range.r1 === range.r2 && range.c1 === range.c2 ? `${columnLabel(range.c1)}${range.r1 + 1}` : rangeRef(range);
 }
 
 const ROW_HEADER_WIDTH = 46;
@@ -131,6 +153,11 @@ export function SheetGrid(props: SheetGridProps) {
   const [resizePreview, setResizePreview] = useState<{ kind: 'col' | 'row'; index: number; size: number } | null>(null);
   const [draft, setDraft] = useState('');
   const [dragging, setDragging] = useState(false);
+  // 功能：引用选区独立于正在编辑的单元格，点选不移动编辑位置；时间：2026-10-24；作者：lq。
+  const referenceDrag = useRef<{ input: HTMLInputElement; row: number; col: number } | null>(null);
+  const referenceInput = useRef<HTMLInputElement | null>(null);
+  const [referenceDragging, setReferenceDragging] = useState(false);
+  const [referenceRange, setReferenceRange] = useState<CellRange | null>(null);
   const [fillPreview, setFillPreview] = useState<CellRange | null>(null);
   const fillRef = useRef<{ source: CellRange; startX: number; startY: number } | null>(null);
   const scrollRaf = useRef<number | null>(null);
@@ -140,10 +167,10 @@ export function SheetGrid(props: SheetGridProps) {
   const resizeRef = useRef<{ kind: 'col' | 'row'; index: number; start: number; initial: number } | null>(null);
 
   const range = selectionRange(selection);
-  const active = selection.focus;
+  const active = selection.kind ? selection.anchor : selection.focus;
 
-  const rowsCount = Math.max(sheet.dimension.rows, range.r2 + 2, 100);
-  const colsCount = Math.max(sheet.dimension.cols, range.c2 + 2, 26);
+  const rowsCount = Math.max(sheet.dimension.rows, range.r2 + (selection.kind ? 1 : 2), 100);
+  const colsCount = Math.max(sheet.dimension.cols, range.c2 + (selection.kind ? 1 : 2), 26);
 
   const colOffsets = useMemo(
     () =>
@@ -220,6 +247,17 @@ export function SheetGrid(props: SheetGridProps) {
     setDraft(editing.initialText);
   }, [editing]);
 
+  // 功能：从公式栏修改草稿时同步网格输入框，避免两个入口互相覆盖；时间：2026-10-24；作者：lq。
+  useLayoutEffect(() => {
+    if (editing && props.formulaDraft !== undefined) setDraft(props.formulaDraft);
+  }, [editing, props.formulaDraft]);
+
+  useEffect(() => {
+    const clear = (event: FocusEvent) => { if (event.target === referenceInput.current) setReferenceRange(null); };
+    document.addEventListener('focusout', clear);
+    return () => document.removeEventListener('focusout', clear);
+  }, []);
+
   // 功能：等待受控草稿实际写入 DOM 后同步聚焦，替代有竞态的延时聚焦；时间：2026-10-24；作者：lq。
   useLayoutEffect(() => {
     if (!editing || draft !== editing.initialText || focusedEditingRef.current === editing) return;
@@ -294,7 +332,8 @@ export function SheetGrid(props: SheetGridProps) {
 
   useEffect(() => {
     const scrollElement = scrollRef.current;
-    if (!scrollElement) return;
+    // 功能：表头选择仅改变选区，保持当前水平和垂直滚动位置；时间：2026-10-24；作者：lq。
+    if (!scrollElement || selection.kind) return;
     const left = colOffsets[active.col] ?? 0;
     const right = colOffsets[active.col + 1] ?? left;
     const top = rowOffsets[active.row] ?? 0;
@@ -307,7 +346,7 @@ export function SheetGrid(props: SheetGridProps) {
     else if (bottom > scrollElement.scrollTop + scrollElement.clientHeight) {
       scrollElement.scrollTop = bottom - scrollElement.clientHeight;
     }
-  }, [active.col, active.row, colOffsets, rowOffsets]);
+  }, [active.col, active.row, colOffsets, rowOffsets, selection.kind]);
 
   const handleScroll = useCallback(() => {
     if (scrollRaf.current !== null) return;
@@ -318,6 +357,17 @@ export function SheetGrid(props: SheetGridProps) {
       setScroll({ left: element.scrollLeft, top: element.scrollTop });
     });
   }, []);
+
+  // 功能：在公式光标处插入单元格地址并保持焦点，拖动时扩展成区域引用；时间：2026-10-24；作者：lq。
+  const beginReference = (row: number, col: number): boolean => {
+    const input = document.activeElement;
+    if (!(input instanceof HTMLInputElement) || !input.hasAttribute('data-sheet-formula-input')) return false;
+    const next = { r1: row, c1: col, r2: row, c2: col };
+    if (!pickFormulaReference(input, 'start', referenceAddress(next))) return false;
+    referenceInput.current = input; referenceDrag.current = { input, row, col };
+    setReferenceRange(next); setReferenceDragging(true);
+    return true;
+  };
 
   const beginSelection = useCallback(
     (row: number, col: number, extend: boolean) => {
@@ -507,7 +557,7 @@ export function SheetGrid(props: SheetGridProps) {
       justifyContent:
         horizontal === 'center' ? 'center' : horizontal === 'right' ? 'flex-end' : 'flex-start',
       paddingLeft: 4 + (style.indent ?? 0) * 8,
-      paddingRight: 4,
+      paddingRight: sheet.autoFilter && row === sheet.autoFilter.r1 ? 21 : 4,
       boxSizing: 'border-box',
       overflow: 'hidden',
       background: style.fill ?? '#FFFFFF',
@@ -542,20 +592,29 @@ export function SheetGrid(props: SheetGridProps) {
         onMouseDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
+          if (beginReference(row, col)) return;
           containerRef.current?.focus({ preventScroll: true });
           beginSelection(row, col, event.shiftKey);
         }}
         onMouseEnter={() => {
           if (dragging) onSelectionChange({ anchor: selection.anchor, focus: { row, col } }, { extend: true });
         }}
-        onDoubleClick={() => onStartEdit(row, col)}
+        onDoubleClick={() => { if (!referenceDrag.current && document.activeElement !== referenceInput.current) onStartEdit(row, col); }}
         onContextMenu={(event) => {
           event.preventDefault();
-          if (!inRange) beginSelection(row, col, false);
+          if (!inRange) onSelectionChange({ anchor: { row, col }, focus: { row, col } });
           onCellContextMenu(event, row, col);
         }}
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'clip', whiteSpace: 'inherit' }}>{displayText}</span>
+        {/* 功能：在实际字段表头显示下拉按钮，筛选状态以漏斗标识；时间：2026-10-24；作者：lq。 */}
+        {sheet.autoFilter && row === sheet.autoFilter.r1 && col >= sheet.autoFilter.c1 && col <= sheet.autoFilter.c2 ? (
+          <button type="button" aria-label={`筛选 ${columnLabel(col)} 列`} className="absolute right-0.5 top-0.5 z-10 flex h-4 w-4 items-center justify-center rounded border border-[var(--mo-line)] bg-[var(--mo-surface)] text-[var(--mo-text-primary)]"
+            onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+            onClick={(event) => { event.stopPropagation(); props.onFilterColumn?.(col, event.currentTarget.getBoundingClientRect()); }}>
+            {sheet.filterCriteria?.[col] ? <Filter size={11} /> : <ChevronDown size={11} />}
+          </button>
+        ) : null}
+        <SheetCellText text={displayText} shrink={!!style.shrinkToFit && !style.wrapText} width={width} font={`${style.fontFamily}-${style.fontSizePt}-${style.bold}`} />
       </div>
     );
   };
@@ -578,6 +637,46 @@ export function SheetGrid(props: SheetGridProps) {
   const frozenCols = Math.min(sheet.freeze?.cols ?? 0, colsCount);
   const frozenRowsHeight = rowOffsets[frozenRows] ?? 0;
   const frozenColsWidth = colOffsets[frozenCols] ?? 0;
+
+  // 功能：通过全局鼠标坐标拖选引用，跨虚拟滚动和冻结窗格仍正确定位；时间：2026-10-24；作者：lq。
+  useEffect(() => {
+    if (!referenceDragging) return;
+    let pointer: { x: number; y: number } | null = null;
+    let frame = 0;
+    let lastReference = '';
+    const update = () => {
+      const drag = referenceDrag.current; const element = scrollRef.current;
+      if (!drag || !element || !pointer) return;
+      const rect = element.getBoundingClientRect();
+      // 功能：CSS 缩放下将屏幕坐标换回网格逻辑像素；时间：2026-10-24；作者：lq。
+      const scale = rect.width / (element.offsetWidth || rect.width) || 1;
+      const x = (pointer.x - rect.left) / scale; const y = (pointer.y - rect.top) / scale;
+      const col = Math.min(colsCount - 1, findIndex(colOffsets, Math.max(0, x + (x < frozenColsWidth ? 0 : element.scrollLeft))));
+      const row = Math.min(rowsCount - 1, findIndex(rowOffsets, Math.max(0, y + (y < frozenRowsHeight ? 0 : element.scrollTop))));
+      const next = { r1: Math.min(drag.row, row), c1: Math.min(drag.col, col), r2: Math.max(drag.row, row), c2: Math.max(drag.col, col) };
+      const reference = referenceAddress(next);
+      if (reference !== lastReference) { lastReference = reference; setReferenceRange(next); pickFormulaReference(drag.input, 'update', reference); }
+    };
+    const move = (event: MouseEvent) => { pointer = { x: event.clientX, y: event.clientY }; update(); };
+    const stop = () => {
+      const drag = referenceDrag.current;
+      if (drag) pickFormulaReference(drag.input, 'end', '');
+      referenceDrag.current = null; setReferenceDragging(false);
+    };
+    const tick = () => {
+      const element = scrollRef.current;
+      if (pointer && element) {
+        const rect = element.getBoundingClientRect();
+        const dx = pointer.x < rect.left ? -20 : pointer.x > rect.right ? 20 : 0;
+        const dy = pointer.y < rect.top ? -20 : pointer.y > rect.bottom ? 20 : 0;
+        if (dx || dy) { element.scrollLeft += dx; element.scrollTop += dy; update(); }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', stop);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', stop); };
+  }, [referenceDragging, colOffsets, rowOffsets, colsCount, rowsCount, frozenColsWidth, frozenRowsHeight]);
 
   const renderFrozenPane = () => {
     if (frozenRows === 0 && frozenCols === 0) return null;
@@ -701,7 +800,12 @@ export function SheetGrid(props: SheetGridProps) {
             borderBottom: '1px solid var(--mo-line)',
             boxSizing: 'border-box',
           }}
-          onMouseDown={() => onSelectionChange({ anchor: { row: 0, col: 0 }, focus: { row: rowsCount - 1, col: colsCount - 1 } })}
+          aria-label="全选工作表"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            containerRef.current?.focus({ preventScroll: true });
+            onSelectionChange({ kind: 'all', anchor: { row: 0, col: 0 }, focus: { row: rowsCount - 1, col: colsCount - 1 } });
+          }}
         />
         <div className="relative flex-1 overflow-hidden">
           <div style={{ position: 'absolute', left: 0, top: 0, width: totalWidth, height: COL_HEADER_HEIGHT, transform: `translateX(${-scroll.left}px)` }}>
@@ -724,8 +828,8 @@ export function SheetGrid(props: SheetGridProps) {
                   }}
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    containerRef.current?.focus();
-                    onSelectionChange({ anchor: { row: 0, col }, focus: { row: rowsCount - 1, col } });
+                    containerRef.current?.focus({ preventScroll: true });
+                    onSelectionChange({ kind: 'col', anchor: { row: 0, col }, focus: { row: rowsCount - 1, col } });
                   }}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -783,8 +887,8 @@ export function SheetGrid(props: SheetGridProps) {
                   }}
                   onMouseDown={(event) => {
                     event.preventDefault();
-                    containerRef.current?.focus();
-                    onSelectionChange({ anchor: { row, col: 0 }, focus: { row, col: colsCount - 1 } });
+                    containerRef.current?.focus({ preventScroll: true });
+                    onSelectionChange({ kind: 'row', anchor: { row, col: 0 }, focus: { row, col: colsCount - 1 } });
                   }}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -848,6 +952,13 @@ export function SheetGrid(props: SheetGridProps) {
                 }),
               )}
 
+              {/* 功能：以蓝色边框显示正在点选或拖选的公式引用区域；时间：2026-10-24；作者：lq。 */}
+              {referenceRange ? <div data-formula-reference={referenceAddress(referenceRange)} style={{ position: 'absolute', left: colOffsets[referenceRange.c1] ?? 0, top: rowOffsets[referenceRange.r1] ?? 0,
+                width: (colOffsets[referenceRange.c2 + 1] ?? 0) - (colOffsets[referenceRange.c1] ?? 0), height: (rowOffsets[referenceRange.r2 + 1] ?? 0) - (rowOffsets[referenceRange.r1] ?? 0),
+                border: '2px dashed #3478F6', background: 'rgba(52,120,246,0.08)', pointerEvents: 'none', zIndex: 14 }} /> : null}
+              {/* 功能：图片与网格共用滚动坐标，拖动和缩放结束后保存；时间：2026-10-24；作者：lq。 */}
+              <SheetImageLayer images={sheet.images ?? []} colOffsets={colOffsets} rowOffsets={rowOffsets} readonly={!!props.readonly} zoom={props.zoom ?? 1}
+                onChange={(id, patch) => props.onImageChange?.(id, patch)} onDelete={(id) => props.onImageDelete?.(id)} />
               <div
                 style={{
                   position: 'absolute',
@@ -911,7 +1022,7 @@ export function SheetGrid(props: SheetGridProps) {
                   aria-label="单元格编辑"
                   ref={inputRef}
                   value={draft}
-                  onValueChange={setDraft}
+                  onValueChange={(value) => { setDraft(value); props.onDraftChange?.(value); }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();
@@ -924,7 +1035,10 @@ export function SheetGrid(props: SheetGridProps) {
                       onCancelEdit();
                     }
                   }}
-                  onBlur={() => commitEditing('none')}
+                  onBlur={(event) => {
+                    if ((event.relatedTarget as HTMLElement | null)?.hasAttribute('data-sheet-formula-input')) return;
+                    commitEditing('none');
+                  }}
                   style={{
                     position: 'absolute',
                     left: colOffsets[editing.col] ?? 0,
@@ -952,4 +1066,17 @@ export function SheetGrid(props: SheetGridProps) {
       </div>
     </div>
   );
+}
+
+// 功能：按单元格实际宽度缩小文字显示，保留原始字号与内容；时间：2026-10-24；作者：lq。
+function SheetCellText({ text, shrink, width, font }: { text: string; shrink: boolean; width: number; font: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const span = ref.current;
+    if (!span) return;
+    span.style.fontSize = '';
+    const available = (span.parentElement?.clientWidth ?? width) - 8;
+    if (shrink && span.scrollWidth > available && available > 0) span.style.fontSize = `${Math.max(1, Math.floor(100 * available / span.scrollWidth))}%`;
+  }, [text, shrink, width, font]);
+  return <span ref={ref} style={{ overflow: 'hidden', textOverflow: 'clip', whiteSpace: 'inherit', maxWidth: '100%' }}>{text}</span>;
 }

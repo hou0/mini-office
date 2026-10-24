@@ -1,4 +1,7 @@
 import JSZip from 'jszip';
+// 功能：将筛选显示值映射回标准 XLSX 筛选值；时间：2026-10-24；作者：lq。
+import { writeImageContentTypes, writeSheetImages } from './sheet-images';
+import { cellDisplay } from './sheet-utils';
 import { BUILTIN_NUMBER_FORMATS, formatCellValue } from './format';
 import type {
   Cell,
@@ -176,6 +179,8 @@ function buildStyles(workbook: WorkbookModel): GeneratedStyles {
       );
     }
     if (style.wrapText) alignmentParts.push('wrapText="1"');
+    // 功能：保存缩小字体填充设置；时间：2026-10-24；作者：lq。
+    if (style.shrinkToFit) alignmentParts.push('shrinkToFit="1"');
     if (style.indent) alignmentParts.push(`indent="${style.indent}"`);
     const alignment = alignmentParts.length ? `<alignment ${alignmentParts.join(' ')}/>` : '';
     xfXmls.push(
@@ -321,8 +326,18 @@ function sheetXml(
         .join('')}</mergeCells>`
     : '';
 
+  // 功能：按标准 autoFilter/filterColumn 保存多列勾选条件，重开后可继续修改；时间：2026-10-24；作者：lq。
+  const filterColumns = Object.entries(sheet.filterCriteria ?? {}).map(([column, allowed]) => {
+    const col = Number(column);
+    if (!sheet.autoFilter || col < sheet.autoFilter.c1 || col > sheet.autoFilter.c2) return '';
+    const values = new Set<string>();
+    for (let row = sheet.autoFilter.r1 + 1; row <= sheet.autoFilter.r2; row += 1) {
+      if (allowed.includes(cellDisplay(workbook, sheet, row, col))) values.add(String(computed[cellKey(row, col)]?.value ?? sheet.cells[cellKey(row, col)]?.value ?? ''));
+    }
+    return `<filterColumn colId="${col - sheet.autoFilter.c1}"><filters${values.has('') ? ' blank="1"' : ''}>${[...values].filter((value) => value !== '').map((value) => `<filter val="${escapeXml(value)}"/>`).join('')}</filters></filterColumn>`;
+  }).join('');
   const filter = sheet.autoFilter
-    ? `<autoFilter ref="${columnLabel(sheet.autoFilter.c1)}${sheet.autoFilter.r1 + 1}:${columnLabel(sheet.autoFilter.c2)}${sheet.autoFilter.r2 + 1}"/>`
+    ? `<autoFilter ref="${columnLabel(sheet.autoFilter.c1)}${sheet.autoFilter.r1 + 1}:${columnLabel(sheet.autoFilter.c2)}${sheet.autoFilter.r2 + 1}">${filterColumns}</autoFilter>`
     : '';
 
   const dimension = maxRow > 0 || maxCol > 0 ? `A1:${columnLabel(maxCol)}${maxRow + 1}` : 'A1';
@@ -338,7 +353,7 @@ function sheetXml(
 
   return `${xmlDeclaration()}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="${dimension}"/>${sheetViews}<sheetFormatPr defaultRowHeight="15"/>${
     colsXml.length ? `<cols>${colsXml.join('')}</cols>` : ''
-  }<sheetData>${rowXml.join('')}</sheetData>${mergeXml}${filter}${pageMarginsXml}${pageSetupXml}${printOptionsXml}</worksheet>`;
+  }<sheetData>${rowXml.join('')}</sheetData>${mergeXml}${filter}${pageMarginsXml}${pageSetupXml}${printOptionsXml}${sheet.images?.length ? '<drawing r:id="rIdMiniOfficeDrawing"/>' : ''}</worksheet>`;
 }
 
 interface RelationshipInfo {
@@ -487,13 +502,23 @@ export async function serializeXlsx(
     if (!zip.file('docProps/app.xml')) zip.file('docProps/app.xml', appXml());
   }
 
+  // 功能：覆盖保存时清理本应用上次生成的图片资源，删除图片后不留下失效 DrawingML 声明；时间：2026-10-24；作者：lq。
+  for (const name of Object.keys(zip.files)) {
+    if (/^xl\/(?:media\/mini-office-\d+-\d+\.[^/]+|drawings\/(?:_rels\/)?mini-office-sheet-\d+\.xml(?:\.rels)?)$/.test(name)) zip.remove(name);
+  }
+  const currentTypes = await zip.file('[Content_Types].xml')!.async('text');
+  zip.file('[Content_Types].xml', currentTypes.replace(/<Override\b(?=[^>]*PartName="\/xl\/drawings\/mini-office-sheet-\d+\.xml")[^>]*\/>/g, ''));
+
   zip.file('xl/workbook.xml', workbookXml(recalculated));
   zip.file('xl/_rels/workbook.xml.rels', workbookRelsXml(sourceRels, recalculated));
   zip.file('xl/styles.xml', styles.xml);
   recalculated.sheets.forEach((sheet, index) => {
     zip.file(`xl/worksheets/sheet${index + 1}.xml`, sheetXml(sheet, recalculated, styleIndex));
+    // 功能：图片与工作表一起写入 XLSX，保持 Excel 可编辑；时间：2026-10-24；作者：lq。
+    writeSheetImages(zip, sheet, index);
   });
 
+  await writeImageContentTypes(zip, recalculated.sheets);
   return zip.generateAsync({
     type: 'uint8array',
     compression: 'DEFLATE',

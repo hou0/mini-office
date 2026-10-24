@@ -2,6 +2,7 @@ import {
   cellKey,
   normalizeRange,
   type Cell,
+  type CellBorders,
   type CellRange,
   type CellStyle,
   type SheetModel,
@@ -18,7 +19,9 @@ export interface CellCoord {
   col: number;
 }
 
+// 功能：区分表头选区与单元格选区，防止选区末端触发视图跳转；时间：2026-10-24；作者：lq。
 export interface Selection {
+  kind?: 'row' | 'col' | 'all';
   anchor: CellCoord;
   focus: CellCoord;
 }
@@ -701,6 +704,18 @@ export function pasteTsv(
   return applyCellUpdates(next, sheet.id, updates);
 }
 
+// 功能：表头选择使用实际数据宽度，跳过合并标题，避免将空白整行整列当成数据范围；时间：2026-10-24；作者：lq。
+export function tableRangeForSelection(sheet: SheetModel, selection: Selection): CellRange {
+  const selected = selectionRange(selection);
+  const used = usedRange(sheet);
+  if (selection.kind === 'row') return { ...used, r1: Math.min(used.r2, Math.max(used.r1, selected.r1)) };
+  if (!selection.kind && (selected.r1 !== selected.r2 || selected.c1 !== selected.c2)) return selected;
+  const target = { ...used };
+  const title = sheet.merges.find((merge) => merge.r1 === target.r1 && merge.c1 <= target.c1 && merge.c2 >= target.c2);
+  if (title && title.r2 < target.r2) target.r1 = title.r2 + 1;
+  return target;
+}
+
 export function sortRange(
   workbook: WorkbookModel,
   sheet: SheetModel,
@@ -725,6 +740,8 @@ export function sortRange(
     rows.push(entry);
   }
   rows.sort((a, b) => {
+    // 功能：升序和降序均将空白放在数据末尾，保持整行关联；时间：2026-10-24；作者：lq。
+    if (a.key === '' || b.key === '') return a.key === b.key ? 0 : a.key === '' ? 1 : -1;
     if (typeof a.key === 'number' && typeof b.key === 'number') {
       return ascending ? a.key - b.key : b.key - a.key;
     }
@@ -743,6 +760,45 @@ export function sortRange(
   return applyCellUpdates(workbook, sheet.id, updates);
 }
 
+// 功能：统一 Excel 常用边框预设，工具栏和格式弹窗共用；时间：2026-10-24；作者：lq。
+export type BorderPreset = 'all' | 'outline' | 'bottom' | 'top' | 'left' | 'right' | 'none' | 'inside' | 'thickOutline' | 'doubleBottom' | 'thickBottom' | 'topBottom' | 'topThickBottom' | 'topDoubleBottom';
+export function applyBordersToRange(workbook: WorkbookModel, sheetId: string, target: CellRange, preset: BorderPreset, side: NonNullable<CellBorders['top']>): WorkbookModel {
+  const range = normalizeRange(target);
+  if (preset === 'none') return applyStyleToRange(workbook, sheetId, range, { borders: undefined });
+  if (preset === 'all') return applyStyleToRange(workbook, sheetId, range, { borders: { top: side, right: side, bottom: side, left: side } });
+  const edges = (next: WorkbookModel, edge: keyof CellBorders, border = side): WorkbookModel => {
+    const boundary = edge === 'top' ? { ...range, r2: range.r1 } : edge === 'bottom' ? { ...range, r1: range.r2 } : edge === 'left' ? { ...range, c2: range.c1 } : { ...range, c1: range.c2 };
+    return applyStyleToRange(next, sheetId, boundary, { borders: { [edge]: border } });
+  };
+  if (['top', 'bottom', 'left', 'right'].includes(preset)) return edges(workbook, preset as keyof CellBorders);
+  if (preset === 'doubleBottom' || preset === 'thickBottom') return edges(workbook, 'bottom', { ...side, style: preset === 'doubleBottom' ? 'double' : 'thick' });
+  let next = workbook;
+  if (preset === 'inside') {
+    if (range.r2 > range.r1) {
+      next = applyStyleToRange(next, sheetId, { ...range, r2: range.r2 - 1 }, { borders: { bottom: side } });
+      next = applyStyleToRange(next, sheetId, { ...range, r1: range.r1 + 1 }, { borders: { top: side } });
+    }
+    if (range.c2 > range.c1) {
+      next = applyStyleToRange(next, sheetId, { ...range, c2: range.c2 - 1 }, { borders: { right: side } });
+      next = applyStyleToRange(next, sheetId, { ...range, c1: range.c1 + 1 }, { borders: { left: side } });
+    }
+    return next;
+  }
+  const outlineSide = preset === 'thickOutline' ? { ...side, style: 'thick' as const } : side;
+  next = edges(next, 'top', outlineSide);
+  const bottom = preset === 'topDoubleBottom' ? { ...side, style: 'double' as const } : preset === 'topThickBottom' ? { ...side, style: 'thick' as const } : outlineSide;
+  next = edges(next, 'bottom', bottom);
+  if (preset === 'outline' || preset === 'thickOutline') { next = edges(next, 'left', outlineSide); next = edges(next, 'right', outlineSide); }
+  return next;
+}
+
+// 功能：一次提交单元格格式及选区边框，外框仅写入边缘，支持整体撤销；时间：2026-10-24；作者：lq。
+export function applyCellFormat(workbook: WorkbookModel, sheetId: string, range: CellRange, patch: Partial<CellStyle>, border?: { preset: BorderPreset; side: NonNullable<CellBorders['top']> }): WorkbookModel {
+  const next = applyStyleToRange(workbook, sheetId, range, patch);
+  return border ? applyBordersToRange(next, sheetId, range, border.preset, border.side) : next;
+}
+
+
 export function applyFilter(
   workbook: WorkbookModel,
   sheet: SheetModel,
@@ -751,17 +807,17 @@ export function applyFilter(
   filterRange: CellRange,
 ): WorkbookModel {
   const normalized = normalizeRange(filterRange);
-  const hiddenRows: SheetModel['hiddenRows'] = { ...sheet.hiddenRows };
+  // 功能：每次按全部列条件重新计算可见行，并保留用户手动隐藏的行；时间：2026-10-24；作者：lq。
+  const filterCriteria = { ...sheet.filterCriteria };
+  if (allowed === null) delete filterCriteria[column];
+  else filterCriteria[column] = [...allowed];
+  const filterBaseHiddenRows = sheet.filterBaseHiddenRows ?? { ...sheet.hiddenRows };
+  const hiddenRows: SheetModel['hiddenRows'] = { ...filterBaseHiddenRows };
+  const conditions = Object.entries(filterCriteria).map(([col, values]) => [Number(col), new Set(values)] as const);
   for (let row = normalized.r1; row <= normalized.r2; row += 1) {
-    if (allowed === null) {
-      delete hiddenRows[row];
-      continue;
-    }
-    const value = cellDisplay(workbook, sheet, row, column);
-    if (allowed.has(value)) delete hiddenRows[row];
-    else hiddenRows[row] = true;
+    if (conditions.some(([col, values]) => !values.has(cellDisplay(workbook, sheet, row, col)))) hiddenRows[row] = true;
   }
-  return updateSheet(workbook, sheet.id, (current) => ({ ...current, hiddenRows }));
+  return updateSheet(workbook, sheet.id, (current) => ({ ...current, hiddenRows, filterCriteria, filterBaseHiddenRows }));
 }
 
 export function uniqueColumnValues(

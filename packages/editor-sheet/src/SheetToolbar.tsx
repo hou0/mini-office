@@ -11,6 +11,7 @@ import {
   Download,
   FileWarning,
   Italic,
+  ImagePlus,
   ListFilter,
   Merge,
   PanelRight,
@@ -39,6 +40,10 @@ import { FONT_CHOICES } from '@mini-office/design-system';
 import { cellAt, cellStyle } from './sheet-utils';
 // 功能：在顶部公式栏复用函数智能提示；时间：2026-10-24；作者：lq。
 import { FormulaInput } from './FormulaInput';
+// 功能：接入完整边框菜单及预设类型；时间：2026-10-24；作者：lq。
+import { BorderMenu } from './BorderMenu';
+import type { BorderPreset } from './sheet-utils';
+export type { BorderPreset } from './sheet-utils';
 import { SHEET_ZOOM_MAX, SHEET_ZOOM_MIN } from './zoom-shortcuts';
 
 const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36];
@@ -60,8 +65,7 @@ export const NUMBER_FORMATS: NumberFormatOption[] = [
   { label: '文本 @', format: '@' },
 ];
 
-export type BorderPreset = 'all' | 'outline' | 'bottom' | 'none';
-export type BorderWeight = Extract<BorderSide['style'], 'thin' | 'medium' | 'thick'>;
+export type BorderWeight = Exclude<BorderSide['style'], 'none'>;
 
 export interface SheetToolbarProps {
   workbook: WorkbookModel;
@@ -76,12 +80,17 @@ export interface SheetToolbarProps {
   propertiesOpen: boolean;
   onFormulaChange: (value: string) => void;
   onFormulaCommit: () => void;
+  onFormulaCancel: () => void;
+  onFormulaFocus: () => void;
   onJump: (ref: string) => void;
   onStyle: (patch: Partial<CellStyle>) => void;
   onNumberFormat: (format: string) => void;
   onBorders: (preset: BorderPreset) => void;
   borderWeight: BorderWeight;
   onBorderWeight: (weight: BorderWeight) => void;
+  borderColor: string;
+  onBorderColor: (color: string) => void;
+  onMoreBorders: () => void;
   onMergeToggle: () => void;
   onFreeze: () => void;
   onInsertRow: () => void;
@@ -90,6 +99,12 @@ export interface SheetToolbarProps {
   onDeleteColumn: () => void;
   onSort: (ascending: boolean) => void;
   onFilter: () => void;
+  // 功能：提供常驻插入图片按钮；时间：2026-10-24；作者：lq。
+  onInsertImage: () => void;
+  // 功能：提供独立排序筛选菜单及自定义排序入口；时间：2026-10-24；作者：lq。
+  onCustomSort: () => void;
+  onClearFilter: () => void;
+  onReapplyFilter: () => void;
   onFind: () => void;
   onExport: () => void;
   onPrint: () => void;
@@ -123,19 +138,22 @@ export function SheetToolbar(props: SheetToolbarProps) {
     { type: 'label', label: '列' },
     { id: 'insert-col', label: '在左侧插入列', icon: <Columns3 size={13} />, disabled: readonly, onSelect: props.onInsertColumn },
     { id: 'delete-col', label: '删除当前列', icon: <Trash2 size={13} />, disabled: readonly, onSelect: props.onDeleteColumn },
+
+  ];
+
+  // 功能：参照 Excel 将排序与筛选集中到独立下拉菜单；时间：2026-10-24；作者：lq。
+  const sortFilterMenu: MenuItem[] = [
+    { id: 'asc', label: '升序', icon: <ArrowUpAZ size={14} />, disabled: readonly, onSelect: () => props.onSort(true) },
+    { id: 'desc', label: '降序', icon: <ArrowDownAZ size={14} />, disabled: readonly, onSelect: () => props.onSort(false) },
+    { id: 'custom', label: '自定义排序…', disabled: readonly, onSelect: props.onCustomSort },
     { type: 'separator' },
-    { id: 'sort-asc', label: '按当前列升序排序', icon: <ArrowUpAZ size={13} />, disabled: readonly, onSelect: () => props.onSort(true) },
-    { id: 'sort-desc', label: '按当前列降序排序', icon: <ArrowDownAZ size={13} />, disabled: readonly, onSelect: () => props.onSort(false) },
-    { id: 'filter', label: '筛选…', icon: <ListFilter size={13} />, onSelect: props.onFilter },
+    { id: 'filter', label: sheet.autoFilter ? '关闭筛选' : '筛选', icon: <ListFilter size={14} />, disabled: readonly, onSelect: props.onFilter },
+    { id: 'clear', label: '清除筛选条件', disabled: readonly || !sheet.autoFilter, onSelect: props.onClearFilter },
+    { id: 'reapply', label: '重新应用', disabled: readonly || !sheet.autoFilter, onSelect: props.onReapplyFilter },
   ];
 
   const formatValue = style.numFmt ?? 'General';
-  const borderMenu: MenuItem[] = [
-    { id: 'all', label: '所有框线', onSelect: () => props.onBorders('all') },
-    { id: 'outline', label: '外侧框线', onSelect: () => props.onBorders('outline') },
-    { id: 'bottom', label: '下边框', onSelect: () => props.onBorders('bottom') },
-    { id: 'none', label: '无框线', onSelect: () => props.onBorders('none') },
-  ];
+
 
   return (
     <div className="mo-glass mo-no-print shrink-0 border-b border-[var(--mo-line)] bg-[var(--mo-surface)]">
@@ -210,33 +228,8 @@ export function SheetToolbar(props: SheetToolbarProps) {
           value={style.fill}
           onChange={(fill) => props.onStyle({ fill })}
         />
-        <Dropdown
-          minWidth={160}
-          items={borderMenu}
-          trigger={({ toggle }) => (
-            <IconButton label="边框" onClick={toggle}>
-              <span className="grid h-3.5 w-3.5 grid-cols-2 gap-[1px]">
-                <span className="border border-current" />
-                <span className="border border-current" />
-                <span className="border border-current" />
-                <span className="border border-current" />
-              </span>
-            </IconButton>
-          )}
-        />
-        {/* 功能：提供 Excel 边框线细、中、粗三档设置；时间：2026-10-24；作者：lq。 */}
-        <Select
-          aria-label="边框粗细"
-          title="边框粗细"
-          className="h-7 w-[72px] shrink-0 border-transparent bg-transparent text-[11px]"
-          value={props.borderWeight}
-          disabled={readonly}
-          onChange={(event) => props.onBorderWeight(event.target.value as BorderWeight)}
-        >
-          <option value="thin">细线</option>
-          <option value="medium">中线</option>
-          <option value="thick">粗线</option>
-        </Select>
+        {/* 功能：常用边框、线型和颜色集中到分组菜单，左侧按钮重复应用上次预设；时间：2026-10-24；作者：lq。 */}
+        <BorderMenu readonly={readonly} weight={props.borderWeight} color={props.borderColor} onWeight={props.onBorderWeight} onColor={props.onBorderColor} onApply={props.onBorders} onMore={props.onMoreBorders} />
         <span className="mx-1 h-4 w-px bg-[var(--mo-line)]" />
         <IconButton label="左对齐" active={style.horizontalAlign === 'left'} disabled={readonly} onClick={() => props.onStyle({ horizontalAlign: 'left' })}>
           <AlignLeft size={15} />
@@ -277,10 +270,16 @@ export function SheetToolbar(props: SheetToolbarProps) {
           items={dataMenu}
           trigger={({ toggle }) => (
             <IconButton label="数据与行列" onClick={toggle}>
-              <ListFilter size={15} />
+              <Rows3 size={15} />
             </IconButton>
           )}
         />
+        {/* 功能：独立显示排序筛选按钮，避免混入行列结构操作；时间：2026-10-24；作者：lq。 */}
+        <Dropdown minWidth={190} items={sortFilterMenu} trigger={({ toggle }) => (
+          <IconButton label="排序和筛选" active={!!sheet.autoFilter} onClick={toggle}><ListFilter size={15} /></IconButton>
+        )} />
+        {/* 功能：插入本地图片到当前单元格位置；时间：2026-10-24；作者：lq。 */}
+        <IconButton label="插入图片" disabled={readonly} onClick={props.onInsertImage}><ImagePlus size={15} /></IconButton>
         <Tooltip label="查找替换 ⌘F">
           <IconButton label="查找" onClick={props.onFind}>
             <Search size={15} />
@@ -289,11 +288,9 @@ export function SheetToolbar(props: SheetToolbarProps) {
         <IconButton label="属性面板" active={props.propertiesOpen} onClick={props.onToggleProperties}>
           <PanelRight size={15} />
         </IconButton>
-        {/* 功能：为视图与输出操作保留独立呼吸空间，便于识别页面设置；时间：2026-10-24；作者：lq。 */}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-3">
-          <span className="whitespace-nowrap text-[10px] text-[var(--mo-text-muted)]">
-            {rangeLabel}
-          </span>
+        {/* 功能：移除工具栏自动撑开的空白，缩放和输出按钮紧接前面工具；时间：2026-10-24；作者：lq。 */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* 功能：移除重复范围显示，名称框保留选区地址；时间：2026-10-24；作者：lq。 */}
           <Select
             aria-label="缩放"
             title={`放大 ${MOD_KEY} +；缩小 ${MOD_KEY} -；100% ${MOD_KEY} 0；${MOD_KEY} + 滚轮`}
@@ -348,10 +345,14 @@ export function SheetToolbar(props: SheetToolbarProps) {
           value={props.formulaText}
           disabled={readonly}
           onValueChange={props.onFormulaChange}
+          onFocus={props.onFormulaFocus}
+          onBlur={(event) => { if (!(event.relatedTarget as HTMLElement | null)?.hasAttribute('data-sheet-formula-input')) props.onFormulaCommit(); }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
               props.onFormulaCommit();
+            } else if (event.key === 'Escape') {
+              event.preventDefault(); props.onFormulaCancel();
             }
           }}
           placeholder="输入值或公式，例如 =SUM(A1:A3)"

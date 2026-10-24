@@ -85,6 +85,19 @@ export function defaultSheetPageSetup(): SheetPageSetup {
   };
 }
 
+// 功能：保存工作表浮动图片的内容、单元格锚点及像素尺寸；时间：2026-10-24；作者：lq。
+export interface SheetImage {
+  id: string;
+  name: string;
+  src: string;
+  row: number;
+  col: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+}
+
 export interface SheetModel {
   id: string;
   name: string;
@@ -98,11 +111,16 @@ export interface SheetModel {
   hiddenRows: Record<number, true>;
   hiddenCols: Record<number, true>;
   autoFilter?: CellRange;
+  // 功能：保存各列筛选条件与筛选前隐藏行，支持组合筛选、撤销和恢复；时间：2026-10-24；作者：lq。
+  filterCriteria?: Record<number, string[]>;
+  filterBaseHiddenRows?: Record<number, true>;
   dimension: { rows: number; cols: number };
   defaultColWidth: number;
   defaultRowHeight: number;
   showGridLines: boolean;
   tabColor?: string;
+  // 功能：图片随工作簿快照保存，支持撤销与恢复；时间：2026-10-24；作者：lq。
+  images?: SheetImage[];
   pageSetup?: SheetPageSetup;
 }
 

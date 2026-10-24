@@ -11,8 +11,8 @@ import {
   defaultSheetPageSetup,
   type CellRange,
   type CellStyle,
-  type BorderSide,
   type SheetModel,
+  type SheetImage,
   type SheetSession,
   type SheetPageSetup,
   type WorkbookModel,
@@ -36,10 +36,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileWarning,
-  Filter,
-  Plus,
   Search,
-  Trash2,
   X,
 } from 'lucide-react';
 import { exportElementsToPdf, type ExportProgress } from '@mini-office/export-service';
@@ -50,6 +47,14 @@ import {
   stripExtension,
   uid,
 } from '@mini-office/shared';
+// 功能：接入表头筛选浮层；时间：2026-10-24；作者：lq。
+import { ColumnFilterMenu } from './ColumnFilterMenu';
+// 功能：接入单元格格式和原位工作表标签操作；时间：2026-10-24；作者：lq。
+import { completeFormulaParentheses } from './formula/reference-picking';
+import { CellFormatDialog } from './CellFormatDialog';
+import { SheetTabs } from './SheetTabs';
+// 功能：原生文件选择失败时提供可见的选择图片入口；时间：2026-10-24；作者：lq。
+import { openSheetImagePicker } from './image-picker';
 import { SheetGrid, type EditingCell, type GridAction } from './SheetGrid';
 import { SheetToolbar, type BorderPreset, type BorderWeight } from './SheetToolbar';
 // 功能：接入 Excel 原版缩放快捷键；时间：2026-10-24；作者：lq。
@@ -61,6 +66,8 @@ import {
   applyCellUpdates,
   applyFilter,
   applyStyleToRange,
+  applyCellFormat,
+  applyBordersToRange,
   cellAt,
   cellDisplay,
   cellRawInput,
@@ -88,6 +95,7 @@ import {
   setFreeze,
   setRowHeight,
   sortRange,
+  tableRangeForSelection,
   unmergeSelection,
   uniqueColumnValues,
   updateSheet,
@@ -119,6 +127,7 @@ interface FilterState {
   autoFilterRange: CellRange;
   values: string[];
   selected: Set<string>;
+  anchor: { left: number; bottom: number };
 }
 
 interface ExportState {
@@ -156,12 +165,16 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
   // 功能：保存当前边框工具的线宽选择，供后续边框预设复用；时间：2026-10-24；作者：lq。
   const [borderWeight, setBorderWeight] = useState<BorderWeight>('thin');
+  // 功能：边框颜色和线型随当前编辑会话保留，供连续设置使用；时间：2026-10-24；作者：lq。
+  const [borderColor, setBorderColor] = useState('#1D2939');
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findActive, setFindActive] = useState(0);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [filterState, setFilterState] = useState<FilterState | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  // 功能：自定义排序可选择字段、方向和表头；时间：2026-10-24；作者：lq。
+  const [sortDraft, setSortDraft] = useState<{ target: CellRange; column: number; ascending: boolean; header: boolean } | null>(null);
   // 功能：保存页面设置弹窗草稿，取消时不污染当前工作表；时间：2026-10-24；作者：lq。
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [pageSetupDraft, setPageSetupDraft] = useState<SheetPageSetup | null>(null);
@@ -172,7 +185,12 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     row: number;
     col: number;
   } | null>(null);
-  const [sheetDialog, setSheetDialog] = useState<{ type: 'rename' | 'delete'; sheetId: string; name: string } | null>(null);
+  // 功能：格式弹窗使用独立草稿，图片文件由当前单元格定位插入；时间：2026-10-24；作者：lq。
+  const [formatTarget, setFormatTarget] = useState<{ tab: '数字' | '边框'; range: CellRange; style: CellStyle; value: string | number | boolean | null } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [imagePickerError, setImagePickerError] = useState<string | null>(null);
+  const imageTargetRef = useRef<{ sheetId: string; row: number; col: number } | null>(null);
+  const [sheetDialog, setSheetDialog] = useState<{ sheetId: string; name: string } | null>(null);
   const [exportState, setExportState] = useState<ExportState>({
     open: false,
     name: '',
@@ -183,6 +201,8 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const clipboardRef = useRef<SheetClipboard | null>(null);
   const clipboardTsvRef = useRef('');
   const cancelExportRef = useRef(false);
+  // 功能：取消旧导航的延迟聚焦，避免快速进入公式编辑后被网格抢走焦点；时间：2026-10-24；作者：lq。
+  const gridFocusFrame = useRef<number | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const sheetScrollRef = useRef<HTMLDivElement>(null);
 
@@ -249,7 +269,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     setHistoryVersion((value) => value + 1);
   }, [latestWorkbook, readonly, session.id, updateData]);
 
-  const active = selection.focus;
+  const active = selection.kind ? selection.anchor : selection.focus;
   const range = selectionRange(selection);
   const activeCell = cellAt(sheet, active.row, active.col);
 
@@ -280,12 +300,19 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     updateView(session.id, { activeSheetId: sheet.id, zoom });
   }, [sheet.id, session.id, updateView, zoom]);
 
+  const cancelGridFocus = useCallback(() => {
+    if (gridFocusFrame.current !== null) cancelAnimationFrame(gridFocusFrame.current);
+    gridFocusFrame.current = null;
+  }, []);
+  useEffect(() => cancelGridFocus, [cancelGridFocus]);
   const focusGrid = useCallback(() => {
-    requestAnimationFrame(() => {
+    cancelGridFocus();
+    gridFocusFrame.current = requestAnimationFrame(() => {
+      gridFocusFrame.current = null;
       const element = document.querySelector<HTMLElement>(`[data-sheet-grid="${session.id}"]`);
       element?.focus();
     });
-  }, [session.id]);
+  }, [cancelGridFocus, session.id]);
 
   const handleSelectionChange = useCallback((next: Selection) => {
     setSelection(next);
@@ -294,6 +321,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const startEdit = useCallback(
     (row: number, col: number, initialText?: string) => {
       if (readonly) return;
+      cancelGridFocus();
       const current = latestWorkbook();
       const currentSheet = current.sheets.find((item) => item.id === sheet.id) ?? sheet;
       const raw = initialText ?? cellRawInput(cellAt(currentSheet, row, col));
@@ -301,14 +329,14 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       setFormulaText(raw);
       setSelection({ anchor: { row, col }, focus: { row, col } });
     },
-    [latestWorkbook, readonly, sheet],
+    [cancelGridFocus, latestWorkbook, readonly, sheet],
   );
 
   const commitEdit = useCallback(
     (value: string, move: 'down' | 'right' | 'up' | 'left' | 'none') => {
       if (!editing || readonly) return;
       const current = latestWorkbook();
-      const next = setCellInput(current, sheet.id, editing.row, editing.col, value);
+      const next = setCellInput(current, sheet.id, editing.row, editing.col, completeFormulaParentheses(value));
       const moved =
         move === 'down'
           ? { row: Math.min(sheet.dimension.rows - 1, editing.row + 1), col: editing.col }
@@ -347,33 +375,57 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     [commit, latestWorkbook, notify, range, readonly, sheet],
   );
 
-  const applyBorders = useCallback(
-    (preset: BorderPreset) => {
-      if (readonly) return;
-      const side: BorderSide = { style: borderWeight, color: '#1D2939' };
-      let next = latestWorkbook();
-      if (preset === 'none') {
-        next = applyStyleToRange(next, sheet.id, range, { borders: undefined });
-      } else if (preset === 'all') {
-        next = applyStyleToRange(next, sheet.id, range, {
-          borders: { top: side, right: side, bottom: side, left: side },
-        });
-      } else if (preset === 'bottom') {
-        next = applyStyleToRange(next, sheet.id, range, { borders: { bottom: side } });
-      } else {
-        const top: CellRange = { r1: range.r1, c1: range.c1, r2: range.r1, c2: range.c2 };
-        const bottom: CellRange = { r1: range.r2, c1: range.c1, r2: range.r2, c2: range.c2 };
-        const left: CellRange = { r1: range.r1, c1: range.c1, r2: range.r2, c2: range.c1 };
-        const right: CellRange = { r1: range.r1, c1: range.c2, r2: range.r2, c2: range.c2 };
-        next = applyStyleToRange(next, sheet.id, top, { borders: { top: side } });
-        next = applyStyleToRange(next, sheet.id, bottom, { borders: { bottom: side } });
-        next = applyStyleToRange(next, sheet.id, left, { borders: { left: side } });
-        next = applyStyleToRange(next, sheet.id, right, { borders: { right: side } });
-      }
-      commit(next, { key: 'borders' });
-    },
-    [borderWeight, commit, latestWorkbook, range, readonly, sheet],
-  );
+  // 功能：右键格式设置保持整个选区，避免修改未选中的单元格；时间：2026-10-24；作者：lq。
+  const openCellFormat = useCallback((tab: '数字' | '边框' = '数字') => {
+    if (readonly) return;
+    const target = rangeArea(range) > 20_000 ? usedRange(sheet) : range;
+    if (target !== range) notify('info', '选区过大', '已将格式设置限定到当前数据区域。');
+    setFormatTarget({ tab, range: target, style: cellStyle(workbook, cellAt(sheet, active.row, active.col)), value: workbook.computed?.[sheet.id]?.[cellKey(active.row, active.col)]?.value ?? cellAt(sheet, active.row, active.col)?.value ?? null });
+  }, [active.col, active.row, notify, range, readonly, sheet, workbook]);
+
+  // 功能：兼容 Excel 的设置单元格格式快捷键；时间：2026-10-24；作者：lq。
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== '1' || !editorRef.current?.contains(document.activeElement)) return;
+      event.preventDefault(); openCellFormat();
+    };
+    document.addEventListener('keydown', keydown);
+    return () => document.removeEventListener('keydown', keydown);
+  }, [openCellFormat]);
+
+  const requestImage = useCallback(() => {
+    if (readonly) return;
+    if (workbook.csv) { notify('info', '请先另存为 Excel 工作簿', 'CSV 文件只能保存文本，不能保存图片。'); return; }
+    imageTargetRef.current = { sheetId: sheet.id, row: active.row, col: active.col };
+    // 功能：保留点击事件的用户激活状态，避免延迟打开文件选择器被浏览器拦截；时间：2026-10-24；作者：lq。
+    try { openSheetImagePicker(imageInputRef.current); }
+    catch (error) {
+      setImagePickerError(error instanceof Error ? error.message : '浏览器未能自动打开文件选择器。');
+    }
+  }, [active.col, active.row, notify, readonly, sheet.id, workbook.csv]);
+
+  // 功能：读取本地图片并限制初始显示尺寸，内容嵌入工作簿而不依赖原文件；时间：2026-10-24；作者：lq。
+  const insertImageFile = useCallback(async (file: File) => {
+    const target = imageTargetRef.current;
+    if (!target || readonly) return;
+    setImagePickerError(null);
+    try {
+      const src = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('图片读取失败')); reader.readAsDataURL(file); });
+      if (!/^data:image\/(png|jpeg|gif);base64,/.test(src)) throw new Error('请选择 PNG、JPEG 或 GIF 图片。');
+      const size = await new Promise<{ width: number; height: number }>((resolve, reject) => { const image = new Image(); image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight }); image.onerror = () => reject(new Error('图片无法解码，请更换文件')); image.src = src; });
+      const factor = Math.min(1, 360 / size.width, 260 / size.height);
+      const image: SheetImage = { id: uid(), name: file.name, src, row: target.row, col: target.col, offsetX: 0, offsetY: 0, width: Math.max(8, size.width * factor), height: Math.max(8, size.height * factor) };
+      commit(updateSheet(latestWorkbook(), target.sheetId, (item) => ({ ...item, images: [...(item.images ?? []), image] })), { key: `image-insert:${image.id}` });
+    } catch (error) { notify('warning', '无法插入图片', error instanceof Error ? error.message : String(error)); }
+  }, [commit, latestWorkbook, notify, readonly]);
+
+  // 功能：边框预设按整个选区的边缘应用，内部和复合边框支持单步撤销；时间：2026-10-24；作者：lq。
+  const applyBorders = useCallback((preset: BorderPreset) => {
+    if (readonly) return;
+    const target = rangeArea(range) > 20_000 ? usedRange(sheet) : range;
+    if (target !== range) notify('info', '选区过大', '已将边框限定到当前数据区域。');
+    commit(applyBordersToRange(latestWorkbook(), sheet.id, target, preset, { style: borderWeight, color: borderColor }), { key: 'borders' });
+  }, [borderColor, borderWeight, commit, latestWorkbook, notify, range, readonly, sheet]);
 
   // 功能：打开页面设置草稿，提供方向、缩放、页边距、打印网格线和首个页码；时间：2026-10-24；作者：lq。
   const openPageSetup = useCallback(() => {
@@ -451,18 +503,23 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   }, [active.col, changeStructure, commit, latestWorkbook, sheet.id]);
 
   const sortByActive = useCallback(
-    (ascending: boolean) => {
+    (ascending: boolean, column = active.col, explicitTarget?: CellRange) => {
       const current = latestWorkbook();
       const currentSheet = current.sheets.find((item) => item.id === sheet.id) ?? sheet;
       const singleCell = range.r1 === range.r2 && range.c1 === range.c2;
-      let target = singleCell ? usedRange(currentSheet) : range;
-      if (singleCell && currentSheet.autoFilter) {
+      let target = explicitTarget ?? (currentSheet.autoFilter ? { ...currentSheet.autoFilter, r1: currentSheet.autoFilter.r1 + 1 } : tableRangeForSelection(currentSheet, selection));
+      if (!explicitTarget && singleCell && currentSheet.autoFilter) {
         // 功能：单元格排序默认保留首行为表头，避免把字段名排入数据；时间：2026-10-24；作者：lq。
         target = { ...currentSheet.autoFilter, r1: currentSheet.autoFilter.r1 + 1 };
-      } else if (singleCell && target.r2 > target.r1) {
+      } else if (!explicitTarget && !currentSheet.autoFilter && (singleCell || selection.kind) && target.r2 > target.r1) {
         target = { ...target, r1: target.r1 + 1 };
       }
-      const sortColumn = Math.min(target.c2, Math.max(target.c1, active.col));
+      // 功能：单列快速排序扩展到关联字段，防止只移动一列造成记录错位；时间：2026-10-24；作者：lq。
+      if (!explicitTarget && !currentSheet.autoFilter && target.c1 === target.c2) {
+        const used = usedRange(currentSheet);
+        target = { ...target, c1: used.c1, c2: used.c2 };
+      }
+      const sortColumn = Math.min(target.c2, Math.max(target.c1, column));
       if (target.r2 <= target.r1) {
         notify('info', '没有可排序的数据', '请选择包含数据的区域。');
         return;
@@ -472,50 +529,72 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         return;
       }
       changeStructure(() => {
-        commit(sortRange(current, currentSheet, target, sortColumn, ascending), { key: 'sort' });
+        let next = sortRange(current, currentSheet, target, sortColumn, ascending);
+        const sorted = next.sheets.find((item) => item.id === sheet.id)!;
+        const first = Object.entries(sorted.filterCriteria ?? {})[0];
+        if (first && sorted.autoFilter) next = applyFilter(next, sorted, Number(first[0]), new Set(first[1]), { ...sorted.autoFilter, r1: sorted.autoFilter.r1 + 1 });
+        commit(next, { key: 'sort' });
+        setSortDraft(null);
+        setFilterOpen(false);
         notify('success', ascending ? '已按当前列升序排序' : '已按当前列降序排序');
       });
     },
-    [active.col, changeStructure, commit, latestWorkbook, notify, range, sheet],
+    [active.col, changeStructure, commit, latestWorkbook, notify, range, selection, sheet],
   );
 
-  const openFilter = useCallback(() => {
+  // 功能：表头按钮打开当前列菜单，恢复该列已应用的勾选条件；时间：2026-10-24；作者：lq。
+  const openFilterColumn = useCallback((column: number, anchor: { left: number; bottom: number }) => {
+    if (readonly) return;
     const current = latestWorkbook();
     const currentSheet = current.sheets.find((item) => item.id === sheet.id) ?? sheet;
-    const target = currentSheet.autoFilter ?? usedRange(currentSheet);
-    if (target.r2 <= target.r1) {
-      notify('info', '没有可筛选的数据');
-      return;
-    }
+    const target = currentSheet.autoFilter;
+    if (!target) return;
     const dataRange = { ...target, r1: target.r1 + 1 };
-    const values = uniqueColumnValues(current, currentSheet, active.col, dataRange);
-    setFilterState({
-      column: active.col,
-      range: dataRange,
-      autoFilterRange: target,
-      values,
-      selected: new Set(values),
-    });
+    const values = uniqueColumnValues(current, currentSheet, column, dataRange);
+    setFilterState({ column, range: dataRange, autoFilterRange: target, values,
+      selected: new Set(currentSheet.filterCriteria?.[column] ?? values), anchor });
     setFilterOpen(true);
-  }, [active.col, latestWorkbook, notify, sheet]);
+  }, [latestWorkbook, readonly, sheet]);
 
-  const applyFilterDialog = useCallback(() => {
-    if (!filterState) return;
+  // 功能：清除条件时保留表头下拉按钮，关闭筛选时恢复原有隐藏行；时间：2026-10-24；作者：lq。
+  const clearFilter = useCallback((disable = false) => {
     const current = latestWorkbook();
-    const next = applyFilter(current, sheet, filterState.column, filterState.selected, filterState.range);
-    commit(updateSheet(next, sheet.id, (item) => ({ ...item, autoFilter: filterState.autoFilterRange })), { key: 'filter' });
+    commit(updateSheet(current, sheet.id, (item) => ({ ...item,
+      hiddenRows: item.filterBaseHiddenRows ?? item.hiddenRows,
+      filterCriteria: undefined, filterBaseHiddenRows: undefined,
+      autoFilter: disable ? undefined : item.autoFilter,
+    })), { key: 'filter-clear' });
     setFilterOpen(false);
-    notify('success', '筛选已应用');
-  }, [commit, filterState, latestWorkbook, notify, sheet]);
+  }, [commit, latestWorkbook, sheet.id]);
 
-  const clearFilter = useCallback(() => {
+  const openFilter = useCallback(() => {
+    if (readonly) return;
+    if (sheet.autoFilter) { clearFilter(true); return; }
+    const target = tableRangeForSelection(sheet, selection);
+    if (target.r2 <= target.r1) { notify('info', '没有可筛选的数据', '请选择包含表头和数据行的区域。'); return; }
+    commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, autoFilter: target })), { key: 'filter-enable' });
+  }, [clearFilter, commit, latestWorkbook, notify, readonly, selection, sheet]);
+
+  const applyFilterDialog = useCallback((clearColumn = false, selected = filterState?.selected) => {
+    if (!filterState || !selected || readonly) return;
     const current = latestWorkbook();
-    const target = sheet.autoFilter ?? usedRange(sheet);
-    const next = applyFilter(current, sheet, active.col, null, { ...target, r1: target.r1 + 1 });
-    commit(updateSheet(next, sheet.id, (item) => ({ ...item, autoFilter: undefined })), { key: 'filter-clear' });
+    const currentSheet = current.sheets.find((item) => item.id === sheet.id)!;
+    const allowed = clearColumn || selected.size === filterState.values.length ? null : selected;
+    commit(applyFilter(current, currentSheet, filterState.column, allowed, filterState.range), { key: 'filter' });
     setFilterOpen(false);
-    notify('info', '已清除筛选');
-  }, [active.col, commit, latestWorkbook, notify, sheet]);
+  }, [commit, filterState, latestWorkbook, readonly, sheet.id]);
+
+  const reapplyFilter = useCallback(() => {
+    const current = latestWorkbook();
+    const currentSheet = current.sheets.find((item) => item.id === sheet.id)!;
+    const first = Object.entries(currentSheet.filterCriteria ?? {})[0];
+    if (first && currentSheet.autoFilter) commit(applyFilter(current, currentSheet, Number(first[0]), new Set(first[1]), { ...currentSheet.autoFilter, r1: currentSheet.autoFilter.r1 + 1 }), { key: 'filter' });
+  }, [commit, latestWorkbook, sheet.id]);
+
+  const openCustomSort = useCallback(() => {
+    const target = sheet.autoFilter ?? (tableRangeForSelection(sheet, selection));
+    setSortDraft({ target, column: Math.min(target.c2, Math.max(target.c1, active.col)), ascending: true, header: true });
+  }, [active.col, selection, sheet]);
 
   const findHits = useMemo(() => {
     if (!findQuery) return [] as Array<{ row: number; col: number }>;
@@ -659,7 +738,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       else if (action === 'redo') redo();
       else if (action === 'selectAll') {
         const target = usedRange(sheet);
-        setSelection({ anchor: { row: target.r1, col: target.c1 }, focus: { row: target.r2, col: target.c2 } });
+        setSelection({ kind: 'all', anchor: { row: target.r1, col: target.c1 }, focus: { row: target.r2, col: target.c2 } });
       } else if (action === 'clear') {
         if (!readonly) commit(clearRangeContents(latestWorkbook(), sheet.id, range), { key: 'clear' });
       } else if (action === 'find') setFindOpen(true);
@@ -707,6 +786,9 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           { type: 'separator' },
           { id: 'clear', label: '清除内容', onSelect: () => handleAction('clear') },
           { id: 'freeze', label: '冻结到当前单元格', onSelect: freeze },
+          { type: 'separator' },
+          { id: 'format-cell', label: '设置单元格格式…', shortcut: '⌘1', disabled: readonly, onSelect: openCellFormat },
+          { id: 'insert-image', label: '插入图片…', disabled: readonly, onSelect: requestImage },
         ]
       : [
           ...(contextMenu.kind === 'row'
@@ -722,6 +804,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           { id: 'sort-asc', label: '升序排序', onSelect: () => sortByActive(true) },
           { id: 'sort-desc', label: '降序排序', onSelect: () => sortByActive(false) },
           { id: 'filter', label: '筛选…', onSelect: openFilter },
+          { id: 'format-cell', label: '设置单元格格式…', disabled: readonly, onSelect: openCellFormat },
         ]
     : [];
 
@@ -748,20 +831,14 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   }, [commit, latestWorkbook, readonly]);
 
   const confirmSheetDialog = useCallback(() => {
-    if (!sheetDialog) return;
+    if (!sheetDialog || readonly) return;
     changeStructure(() => {
-      if (sheetDialog.type === 'rename') {
-        commit(renameSheet(latestWorkbook(), sheetDialog.sheetId, sheetDialog.name), { key: 'rename-sheet' });
-      } else {
-        const next = deleteSheet(latestWorkbook(), sheetDialog.sheetId);
-        commit(next);
-        if (sheetDialog.sheetId === sheet.id) {
-          setSheetId(next.sheets[0].id);
-        }
-      }
+      const next = deleteSheet(latestWorkbook(), sheetDialog.sheetId);
+      commit(next);
+      if (sheetDialog.sheetId === sheet.id) setSheetId(next.sheets.find((item) => item.state === 'visible')!.id);
       setSheetDialog(null);
     });
-  }, [changeStructure, commit, latestWorkbook, sheetDialog, sheet.id]);
+  }, [changeStructure, commit, latestWorkbook, readonly, sheetDialog, sheet.id]);
 
   const openExport = useCallback(() => {
     setExportState({ open: true, name: `${stripExtension(session.displayName)}.pdf`, progress: null, busy: false });
@@ -851,7 +928,10 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       commitEdit(formulaText, 'none');
       return;
     }
-    const next = setCellInput(latestWorkbook(), sheet.id, active.row, active.col, formulaText);
+    // 功能：失焦与回车可能连续发生，相同内容不重复写入历史；时间：2026-10-24；作者：lq。
+    const value = completeFormulaParentheses(formulaText);
+    if (cellRawInput(cellAt(sheet, active.row, active.col)) === value) return;
+    const next = setCellInput(latestWorkbook(), sheet.id, active.row, active.col, value);
     commit(next, { key: `cell:${active.row}:${active.col}` });
   }, [active.col, active.row, commit, commitEdit, editing, formulaText, latestWorkbook, readonly, sheet.id]);
 
@@ -887,13 +967,17 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           zoom={zoom}
           propertiesOpen={settings.showProperties}
           onFormulaChange={setFormulaText}
+          onFormulaFocus={cancelGridFocus}
           onFormulaCommit={formulaCommit}
+          onFormulaCancel={cancelEdit}
           onJump={handleJump}
           onStyle={applyStyle}
           onNumberFormat={(format) => applyStyle({ numFmt: format })}
           onBorders={applyBorders}
           borderWeight={borderWeight}
           onBorderWeight={setBorderWeight}
+          borderColor={borderColor} onBorderColor={setBorderColor}
+          onMoreBorders={() => openCellFormat('边框')}
           onMergeToggle={toggleMerge}
           onFreeze={freeze}
           onInsertRow={insertRow}
@@ -901,7 +985,11 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onInsertColumn={insertColumn}
           onDeleteColumn={deleteColumn}
           onSort={sortByActive}
+          onInsertImage={requestImage}
           onFilter={openFilter}
+          onCustomSort={openCustomSort}
+          onClearFilter={() => clearFilter()}
+          onReapplyFilter={reapplyFilter}
           onFind={() => setFindOpen(true)}
           onExport={openExport}
           onPrint={printSheet}
@@ -923,6 +1011,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             sheet={sheet}
             selection={selection}
             editing={editing}
+            formulaDraft={formulaText} onDraftChange={setFormulaText}
             onSelectionChange={handleSelectionChange}
             onStartEdit={startEdit}
             onCommitEdit={commitEdit}
@@ -933,6 +1022,10 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             onHeaderContextMenu={handleHeaderContextMenu}
             onAction={handleAction}
             onFill={handleFill}
+            onFilterColumn={openFilterColumn}
+            readonly={readonly} zoom={zoom}
+            onImageChange={(id, patch) => { if (!readonly) commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, images: item.images?.map((image) => image.id === id ? { ...image, ...patch } : image) })), { key: `image:${id}` }); }}
+            onImageDelete={(id) => { if (!readonly) commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, images: item.images?.filter((image) => image.id !== id) })), { key: `image-delete:${id}` }); }}
           />
           {findOpen ? (
             <SheetFindBar
@@ -958,32 +1051,11 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         </div>
 
         <div className="mo-glass mo-no-print flex h-8 shrink-0 items-center gap-1 border-t border-[var(--mo-line)] bg-[var(--mo-surface)] px-2">
-          <div className="mo-scroll flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-            {workbook.sheets.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => switchSheet(item.id)}
-                onDoubleClick={() => setSheetDialog({ type: 'rename', sheetId: item.id, name: item.name })}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setSheetDialog({ type: 'rename', sheetId: item.id, name: item.name });
-                }}
-                className={`h-6 shrink-0 rounded-t-md border-b-2 px-3 text-[11px] transition-colors ${
-                  item.id === sheet.id
-                    ? 'border-[var(--mo-accent)] bg-[var(--mo-surface)] font-medium text-[var(--mo-text-primary)]'
-                    : 'border-transparent text-[var(--mo-text-muted)] hover:bg-[var(--mo-surface-2)]'
-                }`}
-                style={item.tabColor ? { color: item.tabColor } : undefined}
-              >
-                {item.name}
-                {item.state !== 'visible' ? '（隐藏）' : ''}
-              </button>
-            ))}
-            <IconButton label="添加工作表" onClick={addNewSheet} disabled={readonly}>
-              <Plus size={13} />
-            </IconButton>
-          </div>
+          {/* 功能：标签右键菜单、双击原位改名及标签颜色；时间：2026-10-24；作者：lq。 */}
+          <SheetTabs sheets={workbook.sheets} activeId={sheet.id} readonly={readonly} onSwitch={switchSheet} onAdd={addNewSheet}
+            onRename={(id, name) => { if (!readonly) commit(renameSheet(latestWorkbook(), id, name), { key: 'rename-sheet' }); }}
+            onColor={(id, tabColor) => { if (!readonly) commit(updateSheet(latestWorkbook(), id, (item) => ({ ...item, tabColor })), { key: 'tab-color' }); }}
+            onDelete={(item) => setSheetDialog({ sheetId: item.id, name: item.name })} />
           <div className="flex shrink-0 items-center gap-3 pl-3 text-[10px] tabular-nums text-[var(--mo-text-muted)]">
             {stats.numericCount > 0 ? (
               <>
@@ -1016,6 +1088,22 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onShowCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
         />
       ) : null}
+
+      {/* 功能：以单次历史提交应用格式草稿和选区边框；时间：2026-10-24；作者：lq。 */}
+      {formatTarget ? <CellFormatDialog initialTab={formatTarget.tab} style={formatTarget.style} value={formatTarget.value} onClose={() => setFormatTarget(null)} onApply={(patch, border) => {
+        if (!readonly) commit(applyCellFormat(latestWorkbook(), sheet.id, formatTarget.range, patch, border), { key: 'format-cells' });
+        setFormatTarget(null);
+      }} /> : null}
+      <input ref={imageInputRef} type="file" aria-label="插入工作表图片" accept="image/png,image/jpeg,image/gif" className="sr-only" tabIndex={-1} onChange={(event) => { const file = event.target.files?.[0]; if (file) void insertImageFile(file); event.target.value = ''; }} />
+
+      {/* 功能：浏览器拒绝自动文件选择时显示原生文件控件，两个插图入口共用重试路径；时间：2026-10-24；作者：lq。 */}
+      <Dialog open={imagePickerError !== null} title="选择插入的图片" width="sm" onClose={() => setImagePickerError(null)}
+        description="未能自动打开文件选择窗口，请在下方直接选择 PNG、JPEG 或 GIF 图片。"
+        footer={<Button onClick={() => setImagePickerError(null)}>取消</Button>}>
+        <input type="file" aria-label="直接选择插入图片" accept="image/png,image/jpeg,image/gif" className="block w-full rounded border border-[var(--mo-line)] p-3 text-[12px]" onChange={(event) => {
+          const file = event.target.files?.[0]; if (file) void insertImageFile(file); event.target.value = '';
+        }} />
+      </Dialog>
 
       {contextMenu ? (
         <ContextMenu
@@ -1121,121 +1209,34 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         ) : null}
       </Dialog>
 
-      <Dialog
-        open={filterOpen}
-        onClose={() => setFilterOpen(false)}
-        title="筛选数据"
-        description={filterState ? `按 ${columnLabel(filterState.column)} 列筛选 ${rangeRef(filterState.range)}` : ''}
-        width="sm"
-        footer={
-          <>
-            <Button variant="ghost" onClick={clearFilter}>
-              清除筛选
-            </Button>
-            <Button onClick={() => setFilterOpen(false)}>取消</Button>
-            <Button variant="primary" onClick={applyFilterDialog}>
-              应用筛选
-            </Button>
-          </>
-        }
-      >
-        {filterState ? (
-          <div className="space-y-2">
-            <label className="flex items-center justify-between rounded-md bg-[var(--mo-surface-2)] px-2 py-1.5 text-[12px]">
-              <span>全选</span>
-              <input
-                type="checkbox"
-                checked={filterState.selected.size === filterState.values.length && filterState.values.length > 0}
-                onChange={(event) =>
-                  setFilterState((state) =>
-                    state
-                      ? {
-                          ...state,
-                          selected: event.target.checked ? new Set(state.values) : new Set(),
-                        }
-                      : state,
-                  )
-                }
-                className="h-3.5 w-3.5 accent-[var(--mo-accent)]"
-              />
-            </label>
-            <div className="max-h-[260px] space-y-0.5 overflow-auto">
-              {filterState.values.map((value) => (
-                <label
-                  key={value || '(空白)'}
-                  className="flex items-center justify-between rounded px-2 py-1 text-[12px] hover:bg-[var(--mo-surface-2)]"
-                >
-                  <span className="truncate">{value || '(空白)'}</span>
-                  <input
-                    type="checkbox"
-                    checked={filterState.selected.has(value)}
-                    onChange={(event) =>
-                      setFilterState((state) => {
-                        if (!state) return state;
-                        const selected = new Set(state.selected);
-                        if (event.target.checked) selected.add(value);
-                        else selected.delete(value);
-                        return { ...state, selected };
-                      })
-                    }
-                    className="h-3.5 w-3.5 accent-[var(--mo-accent)]"
-                  />
-                </label>
-              ))}
-            </div>
-          </div>
-        ) : null}
+      {/* 功能：筛选浮层紧邻字段表头，支持搜索、多选和列排序；时间：2026-10-24；作者：lq。 */}
+      {filterOpen && filterState ? <ColumnFilterMenu
+        anchor={filterState.anchor}
+        title={cellDisplay(workbook, sheet, filterState.autoFilterRange.r1, filterState.column) || `${columnLabel(filterState.column)} 列`}
+        values={filterState.values} selected={filterState.selected}
+        onSelected={(selected) => setFilterState((state) => state ? { ...state, selected } : state)}
+        onSort={(ascending) => sortByActive(ascending, filterState.column, filterState.range)}
+        onApply={(selected) => applyFilterDialog(false, selected)} onClear={() => applyFilterDialog(true)} onClose={() => setFilterOpen(false)}
+      /> : null}
+      {/* 功能：自定义排序明确字段、表头和方向，整行数据一起移动；时间：2026-10-24；作者：lq。 */}
+      <Dialog open={!!sortDraft} onClose={() => setSortDraft(null)} title="自定义排序" width="sm"
+        description={sortDraft ? `排序区域：${rangeRef(sortDraft.target)}` : ''}
+        footer={<><Button onClick={() => setSortDraft(null)}>取消</Button><Button variant="primary" onClick={() => {
+          if (sortDraft) sortByActive(sortDraft.ascending, sortDraft.column, { ...sortDraft.target, r1: sortDraft.target.r1 + (sortDraft.header ? 1 : 0) });
+        }}>确定</Button></>}>
+        {sortDraft ? <div className="space-y-3">
+          <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={sortDraft.header} onChange={(event) => setSortDraft({ ...sortDraft, header: event.target.checked })} />数据包含标题</label>
+          <Field label="排序依据"><Select aria-label="排序依据" value={sortDraft.column} onChange={(event) => setSortDraft({ ...sortDraft, column: Number(event.target.value) })}>
+            {Array.from({ length: sortDraft.target.c2 - sortDraft.target.c1 + 1 }, (_, i) => i + sortDraft.target.c1).map((col) => <option key={col} value={col}>{sortDraft.header ? cellDisplay(workbook, sheet, sortDraft.target.r1, col) || `${columnLabel(col)} 列` : `${columnLabel(col)} 列`}</option>)}
+          </Select></Field>
+          <Field label="次序"><Select aria-label="排序次序" value={String(sortDraft.ascending)} onChange={(event) => setSortDraft({ ...sortDraft, ascending: event.target.value === 'true' })}><option value="true">升序（A → Z，小 → 大）</option><option value="false">降序（Z → A，大 → 小）</option></Select></Field>
+        </div> : null}
       </Dialog>
 
-      <Dialog
-        open={sheetDialog !== null}
-        onClose={() => setSheetDialog(null)}
-        title="工作表"
-        width="sm"
-        footer={
-          <>
-            <Button onClick={() => setSheetDialog(null)}>取消</Button>
-            <Button
-              variant={sheetDialog?.type === 'delete' ? 'danger' : 'primary'}
-              onClick={confirmSheetDialog}
-            >
-              {sheetDialog?.type === 'delete' ? '删除' : '重命名'}
-            </Button>
-          </>
-        }
-      >
-        {sheetDialog ? (
-          <div className="space-y-3">
-            {sheetDialog.type === 'rename' ? (
-              <Field label="工作表名称">
-                <Input
-                  value={sheetDialog.name}
-                  onChange={(event) =>
-                    setSheetDialog((state) => (state ? { ...state, name: event.target.value } : state))
-                  }
-                  autoFocus
-                />
-              </Field>
-            ) : (
-              <p className="text-[12px]">确定删除工作表“{sheet.name}”吗？此操作可通过撤销恢复。</p>
-            )}
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="text-[var(--mo-danger)]"
-                onClick={() =>
-                  setSheetDialog({ type: 'delete', sheetId: sheet.id, name: sheet.name })
-                }
-              >
-                <Trash2 size={12} /> 删除工作表
-              </Button>
-              <span className="text-[10px] text-[var(--mo-text-muted)]">
-                当前工作表共 {Object.keys(sheet.cells).length} 个有内容的单元格
-              </span>
-            </div>
-          </div>
-        ) : null}
+      {/* 功能：删除工作表单独确认，重命名在标签内完成；时间：2026-10-24；作者：lq。 */}
+      <Dialog open={sheetDialog !== null} onClose={() => setSheetDialog(null)} title="删除工作表" width="sm"
+        footer={<><Button onClick={() => setSheetDialog(null)}>取消</Button><Button variant="danger" onClick={confirmSheetDialog}>删除</Button></>}>
+        <p className="text-[12px]">确定删除工作表“{sheetDialog?.name}”吗？此操作可通过撤销恢复。</p>
       </Dialog>
 
       <Dialog
@@ -1569,6 +1570,17 @@ export function buildSheetPrintPages(
   const contentWidth = PAGE_WIDTH - marginLeft - marginRight;
   const contentHeight = PAGE_HEIGHT - marginTop - marginBottom;
   const target = usedRange(sheet);
+  // 功能：打印范围包含浮动图片全部占用区域，避免只有图片的工作表被裁掉；时间：2026-10-24；作者：lq。
+  const rowTop = (row: number) => { let total = 0; for (let i = 0; i < row; i++) total += sheet.rowHeights[i] ?? sheet.defaultRowHeight; return total; };
+  const colLeft = (col: number) => { let total = 0; for (let i = 0; i < col; i++) total += sheet.colWidths[i] ?? sheet.defaultColWidth; return total; };
+  const images = (sheet.images ?? []).map((image) => ({ ...image, left: colLeft(image.col) + image.offsetX, top: rowTop(image.row) + image.offsetY }));
+  for (const image of images) {
+    let endRow = image.row; let height = image.offsetY + image.height;
+    while (height > (sheet.rowHeights[endRow] ?? sheet.defaultRowHeight) && endRow < 1_048_575) { height -= sheet.rowHeights[endRow] ?? sheet.defaultRowHeight; endRow++; }
+    let endCol = image.col; let width = image.offsetX + image.width;
+    while (width > (sheet.colWidths[endCol] ?? sheet.defaultColWidth) && endCol < 16_383) { width -= sheet.colWidths[endCol] ?? sheet.defaultColWidth; endCol++; }
+    target.r2 = Math.max(target.r2, endRow); target.c2 = Math.max(target.c2, endCol);
+  }
   const columnWidths: number[] = [];
   for (let col = target.c1; col <= target.c2; col += 1) {
     columnWidths.push(sheet.colWidths[col] ?? sheet.defaultColWidth);
@@ -1607,7 +1619,7 @@ export function buildSheetPrintPages(
     page.appendChild(title);
 
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = `width:${contentWidth}px;height:${contentHeight - titleHeight}px;overflow:hidden;`;
+    wrapper.style.cssText = `position:relative;width:${contentWidth}px;height:${contentHeight - titleHeight}px;overflow:hidden;`;
     const table = document.createElement('table');
     table.style.cssText = `border-collapse:collapse;table-layout:fixed;width:${totalWidth}px;transform:scale(${scale});transform-origin:top left;font-size:${workbook.defaultFontSizePt}pt;`;
     const colgroup = document.createElement('colgroup');
@@ -1628,6 +1640,15 @@ export function buildSheetPrintPages(
     }
     table.appendChild(tbody);
     wrapper.appendChild(table);
+    // 功能：将图片叠加到对应分页位置，跨页图片由每页内容区裁切；时间：2026-10-24；作者：lq。
+    const headerHeight = headerRow !== null ? sheet.rowHeights[headerRow] ?? sheet.defaultRowHeight : 0;
+    images.forEach((image) => {
+      const top = image.row === headerRow ? image.offsetY : headerHeight + image.top - rowTop(chunk.start);
+      if (top + image.height <= 0 || top * scale >= contentHeight - titleHeight) return;
+      const element = document.createElement('img'); element.src = image.src; element.alt = image.name;
+      element.style.cssText = `position:absolute;left:${image.left * scale}px;top:${top * scale}px;width:${image.width * scale}px;height:${image.height * scale}px;object-fit:fill;`;
+      wrapper.appendChild(element);
+    });
     page.appendChild(wrapper);
     container.appendChild(page);
     pages.push(page);
@@ -1645,6 +1666,8 @@ function buildPrintRow(
   printGridLines: boolean,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
+  // 功能：打印单元格高度与图片锚点使用一致的行高；时间：2026-10-24；作者：lq。
+  tr.style.height = `${sheet.rowHeights[row] ?? sheet.defaultRowHeight}px`;
   for (let col = target.c1; col <= target.c2; col += 1) {
     const td = document.createElement('td');
     const cell = cellAt(sheet, row, col);
