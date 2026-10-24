@@ -5,6 +5,8 @@ import { escapeHtml } from '@mini-office/shared';
 export interface RunRenderContext {
   pageNumber?: number;
   totalPages?: number;
+  /** 功能：SECTIONPAGES 使用当前报告节的总页数；时间：2026-10-24；作者：lq。 */
+  sectionPages?: number;
 }
 
 function runStyleCss(style: RunStyle): string {
@@ -52,9 +54,16 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
       parts.push('<span data-tab="1" contenteditable="false">\u2003\u2003</span>');
       continue;
     }
+    // 功能：字段显示为不可拆开的占位块，保留原字符样式；时间：2026-10-24；作者：lq。
+    if (run.mergeField) {
+      parts.push(`<span data-merge-field="${escapeHtml(run.mergeField)}" contenteditable="false" style="${runStyleCss(run.style)}"><span style="background:#e8f1ff;border-radius:3px;color:#245694;">«${escapeHtml(run.mergeField)}»</span></span>`);
+      continue;
+    }
     let text = run.text ?? '';
     if (run.field === 'PAGE' && context.pageNumber !== undefined) {
       text = String(context.pageNumber);
+    } else if (run.field === 'SECTIONPAGES' && (context.sectionPages ?? context.totalPages) !== undefined) {
+      text = String(context.sectionPages ?? context.totalPages);
     } else if (run.field === 'NUMPAGES' && context.totalPages !== undefined) {
       text = String(context.totalPages);
     }
@@ -115,6 +124,7 @@ export function paragraphPlainText(paragraph: DocParagraph, context: RunRenderCo
       if (run.tab) return '\t';
       if (run.lineBreak) return '\n';
       if (run.field === 'PAGE') return String(context.pageNumber ?? run.text ?? '');
+      if (run.field === 'SECTIONPAGES') return String(context.sectionPages ?? context.totalPages ?? run.text ?? '');
       if (run.field === 'NUMPAGES') return String(context.totalPages ?? run.text ?? '');
       return run.text ?? '';
     })

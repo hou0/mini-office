@@ -240,6 +240,9 @@ importers:
       '@mini-office/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@mini-office/editor-sheet':
+        specifier: workspace:*
+        version: link:../editor-sheet
       '@mini-office/export-service':
         specifier: workspace:*
         version: link:../export-service

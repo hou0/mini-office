@@ -121,7 +121,7 @@ export function splitRunsAtOffset(
   const after: DocRun[] = [];
   let consumed = 0;
   for (const run of runs) {
-    if (run.image || run.tab || run.lineBreak) {
+    if (run.image || run.tab || run.lineBreak || run.mergeField) {
       if (consumed < offset) before.push(run);
       else after.push(run);
       consumed += 1;

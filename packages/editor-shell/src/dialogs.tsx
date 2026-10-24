@@ -30,6 +30,7 @@ import {
   Switch,
 } from '@mini-office/ui';
 import {
+  APP_VERSION,
   DEFAULT_ACCENT_HEX,
   MOD_KEY,
   decodeDisplayName,
@@ -383,7 +384,8 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
       </section>
 
       <div className="flex items-center justify-between border-t border-[var(--mo-line)] pt-3">
-        <span className="text-[10px] text-[var(--mo-text-faint)]">Mini Office 0.1.0 · 本地优先</span>
+        {/* 功能：设置页展示统一版本；时间：2026-10-24；作者：lq。 */}
+        <span className="text-[10px] text-[var(--mo-text-faint)]">Mini Office {APP_VERSION} · 本地优先</span>
         <Button
           size="sm"
           variant="ghost"
@@ -747,8 +749,10 @@ function AboutContent() {
         <BrandIcon size={52} />
         <div>
           <div className="text-[15px] font-semibold">Mini Office</div>
-          <div className="mt-0.5 text-[12px] font-medium text-[var(--mo-accent)]">非人类程序出品</div>
-          <div className="text-[11px] text-[var(--mo-text-muted)]">版本 0.1.0 · 离线优先的轻量办公套件</div>
+          {/* 功能：更正出品方名称；时间：2026-10-24；作者：lq。 */}
+          <div className="mt-0.5 text-[12px] font-medium text-[var(--mo-accent)]">非人类程序员出品</div>
+          {/* 功能：关于页展示统一版本；时间：2026-10-24；作者：lq。 */}
+          <div className="text-[11px] text-[var(--mo-text-muted)]">版本 {APP_VERSION} · 离线优先的轻量办公套件</div>
         </div>
       </div>
       <p className="text-[12px] leading-6 text-[var(--mo-text-muted)]">
@@ -772,6 +776,14 @@ function AboutContent() {
           <div className="text-[var(--mo-text-muted)]">导出</div>
           <div className="mt-0.5 font-medium">PDF · 图片 ZIP</div>
         </div>
+      </div>
+      {/* 功能：展示出品方公众号原始二维码，保留完整留白供微信扫码；时间：2026-10-24；作者：lq。 */}
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-3">
+        <div className="min-w-0 space-y-1.5">
+          <div className="text-[13px] font-semibold">非人类程序员</div>
+          <div className="text-[12px] text-[var(--mo-text-muted)]">微信扫一扫，关注公众号</div>
+        </div>
+        <img src="/brand/non-human-programmer-wechat.jpg" alt="非人类程序员微信公众号二维码" width={172} height={172} draggable={false} className="shrink-0 bg-white" style={{ imageRendering: 'pixelated' }} />
       </div>
       <div className="flex items-center gap-2 text-[10px] text-[var(--mo-text-faint)]">
         <ShieldCheck size={12} /> 不收集文档内容 · 不上传文件 · 本地优先

@@ -86,11 +86,11 @@ function mergeTextRuns(runs: DocRun[]): DocRun[] {
       !previous.image &&
       !previous.tab &&
       !previous.lineBreak &&
-      !previous.field &&
+      !previous.field && !previous.mergeField &&
       !run.image &&
       !run.tab &&
       !run.lineBreak &&
-      !run.field &&
+      !run.field && !run.mergeField &&
       styleIsEqual(previous.style, run.style)
     ) {
       previous.text = (previous.text ?? '') + (run.text ?? '');
@@ -116,10 +116,7 @@ export function serializeDomRuns(
     }
     if (!(node instanceof Element)) return;
     if (node.getAttribute('data-list-marker') === '1') return;
-    if (node.hasAttribute('data-tab')) {
-      runs.push({ text: '', style: { ...style }, tab: true });
-      return;
-    }
+    if (node.hasAttribute('data-tab')) { runs.push({ text: '', style: { ...style }, tab: true }); return; }
     const tag = node.tagName;
     if (tag === 'BR') {
       runs.push({ text: '', style: { ...style }, lineBreak: true });
@@ -203,6 +200,12 @@ export function serializeDomRuns(
       if (inline.fontVariant?.includes('small-caps')) next.smallCaps = true;
     }
 
+    // 功能：字段原子沿用节点原有字形样式，输入不会将其拆散；时间：2026-10-24；作者：lq。
+    if (node.hasAttribute('data-merge-field')) {
+      const name = node.getAttribute('data-merge-field')!;
+      runs.push({ text: `«${name}»`, mergeField: name, style: next });
+      return;
+    }
     for (const child of Array.from(node.childNodes)) walk(child, next);
   };
 
@@ -216,7 +219,7 @@ function isAtomicElement(element: Element): boolean {
   return (
     element.tagName === 'IMG' ||
     element.tagName === 'BR' ||
-    element.getAttribute('data-tab') === '1'
+    element.getAttribute('data-tab') === '1' || element.hasAttribute('data-merge-field')
   );
 }
 
@@ -291,7 +294,8 @@ export function setCaretAtOffset(root: HTMLElement, target: number): void {
     }
     if (!(node instanceof Element)) return false;
     if (node.getAttribute('data-list-marker') === '1') return false;
-    if (node.tagName === 'IMG' || node.tagName === 'BR' || node.getAttribute('data-tab') === '1') {
+    // 功能：光标始终位于字段块外侧，保证插域后继续输入的位置正确；时间：2026-10-24；作者：lq。
+    if (isAtomicElement(node)) {
       if (remaining <= 0) {
         place(node.parentNode ?? root, Array.from((node.parentNode ?? root).childNodes).indexOf(node));
         return true;
@@ -330,7 +334,7 @@ export function getParagraphPlainTextFromDom(root: HTMLElement): string {
       text += '\n';
       return;
     }
-    if (node.tagName === 'IMG') {
+    if (node.tagName === 'IMG' || node.hasAttribute('data-merge-field')) {
       text += '￼';
       return;
     }
@@ -347,7 +351,7 @@ export function getParagraphPlainTextFromDom(root: HTMLElement): string {
 export function runsPlainText(runs: DocRun[]): string {
   return runs
     .map((run) => {
-      if (run.image) return '￼';
+      if (run.image || run.mergeField) return '￼';
       if (run.tab) return '\t';
       if (run.lineBreak) return '\n';
       return run.text ?? '';
@@ -403,7 +407,7 @@ export function replaceInRuns(
   let remaining = limit;
   let count = 0;
   const next = runs.map((run) => {
-    if (remaining <= 0 || !run.text || run.image || run.tab) return run;
+    if (remaining <= 0 || !run.text || run.image || run.tab || run.mergeField) return run;
     let text = run.text;
     let changed = true;
     while (changed && remaining > 0) {

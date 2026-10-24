@@ -25,6 +25,8 @@ import {
   Scissors,
   Highlighter,
   Baseline,
+  PanelTop,
+  Mails,
 } from 'lucide-react';
 import { ColorField, Dropdown, IconButton, Kbd, Select, Tooltip } from '@mini-office/ui';
 import type { MenuItem } from '@mini-office/ui';
@@ -52,6 +54,10 @@ export interface WordToolbarProps {
   onInsertTable: (rows: number, columns: number) => void;
   onInsertImage: () => void;
   onPageBreak: () => void;
+  /** 功能：打开页眉页脚设置；时间：2026-10-24；作者：lq。 */
+  onHeaderFooter: () => void;
+  /** 功能：邮件合并操作入口；时间：2026-10-24；作者：lq。 */
+  onMailMerge: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onZoomChange: (zoom: number) => void;
@@ -74,6 +80,9 @@ export function WordToolbar(props: WordToolbarProps) {
   const { readonly, activeStyle, activeParagraph } = props;
   const paragraphStyle = activeParagraph?.style ?? {};
   const moreItems: MenuItem[] = [
+    { id: 'mail-merge', label: '邮件合并 / 批量报告', icon: <Mails size={14} />, disabled: readonly, onSelect: props.onMailMerge },
+    // 功能：在窄屏更多菜单中保留页眉页脚入口；时间：2026-10-24；作者：lq。
+    { id: 'header-footer', label: '页眉、页脚与页码', icon: <PanelTop size={14} />, disabled: readonly, onSelect: props.onHeaderFooter },
     {
       id: 'page-break',
       label: '插入分页符',
@@ -304,6 +313,10 @@ export function WordToolbar(props: WordToolbarProps) {
         <span className="text-[11px] font-semibold">1.</span>
       </IconButton>
       <TablePicker disabled={readonly} onInsert={props.onInsertTable} />
+      {/* 功能：直接显示批量报告入口，避免首次使用难以发现；时间：2026-10-24；作者：lq。 */}
+      <button type="button" disabled={readonly} onClick={props.onMailMerge} className="flex h-7 shrink-0 items-center gap-1 rounded px-2 text-xs hover:bg-[var(--mo-surface-2)] disabled:opacity-40"><Mails size={14} />邮件合并</button>
+      {/* 功能：常驻页眉页脚按钮；时间：2026-10-24；作者：lq。 */}
+      <Tooltip label="页眉、页脚与页码"><IconButton label="页眉、页脚与页码" disabled={readonly} onClick={props.onHeaderFooter}><PanelTop size={15} /></IconButton></Tooltip>
       <IconButton label="插入图片" disabled={readonly} onClick={props.onInsertImage}>
         <ImagePlus size={15} />
       </IconButton>

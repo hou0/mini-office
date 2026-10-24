@@ -15,11 +15,11 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 功能：使用已发布版本的源代码；时间：2026-10-23；作者：lq。
-      - name: Checkout v0.1.0
+      # 功能：使用 0.1.1 发行版本源码并保持产物版本一致；时间：2026-10-24；作者：lq。
+      - name: Checkout v0.1.1
         uses: actions/checkout@v4
         with:
-          ref: v0.1.0
+          ref: v0.1.1
 
       # 功能：安装项目指定的 pnpm；时间：2026-10-23；作者：lq。
       - name: Setup pnpm
@@ -59,8 +59,8 @@ jobs:
             throw "Expected exactly one NSIS installer."
           }
 
-          Copy-Item $installers[0].FullName "release-assets/Mini-Office_0.1.0_windows-x64-setup.exe"
-          Compress-Archive -Path "$buildDir/mini-office-desktop.exe" -DestinationPath "release-assets/Mini-Office_0.1.0_windows-x64.zip"
+          Copy-Item $installers[0].FullName "release-assets/Mini-Office_0.1.1_windows-x64-setup.exe"
+          Compress-Archive -Path "$buildDir/mini-office-desktop.exe" -DestinationPath "release-assets/Mini-Office_0.1.1_windows-x64.zip"
 
           Get-ChildItem release-assets -File | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
@@ -73,4 +73,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload v0.1.0 (Get-ChildItem release-assets -File).FullName
+        run: gh release upload v0.1.1 (Get-ChildItem release-assets -File).FullName

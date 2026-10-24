@@ -486,7 +486,8 @@ export function StatusBar() {
           <Kbd>K</Kbd>
           <span className="hidden lg:inline">命令</span>
         </span>
-        <span className="hidden lg:inline">{isTauriRuntime() ? 'Tauri 桌面' : 'Web 模式'}</span>
+        {/* 功能：桌面状态栏显示软件名称；时间：2026-10-24；作者：lq。 */}
+        <span className="hidden lg:inline">{isTauriRuntime() ? 'Mini Office' : 'Web 模式'}</span>
       </div>
     </footer>
   );

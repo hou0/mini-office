@@ -1,0 +1,118 @@
+# 功能：手动构建兼容 Apple Silicon 和 Intel 的 macOS 通用包，上传到已有 Release。
+# 时间：2026-10-24
+# 作者：lq
+name: macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "已存在的 Release 标签（版本须与 tauri.conf.json 一致）"
+        required: true
+        default: v0.1.1
+        type: string
+
+permissions:
+  contents: write
+
+# 功能：同一标签串行发布，避免并发上传相同文件；时间：2026-10-24；作者：lq。
+concurrency:
+  group: macos-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # 功能：按指定标签获取发布源码；时间：2026-10-24；作者：lq。
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      # 功能：构建前检查版本和已有 Release，避免将错误源码上传到版本；时间：2026-10-24；作者：lq。
+      - name: Validate release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          if [[ "$RELEASE_TAG" != "v$version" ]]; then
+            echo "Release tag must match Tauri version: v$version" >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" >/dev/null
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      # 功能：安装项目 packageManager 指定的 pnpm；时间：2026-10-24；作者：lq。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # 功能：安装与 Windows 流程一致的 Node.js 并缓存依赖；时间：2026-10-24；作者：lq。
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      # 功能：为通用应用安装 ARM64 和 x64 两套 Rust 编译目标；时间：2026-10-24；作者：lq。
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      # 功能：使用发布标签中的锁文件安装依赖；时间：2026-10-24；作者：lq。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 功能：无需 Apple 证书，使用临时签名生成通用应用及 DMG；时间：2026-10-24；作者：lq。
+      - name: Build macOS universal
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: pnpm tauri:build --target universal-apple-darwin --bundles app,dmg --ci
+
+      # 功能：保留应用结构与资源并生成架构独立的校验清单；时间：2026-10-24；作者：lq。
+      - name: Prepare downloads
+        run: |
+          set -euo pipefail
+          bundle_dir="target/universal-apple-darwin/release/bundle"
+          asset_prefix="Mini-Office_${APP_VERSION}_macos-universal"
+          mkdir -p release-assets
+          shopt -s nullglob
+          installers=("$bundle_dir"/dmg/*.dmg)
+          if [[ ${#installers[@]} -ne 1 ]]; then
+            echo "Expected exactly one DMG installer." >&2
+            exit 1
+          fi
+          test -d "$bundle_dir/macos/Mini Office.app"
+          lipo -verify_arch arm64 x86_64 "$bundle_dir/macos/Mini Office.app/Contents/MacOS/mini-office-desktop"
+          cp "${installers[0]}" "release-assets/${asset_prefix}.dmg"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$bundle_dir/macos/Mini Office.app" "release-assets/${asset_prefix}.zip"
+          cd release-assets
+          shasum -a 256 ./*.dmg ./*.zip > SHA256SUMS-macos-universal.txt
+          shasum -a 256 -c SHA256SUMS-macos-universal.txt
+
+      # 功能：保留可下载的构建产物，Release 上传失败时仍可获取；时间：2026-10-24；作者：lq。
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mini-Office_${{ env.APP_VERSION }}_macos-universal
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # 功能：上传到已有 Release，同名文件报错以保留已有下载；时间：2026-10-24；作者：lq。
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release upload "$RELEASE_TAG" release-assets/*

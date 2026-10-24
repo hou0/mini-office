@@ -1,8 +1,27 @@
-import type { DocBlock } from '@mini-office/document-model';
+import type { DocBlock, DocModel, DocSection } from '@mini-office/document-model';
+import { documentSections } from './sections';
 
 export interface PageSlice {
   index: number;
   blocks: DocBlock[];
+  /** 功能：批量报告的节内页序与节总页数；时间：2026-10-24；作者：lq。 */
+  section?: DocSection;
+  sectionPage?: number;
+  sectionTotal?: number;
+}
+
+/** 功能：每节独立分页并恢复编号，合并报告重新打开后仍保持各自页码；时间：2026-10-24；作者：lq。 */
+export function paginateDocument(doc: DocModel, heights: Map<string, number>): PageSlice[] {
+  const sections = documentSections(doc);
+  const pages: PageSlice[] = [];
+  let nextNumber = 1;
+  for (const section of sections) {
+    const slices = paginateBlocks(section.blocks, heights, pageMetrics(section.page).contentHeight);
+    const start = section.page.pageNumberStart ?? nextNumber;
+    slices.forEach((slice, index) => pages.push({ ...slice, index: pages.length, section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer }, sectionPage: index, sectionTotal: slices.length }));
+    nextNumber = start + slices.length;
+  }
+  return pages;
 }
 
 /**

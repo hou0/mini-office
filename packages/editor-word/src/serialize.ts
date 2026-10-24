@@ -26,6 +26,7 @@ import {
   type OoxmlPackage,
 } from '@mini-office/ooxml';
 import { extensionOf, uid } from '@mini-office/shared';
+import { documentSections } from './sections';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -306,8 +307,13 @@ async function runXml(run: DocRun, state: SerializeState): Promise<string> {
   if (run.text) content += `<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>`;
   if (!content && !properties) content = '<w:t xml:space="preserve"></w:t>';
   const core = `<w:r>${properties}${content}</w:r>`;
-  if (run.field === 'PAGE' || run.field === 'NUMPAGES') {
-    const instruction = run.field === 'PAGE' ? ' PAGE \\* MERGEFORMAT ' : ' NUMPAGES \\* MERGEFORMAT ';
+  // 功能：模板字段保存为原生 MERGEFIELD，字段名安全转义；时间：2026-10-24；作者：lq。
+  if (run.mergeField) {
+    const name = run.mergeField.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `<w:fldSimple w:instr="${escapeXml(` MERGEFIELD "${name}" \\* MERGEFORMAT `)}">${core}</w:fldSimple>`;
+  }
+  if (run.field === 'PAGE' || run.field === 'NUMPAGES' || run.field === 'SECTIONPAGES') {
+    const instruction = ` ${run.field} \\* MERGEFORMAT `;
     return `<w:fldSimple w:instr="${instruction}">${core}</w:fldSimple>`;
   }
   return core;
@@ -433,7 +439,8 @@ async function tableXml(table: DocTable, state: SerializeState): Promise<string>
 async function blockXml(block: DocBlock, state: SerializeState): Promise<string> {
   if (block.type === 'paragraph') return paragraphXml(block, state);
   if (block.type === 'table') return tableXml(block, state);
-  return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+  // 功能：分页标记只占最小行高，保持长表分页与预览一致；时间：2026-10-24；作者：lq。
+  return '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="1" w:lineRule="exact"/></w:pPr><w:r><w:br w:type="page"/></w:r></w:p>';
 }
 
 function buildSectPr(page: PageSetup, state: SerializeState): string {
@@ -464,13 +471,64 @@ function buildSectPr(page: PageSetup, state: SerializeState): string {
         margins.setAttribute('w:footer', String(Math.round(pxToTwips(margin.footer))));
         margins.setAttribute('w:gutter', String(Math.round(pxToTwips(margin.gutter ?? 0))));
         if (!margins.parentNode) sectPr.appendChild(margins);
+        // 功能：写回起始页码并保留其他页码格式属性；时间：2026-10-24；作者：lq。
+        if (page.pageNumberStart !== undefined) {
+          const numbering = firstChild(sectPr, 'w:pgNumType') ?? doc.createElementNS(W_NS, 'w:pgNumType');
+          numbering.setAttribute('w:start', String(page.pageNumberStart));
+          if (!numbering.parentNode) sectPr.appendChild(numbering);
+        }
         return new XMLSerializer().serializeToString(sectPr);
       }
     } catch {
       // Fall back to a generated section.
     }
   }
-  return `<w:sectPr>${pgSz}${pgMar}${page.columns && page.columns > 1 ? `<w:cols w:num="${page.columns}"/>` : ''}</w:sectPr>`;
+  return `<w:sectPr>${pgSz}${pgMar}${page.pageNumberStart !== undefined ? `<w:pgNumType w:start="${page.pageNumberStart}"/>` : ''}${page.columns && page.columns > 1 ? `<w:cols w:num="${page.columns}"/>` : ''}</w:sectPr>`;
+}
+
+/** 功能：保存新增/编辑后的默认页眉页脚，写入独立部件、关系和内容类型；时间：2026-10-24；作者：lq。 */
+async function writeHeaderFooters(model: DocModel, state: SerializeState, suffix = ''): Promise<void> {
+  const sectionDoc = parseXmlDom(`<w:root xmlns:w="${W_NS}" xmlns:r="${R_NS}">${state.sectPrXml ?? buildSectPr(model.page, state)}</w:root>`);
+  const section = firstDescendant(sectionDoc, 'w:sectPr')!;
+  for (const kind of ['header', 'footer'] as const) {
+    const value = model[kind];
+    if (!value || (state.sourceExists && !value.edited)) continue;
+    // 每个部件拥有独立关系作用域；新建文本内容不复用原图片关系；时间：2026-10-24；作者：lq。
+    const target = `mini-${kind}${suffix}.xml`;
+    const part = `word/${target}`;
+    const sourceRelPath = value.sourcePart ? `word/_rels/${value.sourcePart.split('/').at(-1)}.rels` : '';
+    const partRels = sourceRelPath ? await state.zip.file(sourceRelPath)?.async('text') : undefined;
+    const partState: SerializeState = { ...state, documentRels: existingRels(partRels), relsChanged: false, addedImages: new Map() };
+    let body = '';
+    for (const block of value.blocks) body += await blockXml(block, partState);
+    state.imageCounter = partState.imageCounter;
+    const root = kind === 'header' ? 'hdr' : 'ftr';
+    state.zip.file(part, `${xmlDeclaration()}<w:${root} xmlns:w="${W_NS}" xmlns:r="${R_NS}" xmlns:wp="${WP_NS}" xmlns:a="${A_NS}" xmlns:pic="${PIC_NS}">${body || '<w:p/>'}</w:${root}>`);
+    if (partState.documentRels.length) state.zip.file(`word/_rels/${target}.rels`, documentRelsXml(partState.documentRels));
+    let rel = state.documentRels.find((item) => item.target === target && item.type.endsWith(`/${kind}`));
+    if (!rel) {
+      rel = { id: uid(`rId${kind}`), type: `http://schemas.openxmlformats.org/officeDocument/2006/relationships/${kind}`, target };
+      state.documentRels.push(rel);
+    }
+    state.relsChanged = true;
+    const references = Array.from(section.children).filter((element) => element.tagName === `w:${kind}Reference` && element.getAttribute('w:type') === 'default');
+    references.forEach((element) => element.remove());
+    const reference = sectionDoc.createElementNS(W_NS, `w:${kind}Reference`);
+    reference.setAttribute('w:type', 'default');
+    reference.setAttributeNS(R_NS, 'r:id', rel.id);
+    section.insertBefore(reference, section.firstChild);
+    const ct = parseXmlDom(state.contentTypesXml ?? contentTypesXml(false, false, false));
+    const types = ct.documentElement;
+    if (!Array.from(types.children).some((element) => element.getAttribute('PartName') === `/${part}`)) {
+      const override = ct.createElementNS(types.namespaceURI, 'Override');
+      override.setAttribute('PartName', `/${part}`);
+      override.setAttribute('ContentType', `application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml`);
+      types.appendChild(override);
+    }
+    state.contentTypesXml = updateContentTypes(new XMLSerializer().serializeToString(ct), new Set(partState.documentRels.filter((item) => item.type.endsWith('/image')).map((item) => extensionOf(item.target).replace('.', ''))));
+    state.contentTypesChanged = true;
+  }
+  state.sectPrXml = new XMLSerializer().serializeToString(section);
 }
 
 function buildDocumentXml(body: string, page: PageSetup, state: SerializeState): string {
@@ -571,6 +629,9 @@ function ensurePngPlaceholder(): string {
 export interface SerializeDocxOptions {
   sourceBytes?: Uint8Array;
   name: string;
+  /** 功能：批量报告按节合并，生成结果移除数据源连接；时间：2026-10-24；作者：lq。 */
+  sections?: DocModel[];
+  materialized?: boolean;
 }
 
 export async function serializeDocx(
@@ -598,11 +659,37 @@ export async function serializeDocx(
     sectPrXml: collectSectPrXml(documentXml),
   };
 
+  // 功能：每条记录对应独立节，分别设置页眉页脚及起始页码；时间：2026-10-24；作者：lq。
+  const sections = options.sections ?? documentSections(doc);
+  const originalSection = state.sectPrXml;
   let body = '';
-  for (const block of doc.blocks) {
-    body += await blockXml(block, state);
+  for (let index = 0; index < sections.length; index++) {
+    const current = sections[index];
+    state.sectPrXml = originalSection;
+    const sectionDoc = sections.length > 1 ? { ...current, header: current.header ? { ...current.header, edited: true } : undefined, footer: current.footer ? { ...current.footer, edited: true } : undefined } : current;
+    await writeHeaderFooters(sectionDoc, state, options.sections || sections.length > 1 ? `-${index + 1}` : '');
+    let content = '';
+    const blocks = [...current.blocks];
+    while (blocks.at(-1)?.type === 'pageBreak') blocks.pop();
+    for (const block of blocks) content += await blockXml(block, state);
+    if (index < sections.length - 1) {
+      const sectionDom = parseXmlDom(`<w:root xmlns:w="${W_NS}" xmlns:r="${R_NS}">${buildSectPr(current.page, state)}</w:root>`);
+      const section = firstDescendant(sectionDom, 'w:sectPr')!;
+      const type = firstChild(section, 'w:type') ?? sectionDom.createElementNS(W_NS, 'w:type');
+      type.setAttribute('w:val', 'nextPage');
+      if (!type.parentNode) section.insertBefore(type, firstChild(section, 'w:pgSz'));
+      const sectionXml = new XMLSerializer().serializeToString(section);
+      // 在正文段落内附加节属性；末块为表格时使用零高度节标记，避免额外空白页。
+      if (blocks.at(-1)?.type === 'paragraph') {
+        const lastStart = content.lastIndexOf('<w:p>');
+        const last = content.slice(lastStart);
+        const withSection = last.includes('</w:pPr>') ? last.replace('</w:pPr>', `${sectionXml}</w:pPr>`) : last.replace('<w:p>', `<w:p><w:pPr>${sectionXml}</w:pPr>`);
+        content = content.slice(0, lastStart) + withSection;
+      } else content += `<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="1" w:lineRule="exact"/>${sectionXml}</w:pPr></w:p>`;
+    }
+    body += content;
   }
-  const documentContent = buildDocumentXml(body, doc.page, state);
+  const documentContent = buildDocumentXml(body, sections.at(-1)?.page ?? doc.page, state);
   zip.file('word/document.xml', documentContent);
 
   if (!sourceExists) {
@@ -627,6 +714,16 @@ export async function serializeDocx(
       });
     }
     state.relsChanged = true;
+  }
+
+  // 功能：成品不再连接外部合并数据源，打开时刷新分页域；时间：2026-10-24；作者：lq。
+  if (options.materialized || options.sections) {
+    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml());
+    Array.from(settings.getElementsByTagName('w:mailMerge')).forEach((element) => element.remove());
+    const update = firstChild(settings.documentElement, 'w:updateFields') ?? settings.createElementNS(W_NS, 'w:updateFields');
+    update.setAttribute('w:val', 'true');
+    if (!update.parentNode) settings.documentElement.appendChild(update);
+    zip.file('word/settings.xml', new XMLSerializer().serializeToString(settings));
   }
 
   if (state.relsChanged || !zip.file('word/_rels/document.xml.rels')) {

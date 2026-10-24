@@ -38,6 +38,8 @@ export interface DocRun {
   tab?: boolean;
   /** Field code such as PAGE / NUMPAGES, resolved by the renderer. */
   field?: string;
+  /** 功能：结构化邮件合并字段名称，与普通文字独立保存；时间：2026-10-24；作者：lq。 */
+  mergeField?: string;
 }
 
 export interface ParagraphStyle {
@@ -73,6 +75,8 @@ export interface DocParagraph {
   styleId?: string;
   /** Source paragraph index for stable round-trips. */
   sourceIndex?: number;
+  /** 功能：保留段尾分节信息，让批量报告重新打开后仍独立编号；时间：2026-10-24；作者：lq。 */
+  sectionEnd?: DocSection;
 }
 
 export interface TableBorderSide {
@@ -143,13 +147,22 @@ export interface PageSetup {
   sizeName: string;
   margins: PageMargins;
   columns?: number;
+  /** 功能：页码起始值，独立于物理页序；时间：2026-10-24；作者：lq。 */
+  pageNumberStart?: number;
 }
 
 export interface HeaderFooter {
   blocks: DocBlock[];
   distancePx: number;
   pageNumbers?: boolean;
+  /** 功能：仅重写经用户编辑的页眉页脚，保留导入文档的其他变体；时间：2026-10-24；作者：lq。 */
+  edited?: boolean;
+  /** 功能：保留页眉页脚部件路径以正确复用图片关系；时间：2026-10-24；作者：lq。 */
+  sourcePart?: string;
 }
+
+/** 功能：描述一个报告节的页面与页眉页脚；时间：2026-10-24；作者：lq。 */
+export interface DocSection { page: PageSetup; header?: HeaderFooter; footer?: HeaderFooter }
 
 export interface DocMeta {
   title?: string;
@@ -177,6 +190,8 @@ export interface DocModel {
   hasComments?: boolean;
   hasContentControls?: boolean;
   stats?: { words: number; characters: number };
+  /** 功能：页面渲染时的节总页数，不写入文档包；时间：2026-10-24；作者：lq。 */
+  sectionPageCount?: number;
 }
 
 export const A4_PAGE: PageSetup = {

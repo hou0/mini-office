@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { useWorkspaceStore } from '@mini-office/document-model';
 import { Button, IconButton, Input } from '@mini-office/ui';
-import { OFFICE_META, formatBytes, formatDateTime, type OfficeKind } from '@mini-office/shared';
+import { APP_VERSION, OFFICE_META, formatBytes, formatDateTime, type OfficeKind } from '@mini-office/shared';
 import { contractTemplate, expenseTemplate } from './templates';
 
 const KIND_ICONS: Record<OfficeKind, typeof FileText> = {
@@ -359,7 +359,8 @@ export function HomePage() {
 
         <section className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--mo-line)] pt-5 text-[10px] text-[var(--mo-text-faint)]">
           <div className="flex flex-wrap items-center gap-4">
-            <span>Mini Office 0.1.0</span>
+            {/* 功能：展示统一版本号；时间：2026-10-24；作者：lq。 */}
+            <span>Mini Office {APP_VERSION}</span>
             <span>离线优先 · 不上传文件</span>
             <span>DOCX / XLSX / PPTX</span>
           </div>

@@ -1,6 +1,6 @@
 {
   "name": "@mini-office/editor-word",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -14,6 +14,7 @@
     "react": "^18.3.1",
     "@mini-office/design-system": "workspace:*",
     "@mini-office/export-service": "workspace:*",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "@mini-office/editor-sheet": "workspace:*"
   }
 }

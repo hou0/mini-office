@@ -35,6 +35,8 @@ import {
   type Relationship,
 } from '@mini-office/ooxml';
 import { countWords, uid } from '@mini-office/shared';
+// 功能：解析 Word 原生合并域；时间：2026-10-24；作者：lq。
+import { parseMergeField } from './merge-fields';
 
 const HIGHLIGHT_COLORS: Record<string, string | undefined> = {
   black: '#000000',
@@ -646,7 +648,7 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
 }
 
 interface ParseInlineState {
-  fieldStack: Array<{ instr: string; phase: 'instr' | 'result' }>;
+  fieldStack: Array<{ instr: string; phase: 'instr' | 'result'; mergeEmitted?: boolean }>;
 }
 
 async function parseRunElement(
@@ -671,8 +673,16 @@ async function parseRunElement(
           const run: DocRun = { text, style };
           const field = topField();
           if (field && field.phase === 'result') {
+            // 功能：跨多个文本 run 的字段只生成一个原子占位符；时间：2026-10-24；作者：lq。
+            const name = parseMergeField(field.instr);
+            if (name) {
+              if (!field.mergeEmitted) runs.push({ text: `«${name}»`, mergeField: name, style });
+              field.mergeEmitted = true;
+              break;
+            }
             if (/\bPAGE\b/i.test(field.instr) && !/NUMPAGES/i.test(field.instr)) run.field = 'PAGE';
             else if (/NUMPAGES/i.test(field.instr)) run.field = 'NUMPAGES';
+            else if (/SECTIONPAGES/i.test(field.instr)) run.field = 'SECTIONPAGES';
           }
           runs.push(run);
         }
@@ -715,7 +725,12 @@ async function parseRunElement(
         const type = attrValue(child, 'w:fldCharType');
         if (type === 'begin') state.fieldStack.push({ instr: '', phase: 'instr' });
         else if (type === 'separate' && topField()) topField()!.phase = 'result';
-        else if (type === 'end') state.fieldStack.pop();
+        else if (type === 'end') {
+          const field = topField();
+          const name = field && parseMergeField(field.instr);
+          if (name && !field?.mergeEmitted) runs.push({ text: `«${name}»`, mergeField: name, style });
+          state.fieldStack.pop();
+        }
         break;
       }
       case 'w:instrText': {
@@ -759,12 +774,21 @@ async function parseInlineChildren(
       }
       case 'w:fldSimple': {
         const instr = attrValue(child, 'w:instr') ?? '';
+        // 功能：兼容简式 MERGEFIELD，保持第一个结果字符的样式；时间：2026-10-24；作者：lq。
+        const name = parseMergeField(instr);
+        if (name) {
+          const result = await parseInlineChildren(child, base, ctx, state);
+          runs.push({ text: `«${name}»`, mergeField: name, style: result[0]?.style ?? base });
+          break;
+        }
         const before = runs.length;
         runs.push(...(await parseInlineChildren(child, base, ctx, state)));
         if (/\bPAGE\b/i.test(instr) && !/NUMPAGES/i.test(instr)) {
           for (let index = before; index < runs.length; index += 1) runs[index].field = 'PAGE';
         } else if (/NUMPAGES/i.test(instr)) {
           for (let index = before; index < runs.length; index += 1) runs[index].field = 'NUMPAGES';
+        } else if (/SECTIONPAGES/i.test(instr)) {
+          for (let index = before; index < runs.length; index += 1) runs[index].field = 'SECTIONPAGES';
         }
         break;
       }
@@ -835,6 +859,16 @@ async function parseParagraph(
     list,
     styleId,
   };
+  // 功能：保留段尾分节以及各节独立的页眉页脚与编号；时间：2026-10-24；作者：lq。
+  const section = firstChild(pPr, 'w:sectPr');
+  if (section) {
+    const page = parsePageSetup(section, ctx);
+    paragraph.sectionEnd = {
+      page,
+      header: await parseHeaderFooter(section, ctx, 'header', page.margins.header),
+      footer: await parseHeaderFooter(section, ctx, 'footer', page.margins.footer),
+    };
+  }
   return { paragraph, pageBreakAfter };
 }
 
@@ -1002,7 +1036,9 @@ async function parseBlockContainer(element: Element, ctx: ParseContext): Promise
     switch (child.tagName) {
       case 'w:p': {
         const { paragraph, pageBreakAfter } = await parseParagraph(child, ctx);
-        blocks.push(paragraph);
+        // 功能：纯分页标记不额外占用一行，避免长表格重开后插入空白页；时间：2026-10-24；作者：lq。
+        const breakOnly = pageBreakAfter && !paragraph.sectionEnd && paragraph.runs.every((run) => !run.text && !run.image && !run.tab && !run.lineBreak);
+        if (!breakOnly) blocks.push(paragraph);
         if (pageBreakAfter) blocks.push({ type: 'pageBreak', id: uid('break') });
         break;
       }
@@ -1066,6 +1102,8 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
     sizeName: matched?.name ?? (swapped ? '自定义' : '自定义'),
     margins,
     columns: columns && columns > 1 ? columns : undefined,
+    // 功能：恢复 DOCX 起始页码；时间：2026-10-24；作者：lq。
+    pageNumberStart: numericAttr(firstChild(sectPr, 'w:pgNumType'), 'w:start'),
   };
 }
 
@@ -1090,11 +1128,12 @@ async function parseHeaderFooter(
   const xml = await ctx.pkg.text(rel.resolved);
   const doc = parseXmlDom(xml);
   const root = firstDescendant(doc, kind === 'header' ? 'w:hdr' : 'w:ftr') ?? doc.documentElement;
-  const blocks = await parseBlockContainer(root, ctx);
+  // 功能：页眉页脚图片关系按自身部件解析；时间：2026-10-24；作者：lq。
+  const blocks = await parseBlockContainer(root, { ...ctx, rels: await relationshipMap(ctx.pkg, rel.resolved) });
   const pageNumbers = blocks.some((block) =>
     block.type === 'paragraph' ? block.runs.some((run) => run.field === 'PAGE') : false,
   );
-  return { blocks, distancePx, pageNumbers };
+  return { blocks, distancePx, pageNumbers, sourcePart: rel.resolved };
 }
 
 export interface ParseDocxOptions {

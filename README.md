@@ -21,6 +21,8 @@ Microsoft Word（DOCX）、Excel（XLSX/CSV）与 PowerPoint（PPTX）三类文�
 | 兼容与安全 | OOXML 包扫描、宏/数字签名/外部链接/压缩炸弹检查、L0–L3 能力报告、只读/另存副本策略、保存前验证、原子写入、原件时间戳备份、原生打印 |
 | 中文字体 | 系统字体枚举（Web Canvas 探测 / Rust `ttf-parser` + 字体目录扫描）、缺失字体提示与替代字体栈、跨平台字体矩阵说明 |
 
+Word 新增[邮件合并与批量报告](docs/word-mail-merge.md)：导入 Excel/CSV、插入模板字段、筛选勾选、逐份预览、批量打印及 DOCX/PDF 输出。
+
 ### 界面预览
 
 | Word | Excel |

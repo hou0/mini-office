@@ -39,8 +39,12 @@ import {
   renderParagraphHtml,
 } from './html';
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
-import { pageMetrics, paginateBlocks, type PageSlice } from './pagination';
+import { pageMetrics, paginateDocument, type PageSlice } from './pagination';
 import { WordToolbar } from './WordToolbar';
+// 功能：接入页眉页脚草稿设置；时间：2026-10-24；作者：lq。
+import { HeaderFooterDialog } from './HeaderFooterDialog';
+// 功能：接入模板字段和批量报告流程；时间：2026-10-24；作者：lq。
+import { MailMergePanel } from './MailMergePanel';
 // 功能：接入表格选区与网格编辑工具；时间：2026-10-19；作者：lq。
 import { TableTools } from './TableTools';
 import { editTable, findTable, formatTable, intersects, tableSelectionRect, type TableAction, type TableSelection } from './table-editing';
@@ -119,7 +123,7 @@ function baseRunStyle(paragraph: DocParagraph, doc: DocModel): RunStyle {
 function styleAtOffset(paragraph: DocParagraph, offset: number): RunStyle {
   let consumed = 0;
   for (const run of paragraph.runs) {
-    const length = run.image || run.tab || run.lineBreak ? 1 : (run.text ?? '').length;
+    const length = run.image || run.tab || run.lineBreak || run.mergeField ? 1 : (run.text ?? '').length;
     if (offset <= consumed + length) return run.style;
     consumed += length;
   }
@@ -128,7 +132,7 @@ function styleAtOffset(paragraph: DocParagraph, offset: number): RunStyle {
 
 function atomicLength(runs: DocRun[]): number {
   return runs.reduce((sum, run) => {
-    if (run.image || run.tab || run.lineBreak) return sum + 1;
+    if (run.image || run.tab || run.lineBreak || run.mergeField) return sum + 1;
     return sum + (run.text ?? '').length;
   }, 0);
 }
@@ -270,8 +274,8 @@ const StaticParagraph = memo(function StaticParagraph({
   totalPages: number;
 }) {
   const html = useMemo(
-    () => renderParagraphHtml(paragraph, { pageNumber, totalPages }),
-    [paragraph, pageNumber, totalPages],
+    () => renderParagraphHtml(paragraph, { pageNumber, totalPages, sectionPages: doc.sectionPageCount }),
+    [paragraph, pageNumber, totalPages, doc.sectionPageCount],
   );
   return (
     <div style={paragraphWrapperStyle(paragraph)}>
@@ -301,8 +305,8 @@ const EditableParagraph = memo(function EditableParagraph({
   const ref = useRef<HTMLDivElement>(null);
   const lastSyncToken = useRef(handlers.syncToken);
   const html = useMemo(
-    () => renderParagraphHtml(paragraph, { pageNumber, totalPages }),
-    [paragraph, pageNumber, totalPages],
+    () => renderParagraphHtml(paragraph, { pageNumber, totalPages, sectionPages: doc.sectionPageCount }),
+    [paragraph, pageNumber, totalPages, doc.sectionPageCount],
   );
 
   useLayoutEffect(() => {
@@ -496,6 +500,11 @@ function HeaderFooterView({
       )}
     </div>
   );
+}
+
+/** 功能：为预览和批量输出提供与正文一致的静态渲染；时间：2026-10-24；作者：lq。 */
+function renderMergeBlocks(blocks: DocBlock[], doc: DocModel, pageNumber: number, totalPages: number) {
+  return <HeaderFooterView blocks={blocks} doc={doc} pageNumber={pageNumber} totalPages={totalPages} />;
 }
 
 function FindBar({
@@ -858,6 +867,9 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [tableSelection, setTableSelection] = useState<TableSelection | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // 功能：按双击区域打开设置，每次打开重建草稿；时间：2026-10-24；作者：lq。
+  const [headerFooterRegion, setHeaderFooterRegion] = useState<'header' | 'footer' | null>(null);
+  const [mailMergeOpen, setMailMergeOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportRange, setExportRange] = useState('');
@@ -1010,7 +1022,7 @@ export function WordEditor({ session }: { session: WordSession }) {
       const id = element.getAttribute('data-measure-id');
       if (id) heights.set(id, element.getBoundingClientRect().height);
     });
-    setPages(paginateBlocks(docRef.current.blocks, heights, metrics.contentHeight));
+    setPages(paginateDocument(docRef.current, heights));
   }, [
     layoutRevision,
     metrics.contentHeight,
@@ -1549,6 +1561,27 @@ export function WordEditor({ session }: { session: WordSession }) {
     [commit, latestDoc],
   );
 
+  /** 功能：在正文或表格当前光标插入原子合并域，统一撤销且恢复光标；时间：2026-10-24；作者：lq。 */
+  const insertMergeField = useCallback((field: string) => {
+    if (readonly) return;
+    captureSelection();
+    const current = latestDoc();
+    const saved = savedSelectionRef.current;
+    const id = saved?.paragraphId ?? activeParagraphId;
+    const paragraph = id ? findParagraph(current, id) : undefined;
+    if (!paragraph) { notify('info', '请先选择插入位置', '在正文或表格单元格中点击，再点击右侧字段。'); return; }
+    const start = saved && saved.paragraphId === id ? saved.start : runsPlainText(paragraph.runs).length;
+    const end = saved && saved.paragraphId === id ? saved.end : start;
+    const style = styleAtOffset(paragraph, start);
+    const [before] = splitRunsAtOffset(paragraph.runs, start, style);
+    const [, after] = splitRunsAtOffset(paragraph.runs, end, style);
+    const next = updateParagraph(current, paragraph.id, (value) => ({ ...value, runs: [...before, { text: `«${field}»`, mergeField: field, style }, ...after] }));
+    commit(next, { reflow: true });
+    savedSelectionRef.current = { paragraphId: paragraph.id, start: start + 1, end: start + 1 };
+    focusRequestRef.current = { paragraphId: paragraph.id, offset: start + 1 };
+    setSyncToken((value) => value + 1);
+  }, [activeParagraphId, captureSelection, commit, latestDoc, notify, readonly]);
+
   // 功能：校验行列尺寸并按页面内容宽度生成等宽表格；时间：2026-10-19；作者：lq。
   const insertTable = useCallback((rows: number, columns: number) => {
     if (readonly || !Number.isInteger(rows) || !Number.isInteger(columns)
@@ -1911,6 +1944,8 @@ export function WordEditor({ session }: { session: WordSession }) {
           onInsertTable={insertTable}
           onInsertImage={() => imageInputRef.current?.click()}
           onPageBreak={insertPageBreak}
+          onHeaderFooter={() => setHeaderFooterRegion('footer')}
+          onMailMerge={() => setMailMergeOpen((value) => !value)}
           onUndo={undo}
           onRedo={redo}
           onZoomChange={changeZoom}
@@ -1989,10 +2024,11 @@ export function WordEditor({ session }: { session: WordSession }) {
                 index={index}
                 total={pages.length}
                 blockMap={blockMap}
-                doc={doc}
+                doc={page.section ? { ...doc, ...page.section, sectionPageCount: page.sectionTotal } : doc}
                 zoom={effectiveZoom}
                 readonly={readonly || exporting}
                 handlers={paragraphHandlers}
+                onEditHeaderFooter={setHeaderFooterRegion}
               />
             ))}
           </div>
@@ -2057,7 +2093,9 @@ export function WordEditor({ session }: { session: WordSession }) {
         </div>
       </div>
 
-      {settings.showProperties ? (
+      {/* 功能：侧栏隐藏时保留本次数据快照和选择状态；时间：2026-10-24；作者：lq。 */}
+      <MailMergePanel open={mailMergeOpen && !readonly} session={session} doc={doc} onClose={() => setMailMergeOpen(false)} onInsertField={insertMergeField} renderBlocks={renderMergeBlocks} />
+      {settings.showProperties && !mailMergeOpen ? (
         <PropertiesPanel
           doc={doc}
           session={session}
@@ -2091,6 +2129,8 @@ export function WordEditor({ session }: { session: WordSession }) {
         />
       ) : null}
 
+      {/* 功能：应用设置作为单次可撤销编辑，取消时不修改正文；时间：2026-10-24；作者：lq。 */}
+      {headerFooterRegion && !readonly ? <HeaderFooterDialog doc={doc} pageCount={pages.length} initialRegion={headerFooterRegion} onClose={() => setHeaderFooterRegion(null)} onApply={(patch) => { commit({ ...latestDoc(), ...patch }, { reflow: true }); setHeaderFooterRegion(null); }} /> : null}
       <Dialog
         open={exportOpen}
         onClose={() => {
@@ -2179,9 +2219,11 @@ export function WordEditor({ session }: { session: WordSession }) {
             page-break-after: always;
             break-after: page;
           }
-          .mo-word-page:last-child { page-break-after: auto; break-after: auto; }
+          /* 功能：仅最后一张纸取消分页，避免每页都是包装层末元素而失去分页；时间：2026-10-24；作者：lq。 */
+          .mo-word-page-scale:last-child .mo-word-page { page-break-after: auto; break-after: auto; }
           .mo-word-scroll { overflow: visible !important; }
-          @page { margin: 0; }
+          /* 功能：打印纸张跟随文档尺寸，保持页眉页脚位置；时间：2026-10-24；作者：lq。 */
+          @page { size: ${doc.page.widthPx}px ${doc.page.heightPx}px; margin: 0; }
         }
       `}</style>
     </div>
@@ -2197,6 +2239,7 @@ function WordPageView({
   zoom,
   readonly,
   handlers,
+  onEditHeaderFooter,
 }: {
   page: PageSlice;
   index: number;
@@ -2206,8 +2249,10 @@ function WordPageView({
   zoom: number;
   readonly: boolean;
   handlers: ParagraphHandlers;
+  /** 功能：页面双击进入页眉或页脚编辑；时间：2026-10-24；作者：lq。 */
+  onEditHeaderFooter: (region: 'header' | 'footer') => void;
 }) {
-  const pageNumber = index + 1;
+  const pageNumber = (page.sectionPage ?? index) + (doc.page.pageNumberStart ?? 1);
   const blocks = page.blocks
     .map((block) => blockMap.get(block.id) ?? block)
     .filter((block) => block.type !== 'pageBreak');
@@ -2220,7 +2265,14 @@ function WordPageView({
       style={{ width: doc.page.widthPx * zoom, height: doc.page.heightPx * zoom }}
     >
       <div
-        data-word-page={pageNumber}
+        data-word-page={index + 1}
+        onDoubleClick={(event) => {
+          // 功能：保留正文双击选词，仅在上下页边距打开设置；时间：2026-10-24；作者：lq。
+          if (readonly) return;
+          const y = (event.clientY - event.currentTarget.getBoundingClientRect().top) / zoom;
+          if (y < margins.top) onEditHeaderFooter('header');
+          else if (y > doc.page.heightPx - margins.bottom) onEditHeaderFooter('footer');
+        }}
         className="mo-word-page mo-paper"
         style={{
           width: doc.page.widthPx,
