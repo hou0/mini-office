@@ -1,4 +1,4 @@
-# 功能：手动构建兼容 Apple Silicon 和 Intel 的 macOS 通用包，上传到已有 Release。
+# 功能：手动构建兼容 Apple Silicon 和 Intel 的 macOS 通用包，自动准备标签及 Release 草稿。
 # 时间：2026-10-24
 # 作者：lq
 name: macOS Release
@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "已存在的 Release 标签（版本须与 tauri.conf.json 一致）"
-        required: true
-        default: v0.1.1
+        description: "可选：已有版本标签；留空按所选分支版本自动创建"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -21,7 +21,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 功能：跨平台串行准备标签和草稿，构建任务可并行且固定使用同一源码；时间：2026-10-24；作者：lq。
+  prepare-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: prepare-mini-office-release
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.prepare.outputs.APP_VERSION }}
+      tag: ${{ steps.prepare.outputs.RELEASE_TAG }}
+      sha: ${{ steps.prepare.outputs.SOURCE_SHA }}
+    steps:
+      # 功能：使用所选分支中的最新发布准备脚本；时间：2026-10-24；作者：lq。
+      - name: Checkout selected source
+        uses: actions/checkout@v6
+      # 功能：自动补建标签和草稿，并输出实际发布源码；时间：2026-10-24；作者：lq。
+      - name: Prepare release automatically
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        run: node .github/scripts/prepare-release.cjs
+
   build-macos:
+    needs: prepare-release
+    env:
+      APP_VERSION: ${{ needs.prepare-release.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     runs-on: macos-15
     timeout-minutes: 90
     defaults:
@@ -29,27 +56,11 @@ jobs:
         shell: bash
 
     steps:
-      # 功能：按指定标签获取发布源码；时间：2026-10-24；作者：lq。
-      - name: Checkout release tag
-        uses: actions/checkout@v4
+      # 功能：使用准备阶段确定的不可变提交，避免构建期间分支更新；时间：2026-10-24；作者：lq。
+      - name: Checkout release source
+        uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ inputs.tag }}
-
-      # 功能：构建前检查版本和已有 Release，避免将错误源码上传到版本；时间：2026-10-24；作者：lq。
-      - name: Validate release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
-          if [[ "$RELEASE_TAG" != "v$version" ]]; then
-            echo "Release tag must match Tauri version: v$version" >&2
-            exit 1
-          fi
-          gh release view "$RELEASE_TAG" >/dev/null
-          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          ref: ${{ needs.prepare-release.outputs.sha }}
 
       # 功能：安装项目 packageManager 指定的 pnpm；时间：2026-10-24；作者：lq。
       - name: Setup pnpm
@@ -57,7 +68,7 @@ jobs:
 
       # 功能：安装与 Windows 流程一致的 Node.js 并缓存依赖；时间：2026-10-24；作者：lq。
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: pnpm
@@ -114,5 +125,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
         run: gh release upload "$RELEASE_TAG" release-assets/*

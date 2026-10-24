@@ -1,25 +1,63 @@
-# 功能：手动构建 Windows x64 版本并上传已有 Release。
+# 功能：手动构建 Windows x64 版本并自动准备标签及 Release 草稿。
 # 时间：2026-10-23
 # 作者：lq
 name: Windows Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "可选：已有版本标签；留空按所选分支版本自动创建"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
 
+# 功能：同平台的同一版本串行打包，避免重复上传附件；时间：2026-10-24；作者：lq。
+concurrency:
+  group: windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
+  # 功能：跨平台串行准备标签和草稿，构建任务可并行且固定使用同一源码；时间：2026-10-24；作者：lq。
+  prepare-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: prepare-mini-office-release
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.prepare.outputs.APP_VERSION }}
+      tag: ${{ steps.prepare.outputs.RELEASE_TAG }}
+      sha: ${{ steps.prepare.outputs.SOURCE_SHA }}
+    steps:
+      # 功能：使用所选分支中的最新发布准备脚本；时间：2026-10-24；作者：lq。
+      - name: Checkout selected source
+        uses: actions/checkout@v6
+      # 功能：自动补建标签和草稿，并输出实际发布源码；时间：2026-10-24；作者：lq。
+      - name: Prepare release automatically
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+        run: node .github/scripts/prepare-release.cjs
+
   build-windows:
+    needs: prepare-release
+    env:
+      APP_VERSION: ${{ needs.prepare-release.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
     runs-on: windows-latest
     timeout-minutes: 60
 
     steps:
-      # 功能：使用 0.1.1 发行版本源码并保持产物版本一致；时间：2026-10-24；作者：lq。
-      - name: Checkout v0.1.1
-        uses: actions/checkout@v4
+      # 功能：使用准备阶段确定的不可变提交，避免构建期间分支更新；时间：2026-10-24；作者：lq。
+      - name: Checkout release source
+        uses: actions/checkout@v6
         with:
-          ref: v0.1.1
+          ref: ${{ needs.prepare-release.outputs.sha }}
 
       # 功能：安装项目指定的 pnpm；时间：2026-10-23；作者：lq。
       - name: Setup pnpm
@@ -27,7 +65,7 @@ jobs:
 
       # 功能：安装 Node.js；时间：2026-10-23；作者：lq。
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: pnpm
@@ -59,13 +97,22 @@ jobs:
             throw "Expected exactly one NSIS installer."
           }
 
-          Copy-Item $installers[0].FullName "release-assets/Mini-Office_0.1.1_windows-x64-setup.exe"
-          Compress-Archive -Path "$buildDir/mini-office-desktop.exe" -DestinationPath "release-assets/Mini-Office_0.1.1_windows-x64.zip"
+          Copy-Item $installers[0].FullName "release-assets/Mini-Office_${env:APP_VERSION}_windows-x64-setup.exe"
+          Compress-Archive -Path "$buildDir/mini-office-desktop.exe" -DestinationPath "release-assets/Mini-Office_${env:APP_VERSION}_windows-x64.zip"
 
           Get-ChildItem release-assets -File | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)"
           } | Set-Content "release-assets/SHA256SUMS-windows.txt" -Encoding ascii
+
+      # 功能：保留可下载产物，Release 上传失败时仍可获取；时间：2026-10-24；作者：lq。
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mini-Office_${{ env.APP_VERSION }}_windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
 
       # 功能：上传到现有版本，保留 macOS 下载文件；时间：2026-10-23；作者：lq。
       - name: Upload to Release
@@ -73,4 +120,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload v0.1.1 (Get-ChildItem release-assets -File).FullName
+        run: gh release upload "$env:RELEASE_TAG" (Get-ChildItem release-assets -File).FullName

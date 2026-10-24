@@ -4,10 +4,12 @@
 
 工作流文件：`.github/workflows/macos-release.yml`。
 
-1. 将工作流提交并推送到仓库默认分支 `main`。
-2. 确认需要打包的源码已经创建标签，并且该标签已有 GitHub Release。标签格式须为 `v` 加上该标签中 `apps/desktop/src-tauri/tauri.conf.json` 的版本号，例如 `v0.1.1`。
-3. 打开 GitHub → Actions → **macOS Release** → **Run workflow**，选择 `main`，输入 Release 标签并运行。
-4. 完成后，在对应 Release 下载 DMG、ZIP 或 SHA256 校验文件。运行详情页的 Artifacts 也保留一份产物，有效期 14 天。
+1. 更新项目版本号并将源码推送到 `main`。
+2. 打开 GitHub → Actions → **macOS Release** 或 **Windows Release** → **Run workflow**，选择 `main`，标签输入框留空即可。
+3. 工作流从所选源码的 `tauri.conf.json` 读取版本号，自动创建缺失的 `v<版本号>` 标签和 GitHub Release 草稿。无需手动创建标签或 Release；两平台的准备阶段串行执行，避免重复创建草稿，之后并行编译。
+4. 完成后，在 GitHub Releases 的相应草稿中下载安装包并检查，确认后可自行点击 **Publish release**。运行详情页的 Artifacts 也保留产物 14 天。
+
+标签输入框可填写已有标签来重新构建旧版本。已有标签始终使用原标签源码，不会移动或覆盖；新标签必须匹配所选源码版本号。标签、根 `package.json` 与 Tauri 版本不一致时停止发布。已有 Release 会复用，草稿不会自动公开，公开版本也不会被改成草稿。
 
 每次构建生成一个兼容 Apple Silicon 与 Intel 的通用应用：
 
@@ -15,7 +17,7 @@
 - `Mini-Office_<版本>_macos-universal.zip`：包含完整 `.app` 的压缩包。
 - `SHA256SUMS-macos-universal.txt`：上述文件的 SHA256 校验清单。
 
-构建使用输入标签的源码。因此，仅推送新的 `main` 提交不会改变旧标签打出的程序；要发布新代码，应先更新版本号并创建对应的新标签和 Release。
+构建使用输入标签的源码。因此，仅推送新的 `main` 提交不会改变旧标签打出的程序；要发布新代码，应先更新版本号并推送代码，再运行工作流，标签和草稿由流程自动创建。
 
 流程使用 macOS 临时签名（ad-hoc），无需配置 Apple 证书 Secret；没有 Developer ID 签名及 Apple 公证，首次下载运行仍可能受到 Gatekeeper 限制。签名方式见 [Tauri 官方说明](https://v2.tauri.app/distribute/sign/macos/)。
 
