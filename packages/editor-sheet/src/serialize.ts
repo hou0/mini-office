@@ -329,10 +329,16 @@ function sheetXml(
   const tabColor = sheet.tabColor
     ? `<sheetPr><tabColor rgb="${argb(sheet.tabColor)}"/></sheetPr>`
     : '';
+  // 功能：将页面设置写回标准 OOXML 节点，供 Excel 继续识别打印布局；时间：2026-10-24；作者：lq。
+  const pageSetup = sheet.pageSetup;
+  const pageMargins = pageSetup?.margins ?? { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+  const pageSetupXml = `<pageSetup orientation="${pageSetup?.orientation ?? 'landscape'}" scale="${Math.round(pageSetup?.scalePercent ?? 100)}"${pageSetup?.fitToWidth ? ` fitToWidth="${pageSetup.fitToWidth}"` : ''}${pageSetup?.fitToHeight ? ` fitToHeight="${pageSetup.fitToHeight}"` : ''}${pageSetup?.firstPageNumber ? ` firstPageNumber="${pageSetup.firstPageNumber}"` : ''}/>`;
+  const pageMarginsXml = `<pageMargins left="${pageMargins.left}" right="${pageMargins.right}" top="${pageMargins.top}" bottom="${pageMargins.bottom}" header="${pageMargins.header}" footer="${pageMargins.footer}"/>`;
+  const printOptionsXml = `<printOptions${pageSetup?.printGridLines === false ? ' gridLines="0"' : ''}${pageSetup?.printHeadings ? ' headings="1"' : ''}/>`;
 
   return `${xmlDeclaration()}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="${dimension}"/>${sheetViews}<sheetFormatPr defaultRowHeight="15"/>${
     colsXml.length ? `<cols>${colsXml.join('')}</cols>` : ''
-  }<sheetData>${rowXml.join('')}</sheetData>${mergeXml}${filter}<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  }<sheetData>${rowXml.join('')}</sheetData>${mergeXml}${filter}${pageMarginsXml}${pageSetupXml}${printOptionsXml}</worksheet>`;
 }
 
 interface RelationshipInfo {

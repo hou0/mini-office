@@ -1,3 +1,4 @@
+// 功能：提供 PPT 页面编辑工作区、对象操作、备注、演示与导出；时间：2026-10-24；作者：lq。
 import {
   useCallback,
   useEffect,
@@ -19,27 +20,37 @@ import {
   Tooltip,
 } from '@mini-office/ui';
 import {
+  Bold,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Download,
   FileWarning,
   Image as ImageIcon,
+  Italic,
   List,
   Maximize,
   MonitorPlay,
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Plus,
   StickyNote,
+  Trash2,
+  Type,
+  Undo2,
+  Redo2,
   X,
 } from 'lucide-react';
 import { exportElementsToPdf, exportElementsToZip, type ExportProgress } from '@mini-office/export-service';
-import { stripExtension } from '@mini-office/shared';
+import { stripExtension, uid } from '@mini-office/shared';
 import { SlideRenderer, SlideSurface } from './SlideRenderer';
+import { copySlide, replaceParagraphText, updateElementTree } from './editing';
 
 export function SlidesEditor({ session }: { session: SlidesSession }) {
   const deck = session.data as SlideDeck;
   const updateView = useWorkspaceStore((state) => state.updateView);
+  const updateData = useWorkspaceStore((state) => state.updateData);
   const settings = useWorkspaceStore((state) => state.settings);
   const exportBytes = useWorkspaceStore((state) => state.exportBytes);
   const openDialog = useWorkspaceStore((state) => state.openDialog);
@@ -57,11 +68,161 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   const [exporting, setExporting] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const cancelRef = useRef(false);
+  const historyRef = useRef<{ past: SlideDeck[]; future: SlideDeck[] }>({ past: [], future: [] });
 
   const slide = deck.slides[index] ?? deck.slides[0];
   const canvasRef = useRef<HTMLDivElement>(null);
   const exportLayerRef = useRef<HTMLDivElement>(null);
+
+  const updateDeck = useCallback(
+    (change: (current: SlideDeck) => SlideDeck) => {
+      if (session.readonly) return;
+      updateData(session.id, (current) => {
+        historyRef.current.past = [...historyRef.current.past.slice(-39), structuredClone(current as SlideDeck)];
+        historyRef.current.future = [];
+        return change(current as SlideDeck);
+      }, { dirty: true });
+    },
+    [session.id, session.readonly, updateData],
+  );
+
+  const undo = useCallback(() => {
+    const previous = historyRef.current.past.at(-1);
+    if (!previous) return;
+    const current = structuredClone(deck);
+    historyRef.current.past = historyRef.current.past.slice(0, -1);
+    historyRef.current.future = [...historyRef.current.future, current];
+    updateData(session.id, previous, { dirty: true });
+    setSelectedId(null);
+  }, [deck, session.id, updateData]);
+
+  const redo = useCallback(() => {
+    const nextDeck = historyRef.current.future.at(-1);
+    if (!nextDeck) return;
+    historyRef.current.future = historyRef.current.future.slice(0, -1);
+    historyRef.current.past = [...historyRef.current.past, structuredClone(deck)];
+    updateData(session.id, nextDeck, { dirty: true });
+    setSelectedId(null);
+  }, [deck, session.id, updateData]);
+
+  const changeText = useCallback((elementId: string, value: string) => {
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: updateElementTree(item.elements, elementId, (element) => {
+          if (element.type === 'text') return { ...element, paragraphs: replaceParagraphText(element.paragraphs, value) };
+          if (element.type === 'shape' && element.paragraphs) return { ...element, paragraphs: replaceParagraphText(element.paragraphs, value) };
+          return element;
+        }),
+      }),
+    }));
+  }, [index, updateDeck]);
+
+  const toggleTextStyle = useCallback((key: 'bold' | 'italic') => {
+    if (!selectedId) return;
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: updateElementTree(item.elements, selectedId, (element) => {
+          if (element.type !== 'text' && element.type !== 'shape') return element;
+          const paragraphs = element.type === 'text' ? element.paragraphs : element.paragraphs ?? [];
+          const enabled = !paragraphs.some((paragraph) => paragraph.runs.some((run) => run.style[key]));
+          return { ...element, paragraphs: paragraphs.map((paragraph) => ({ ...paragraph, runs: paragraph.runs.map((run) => ({ ...run, style: { ...run.style, [key]: enabled } })) })) };
+        }),
+      }),
+    }));
+  }, [index, selectedId, updateDeck]);
+
+  // 功能：拖拽选中对象时按画布缩放比例换算坐标，提供直觉的排版体验；时间：2026-10-24；作者：lq。
+  const moveElement = useCallback((elementId: string, dx: number, dy: number) => {
+    if (!selectedId || selectedId !== elementId) return;
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: updateElementTree(item.elements, elementId, (element) => ({ ...element, x: element.x + dx / Math.max(scale, 0.01), y: element.y + dy / Math.max(scale, 0.01) })),
+      }),
+    }));
+  }, [index, scale, selectedId, updateDeck]);
+
+  const moveSelected = useCallback((dx: number, dy: number) => {
+    if (!selectedId) return;
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: updateElementTree(item.elements, selectedId, (element) => ({ ...element, x: element.x + dx, y: element.y + dy })),
+      }),
+    }));
+  }, [index, selectedId, updateDeck]);
+
+  const resizeSelected = useCallback((dw: number, dh: number) => {
+    if (!selectedId) return;
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: updateElementTree(item.elements, selectedId, (element) => ({ ...element, w: Math.max(24, element.w + dw), h: Math.max(18, element.h + dh) })),
+      }),
+    }));
+  }, [index, selectedId, updateDeck]);
+
+  const deleteSelected = useCallback(() => {
+    if (!selectedId) return;
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : { ...item, elements: updateElementTree(item.elements, selectedId, () => null) }),
+    }));
+    setSelectedId(null);
+  }, [index, selectedId, updateDeck]);
+
+  const addText = useCallback(() => {
+    const id = uid('el-text');
+    updateDeck((current) => ({
+      ...current,
+      slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : {
+        ...item,
+        elements: [...item.elements, {
+          id,
+          type: 'text' as const,
+          x: current.widthPx * 0.18,
+          y: current.heightPx * 0.42,
+          w: current.widthPx * 0.64,
+          h: current.heightPx * 0.14,
+          paragraphs: [{ runs: [{ text: '双击编辑文字', style: { fontSizePt: 24, color: '#1D2939' } }], align: 'center' }],
+          verticalAlign: 'middle' as const,
+        }],
+      }),
+    }));
+    setSelectedId(id);
+  }, [index, updateDeck]);
+
+  const duplicateSlide = useCallback(() => {
+    const source = deck.slides[index];
+    if (!source) return;
+    const duplicate: SlideModel = { ...copySlide(source), index: index + 1 };
+    updateDeck((current) => ({ ...current, slides: current.slides.flatMap((item, itemIndex) => itemIndex === index ? [item, duplicate] : [item]).map((item, itemIndex) => ({ ...item, index: itemIndex })) }));
+    setIndex(index + 1);
+    setSelectedId(null);
+  }, [deck.slides, index, updateDeck]);
+
+  const addSlide = useCallback(() => {
+    const newSlide: SlideModel = { id: uid('slide'), index: deck.slides.length, title: `幻灯片 ${deck.slides.length + 1}`, elements: [] };
+    updateDeck((current) => ({ ...current, slides: [...current.slides, newSlide].map((item, itemIndex) => ({ ...item, index: itemIndex })) }));
+    setIndex(deck.slides.length);
+    setSelectedId(null);
+  }, [deck.slides.length, updateDeck]);
+
+  const deleteSlide = useCallback(() => {
+    if (deck.slides.length <= 1) return;
+    updateDeck((current) => ({ ...current, slides: current.slides.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, index: itemIndex })) }));
+    setIndex(Math.min(index, deck.slides.length - 2));
+    setSelectedId(null);
+  }, [deck.slides.length, index, updateDeck]);
 
   const startPresentation = useCallback(async () => {
     const fullscreen = await setPresentationFullscreen(true);
@@ -125,7 +286,30 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
+      const mod = event.metaKey || event.ctrlKey;
+      if (!presenting && mod && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) redo(); else undo();
+        return;
+      }
+      if (!presenting && mod && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (!presenting && selectedId && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+        event.preventDefault();
+        const distance = event.shiftKey ? 10 : 2;
+        if (event.altKey) resizeSelected(event.key === 'ArrowLeft' ? -distance : event.key === 'ArrowRight' ? distance : 0, event.key === 'ArrowUp' ? -distance : event.key === 'ArrowDown' ? distance : 0);
+        else moveSelected(event.key === 'ArrowLeft' ? -distance : event.key === 'ArrowRight' ? distance : 0, event.key === 'ArrowUp' ? -distance : event.key === 'ArrowDown' ? distance : 0);
+        return;
+      }
+      if (!presenting && selectedId && (event.key === 'Backspace' || event.key === 'Delete')) {
+        event.preventDefault();
+        deleteSelected();
+        return;
+      }
       if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === ' ') {
         event.preventDefault();
         next();
@@ -146,7 +330,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deck.slides.length, goTo, next, presenting, prev, stopPresentation]);
+  }, [deck.slides.length, deleteSelected, goTo, moveSelected, next, presenting, prev, redo, resizeSelected, selectedId, stopPresentation, undo]);
 
   useEffect(() => {
     const onPresent = () => void startPresentation();
@@ -175,8 +359,8 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   }, [presenting]);
 
   const stage = useMemo(
-    () => <SlideRenderer deck={deck} slide={slide} scale={scale} />,
-    [deck, scale, slide],
+    () => <SlideRenderer deck={deck} slide={slide} scale={scale} editable={!presenting && !session.readonly} selectedId={selectedId} onSelect={setSelectedId} onTextChange={changeText} onMove={moveElement} />,
+    [changeText, deck, moveElement, presenting, scale, selectedId, session.readonly, slide],
   );
 
   const printSlides = useCallback(async () => {
@@ -260,6 +444,14 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
           {thumbnailsOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
         </IconButton>
         <span className="mx-1 h-4 w-px bg-[var(--mo-line)]" />
+        {!session.readonly ? (
+          <>
+            <Tooltip label="粗体"><IconButton label="粗体" onClick={() => toggleTextStyle('bold')} disabled={!selectedId}><Bold size={15} /></IconButton></Tooltip>
+            <Tooltip label="斜体"><IconButton label="斜体" onClick={() => toggleTextStyle('italic')} disabled={!selectedId}><Italic size={15} /></IconButton></Tooltip>
+            <Tooltip label="撤销 (⌘Z)"><IconButton label="撤销" onClick={undo} disabled={!historyRef.current.past.length}><Undo2 size={15} /></IconButton></Tooltip>
+            <Tooltip label="重做 (⇧⌘Z)"><IconButton label="重做" onClick={redo} disabled={!historyRef.current.future.length}><Redo2 size={15} /></IconButton></Tooltip>
+          </>
+        ) : null}
         <IconButton label="上一页" onClick={prev} disabled={index <= 0}>
           <ChevronLeft size={16} />
         </IconButton>
@@ -270,7 +462,17 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
           <ChevronRight size={16} />
         </IconButton>
         <span className="mx-1 h-4 w-px bg-[var(--mo-line)]" />
+        {!session.readonly ? (
+          <>
+            <Tooltip label="插入文本框"><IconButton label="插入文本框" onClick={addText}><Type size={15} /></IconButton></Tooltip>
+            <Tooltip label="复制当前页"><IconButton label="复制当前页" onClick={duplicateSlide}><Copy size={15} /></IconButton></Tooltip>
+            <Tooltip label="新增空白页"><IconButton label="新增空白页" onClick={addSlide}><Plus size={15} /></IconButton></Tooltip>
+            <Tooltip label="删除当前页"><IconButton label="删除当前页" onClick={deleteSlide} disabled={deck.slides.length <= 1}><Trash2 size={15} /></IconButton></Tooltip>
+            <span className="mx-1 h-4 w-px bg-[var(--mo-line)]" />
+          </>
+        ) : null}
         <div className="min-w-0 flex-1 truncate text-[12px] font-medium">{slide.title ?? `幻灯片 ${index + 1}`}</div>
+        {!session.readonly && selectedId ? <span className="hidden text-[10px] text-[var(--mo-text-faint)] xl:block">方向键移动 · ⌥方向键缩放</span> : null}
         <span className="mr-2 rounded bg-[var(--mo-surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--mo-text-muted)]">
           {deck.aspect === 'custom' ? `${Math.round(deck.widthPx)}×${Math.round(deck.heightPx)}` : deck.aspect}
         </span>
@@ -309,7 +511,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => goTo(itemIndex)}
+                  onClick={() => { goTo(itemIndex); setSelectedId(null); }}
                   className={`group flex w-full gap-2 rounded-md p-1 text-left transition-colors ${
                     itemIndex === index ? 'bg-[var(--mo-accent-soft)]' : 'hover:bg-[var(--mo-surface-2)]'
                   }`}
@@ -339,7 +541,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
           </aside>
         ) : null}
 
-        <div ref={canvasRef} className="mo-canvas relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--mo-canvas)]">
+        <div ref={canvasRef} onClick={() => setSelectedId(null)} className="mo-canvas relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--mo-canvas)]">
           <div className="flex min-h-0 flex-1 items-center justify-center p-6">
             <div className="shadow-pop" style={{ borderRadius: 2, overflow: 'hidden' }}>
               {stage}
@@ -350,9 +552,16 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
               <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold text-[var(--mo-text-muted)]">
                 <StickyNote size={12} /> 演讲者备注
               </div>
-              <p className="whitespace-pre-wrap text-[12px] leading-6 text-[var(--mo-text-primary)]">
-                {slide.notes || '此幻灯片没有备注。'}
-              </p>
+              {session.readonly ? (
+                <p className="whitespace-pre-wrap text-[12px] leading-6 text-[var(--mo-text-primary)]">{slide.notes || '此幻灯片没有备注。'}</p>
+              ) : (
+                <textarea
+                  value={slide.notes ?? ''}
+                  onChange={(event) => updateDeck((current) => ({ ...current, slides: current.slides.map((item, itemIndex) => itemIndex === index ? { ...item, notes: event.target.value } : item) }))}
+                  placeholder="写下这页的讲解提示…"
+                  className="min-h-[64px] w-full resize-y rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface-2)] px-2.5 py-2 text-[12px] leading-6 text-[var(--mo-text-primary)] outline-none focus:border-[var(--mo-accent)]"
+                />
+              )}
             </div>
           ) : null}
         </div>

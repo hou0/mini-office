@@ -57,6 +57,15 @@ export function getFunction(name: string): FormulaFunction | undefined {
   return registry.get(normalized);
 }
 
+// 功能：向公式智能提示提供实际已注册的函数，避免推荐尚未实现的函数；时间：2026-10-24；作者：lq。
+export function listFunctions(): Array<{ name: string; minArgs: number; maxArgs: number }> {
+  return Array.from(registry, ([name, definition]) => ({
+    name,
+    minArgs: definition.minArgs,
+    maxArgs: definition.maxArgs,
+  }));
+}
+
 function fn(
   minArgs: number,
   maxArgs: number,

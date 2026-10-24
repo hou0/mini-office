@@ -1,0 +1,23 @@
+{
+  "url": "https://github.com/lq0910/mini-office/releases/tag/v0.1.0",
+  "assets": [
+    {
+      "name": "Mini-Office_0.1.0_aarch64.app.zip",
+      "url": "https://github.com/lq0910/mini-office/releases/download/v0.1.0/Mini-Office_0.1.0_aarch64.app.zip",
+      "size": 4804544,
+      "digest": "sha256:2f3a6fab9f29dec059f87ee9127406dbc56536b4ec29cb03b7c6a542228d8e01"
+    },
+    {
+      "name": "Mini-Office_0.1.0_aarch64.dmg",
+      "url": "https://github.com/lq0910/mini-office/releases/download/v0.1.0/Mini-Office_0.1.0_aarch64.dmg",
+      "size": 4930143,
+      "digest": "sha256:f5ec4fc592dde83646c577c2a9e7e35c7663312cb04d252028bbd9ef2408173e"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "url": "https://github.com/lq0910/mini-office/releases/download/v0.1.0/SHA256SUMS.txt",
+      "size": 196,
+      "digest": "sha256:923b709bef6866575a500ad2fddc289834b5845a00de4b3eba1fd48bfae8a9f3"
+    }
+  ]
+}

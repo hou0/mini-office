@@ -63,6 +63,10 @@ export interface ElementBase {
   rotation?: number;
   flipH?: boolean;
   flipV?: boolean;
+  // 功能：定位原始对象并判断文字改动，锁定母版装饰防止误编辑；时间：2026-10-24；作者：lq。
+  sourceId?: string;
+  sourceText?: string;
+  inherited?: boolean;
 }
 
 export interface SlideTextElement extends ElementBase {
@@ -106,6 +110,7 @@ export interface SlideTableElement extends ElementBase {
       colSpan?: number;
       rowSpan?: number;
       verticalAlign?: 'top' | 'middle' | 'bottom';
+      sourceIndex?: number;
     }>;
   }>;
 }
@@ -113,6 +118,7 @@ export interface SlideTableElement extends ElementBase {
 export interface SlideGroupElement extends ElementBase {
   type: 'group';
   children: SlideElement[];
+  sourceChildren?: string[];
 }
 
 export type SlideElement =
@@ -133,6 +139,10 @@ export interface SlideModel {
   notes?: string;
   hasAnimations?: boolean;
   hasMedia?: boolean;
+  // 功能：按原部件身份保存、复制和删除页面及备注；时间：2026-10-24；作者：lq。
+  sourcePart?: string;
+  sourceElementIds?: string[];
+  sourceNotes?: string;
 }
 
 export interface SlideDeck {
@@ -172,10 +182,11 @@ export function createBlankDeck(): SlideDeck {
           {
             id: 'el-title',
             type: 'text',
-            x: 0.1,
-            y: 0.32,
-            w: 0.8,
-            h: 0.18,
+            // 功能：新建幻灯片统一使用画布像素坐标；时间：2026-10-24；作者：lq。
+            x: 128,
+            y: 230,
+            w: 1024,
+            h: 130,
             paragraphs: [
               {
                 runs: [{ text: '单击添加标题', style: { fontSizePt: 40, bold: true, color: '#1D2939' } }],
@@ -187,10 +198,10 @@ export function createBlankDeck(): SlideDeck {
           {
             id: 'el-subtitle',
             type: 'text',
-            x: 0.15,
-            y: 0.54,
-            w: 0.7,
-            h: 0.12,
+            x: 192,
+            y: 389,
+            w: 896,
+            h: 86,
             paragraphs: [
               {
                 runs: [

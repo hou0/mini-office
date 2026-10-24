@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
 } from 'react';
 import type {
   CellBorders,
@@ -17,6 +18,8 @@ import type {
 } from '@mini-office/document-model';
 import { columnLabel } from '@mini-office/shared';
 import { cellKey } from '@mini-office/document-model';
+// 功能：为单元格内的公式编辑启用函数智能提示；时间：2026-10-24；作者：lq。
+import { FormulaInput } from './FormulaInput';
 import {
   cellDisplay,
   cellStyle,
@@ -43,6 +46,7 @@ export interface EditingCell {
 
 export interface SheetGridProps {
   gridId?: string;
+  scrollElementRef?: MutableRefObject<HTMLDivElement | null>;
   workbook: WorkbookModel;
   sheet: SheetModel;
   selection: Selection;
@@ -80,8 +84,13 @@ function findIndex(offsets: number[], value: number): number {
 }
 
 function borderCss(side: CellBorders['top']): string | undefined {
-  if (!side || side.style === 'none') return undefined;
-  return `${side.style === 'double' ? 2 : 1}px ${side.style === 'double' ? 'double' : side.style} ${side.color ?? '#000000'}`;
+  if (!side) return undefined;
+  // 功能：让“无框线”覆盖默认网格线，避免边框清除后仍显示浅色网格；时间：2026-10-24；作者：lq。
+  if (side.style === 'none') return 'none';
+  const width = side.style === 'thick' ? 3 : side.style === 'medium' || side.style === 'double' ? 2 : 1;
+  // 功能：将 Excel 的“细/中/粗”边框语义转换为浏览器可识别的实线；时间：2026-10-24；作者：lq。
+  const lineStyle = side.style === 'double' ? 'double' : side.style === 'dashed' ? 'dashed' : side.style === 'dotted' ? 'dotted' : 'solid';
+  return `${width}px ${lineStyle} ${side.color ?? '#000000'}`;
 }
 
 function buildOffsets(count: number, sizeAt: (index: number) => number): number[] {
@@ -98,6 +107,7 @@ function buildOffsets(count: number, sizeAt: (index: number) => number): number[
 export function SheetGrid(props: SheetGridProps) {
   const {
     gridId,
+    scrollElementRef,
     workbook,
     sheet,
     selection,
@@ -115,7 +125,7 @@ export function SheetGrid(props: SheetGridProps) {
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState({ width: 800, height: 500 });
   const [scroll, setScroll] = useState({ left: 0, top: 0 });
   const [resizePreview, setResizePreview] = useState<{ kind: 'col' | 'row'; index: number; size: number } | null>(null);
@@ -125,6 +135,8 @@ export function SheetGrid(props: SheetGridProps) {
   const fillRef = useRef<{ source: CellRange; startX: number; startY: number } | null>(null);
   const scrollRaf = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 功能：记录已定位光标的编辑会话，防止后续输入时反复重置光标；时间：2026-10-24；作者：lq。
+  const focusedEditingRef = useRef<EditingCell | null>(null);
   const resizeRef = useRef<{ kind: 'col' | 'row'; index: number; start: number; initial: number } | null>(null);
 
   const range = selectionRange(selection);
@@ -199,16 +211,22 @@ export function SheetGrid(props: SheetGridProps) {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!editing) return;
+  // 功能：在绘制前初始化编辑文本，避免快速输入时光标落在等号前面；时间：2026-10-24；作者：lq。
+  useLayoutEffect(() => {
+    if (!editing) {
+      focusedEditingRef.current = null;
+      return;
+    }
     setDraft(editing.initialText);
-    const timer = setTimeout(() => {
-      inputRef.current?.focus();
-      const length = editing.initialText.length;
-      inputRef.current?.setSelectionRange(length, length);
-    }, 20);
-    return () => clearTimeout(timer);
   }, [editing]);
+
+  // 功能：等待受控草稿实际写入 DOM 后同步聚焦，替代有竞态的延时聚焦；时间：2026-10-24；作者：lq。
+  useLayoutEffect(() => {
+    if (!editing || draft !== editing.initialText || focusedEditingRef.current === editing) return;
+    focusedEditingRef.current = editing;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(draft.length, draft.length);
+  }, [draft, editing]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -802,8 +820,11 @@ export function SheetGrid(props: SheetGridProps) {
         </div>
 
         <div className="relative min-w-0 flex-1">
-          <div
-            ref={scrollRef}
+      <div
+        ref={(element) => {
+          scrollRef.current = element;
+          if (scrollElementRef) scrollElementRef.current = element;
+        }}
             className="absolute inset-0 overflow-auto"
             onScroll={handleScroll}
           >
@@ -885,10 +906,12 @@ export function SheetGrid(props: SheetGridProps) {
               />
 
               {editing ? (
-                <input
+                <FormulaInput
+                  plain
+                  aria-label="单元格编辑"
                   ref={inputRef}
                   value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onValueChange={setDraft}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();

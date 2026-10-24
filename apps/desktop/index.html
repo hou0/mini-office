@@ -10,8 +10,46 @@
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Mini Office</title>
+    <!-- 功能：启动面板独立于 React、编辑器脚本和外部样式，支持深色及减少动画偏好；时间：2026-10-24；作者：lq。 -->
+    <style>
+      html, body { height: 100%; margin: 0; }
+      .mo-startup {
+        position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+        background: var(--mo-bg, #f4f6f8); color: #243330;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+      }
+      .mo-startup-card {
+        box-sizing: border-box; width: 304px; padding: 32px 24px 28px; text-align: center;
+        border: 1px solid #e1e8e5; border-radius: 20px; background: #ffffff;
+        box-shadow: 0 12px 42px #132e2710;
+      }
+      .mo-startup-icon { display: block; width: 76px; height: 76px; margin: 0 auto 14px; }
+      .mo-startup-title { margin: 0; font-size: 19px; line-height: 28px; font-weight: 600; letter-spacing: -.4px; }
+      .mo-startup-status { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 18px; }
+      .mo-startup-spinner {
+        box-sizing: border-box; width: 14px; height: 14px; flex-shrink: 0;
+        border: 2px solid #dcebe6; border-top-color: #2e7d72; border-radius: 50%;
+        animation: mo-startup-spin .85s linear infinite;
+      }
+      .mo-startup-message { margin: 0; font-size: 12px; line-height: 19px; color: #687a74; }
+      .mo-startup-retry {
+        margin-top: 16px; padding: 7px 16px; border: 1px solid #b7d2c9; border-radius: 7px;
+        font: inherit; font-size: 12px; color: #25665d; background: #eef6f3; cursor: pointer;
+      }
+      .mo-startup-retry:focus-visible { outline: 2px solid #2e7d72; outline-offset: 3px; }
+      .mo-startup [hidden] { display: none !important; }
+      [data-theme='dark'] .mo-startup { background: var(--mo-bg, #101719); color: #e5eeeb; }
+      [data-theme='dark'] .mo-startup-card { border-color: #30413c; background: #1a2522; box-shadow: 0 12px 42px #0003; }
+      [data-theme='dark'] .mo-startup-message { color: #a4b9b1; }
+      [data-theme='dark'] .mo-startup-spinner { border-color: #304c43; border-top-color: #6cc9bb; }
+      [data-theme='dark'] .mo-startup-retry { border-color: #426257; background: #243b33; color: #a5dfcc; }
+      @keyframes mo-startup-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .mo-startup-spinner { animation: none; } }
+    </style>
     <script>
+      // 功能：在加载模块前同步恢复主题并标记启动起点；时间：2026-10-24；作者：lq。
       (function () {
+        performance.mark('mini-office:start');
         try {
           var stored = localStorage.getItem('mini-office.theme');
           var mode = stored ? JSON.parse(stored) : 'system';
@@ -26,7 +64,49 @@
     </script>
   </head>
   <body>
+    <!-- 功能：先呈现软件图标与加载小面板，主界面绘制完成后由启动控制器移除；时间：2026-10-24；作者：lq。 -->
+    <div id="startup-splash" class="mo-startup" role="status" aria-live="polite" aria-busy="true">
+      <div class="mo-startup-card">
+        <img class="mo-startup-icon" src="/brand/mini-office.svg" alt="" width="76" height="76" draggable="false" />
+        <h1 class="mo-startup-title">Mini Office</h1>
+        <div class="mo-startup-status">
+          <span id="startup-spinner" class="mo-startup-spinner" aria-hidden="true"></span>
+          <p id="startup-message" class="mo-startup-message">正在准备本地工作区…</p>
+        </div>
+        <button id="startup-retry" class="mo-startup-retry" type="button" hidden>重新加载</button>
+        <noscript><p class="mo-startup-message">请启用 JavaScript 后重新打开。</p></noscript>
+      </div>
+    </div>
     <div id="root"></div>
+    <script>
+      // 功能：启动缓慢或脚本失败时提供重试入口，不用超时强行展示未完成的主界面；时间：2026-10-24；作者：lq。
+      (function () {
+        var timer;
+        var message = document.getElementById('startup-message');
+        var retry = document.getElementById('startup-retry');
+        var spinner = document.getElementById('startup-spinner');
+        function showRetry(failed) {
+          if (!document.getElementById('startup-splash')) return;
+          message.textContent = failed ? '启动未完成，请重新加载。' : '启动用时较长，可继续等待或重试。';
+          retry.hidden = false;
+          if (failed) spinner.hidden = true;
+        }
+        function onError(event) {
+          if (event instanceof ErrorEvent || event.target instanceof HTMLScriptElement) showRetry(true);
+        }
+        function onRejection() { showRetry(true); }
+        function cleanup() {
+          clearTimeout(timer);
+          window.removeEventListener('error', onError, true);
+          window.removeEventListener('unhandledrejection', onRejection);
+        }
+        retry.addEventListener('click', function () { window.location.reload(); });
+        window.addEventListener('error', onError, true);
+        window.addEventListener('unhandledrejection', onRejection);
+        window.addEventListener('mini-office:ready', cleanup, { once: true });
+        timer = setTimeout(function () { showRetry(false); }, 12000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

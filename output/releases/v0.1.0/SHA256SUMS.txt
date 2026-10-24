@@ -1,0 +1,2 @@
+2f3a6fab9f29dec059f87ee9127406dbc56536b4ec29cb03b7c6a542228d8e01  Mini-Office_0.1.0_aarch64.app.zip
+f5ec4fc592dde83646c577c2a9e7e35c7663312cb04d252028bbd9ef2408173e  Mini-Office_0.1.0_aarch64.dmg

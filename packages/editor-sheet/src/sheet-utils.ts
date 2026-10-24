@@ -249,7 +249,14 @@ export function applyStyleToRange(
     for (let col = normalized.c1; col <= normalized.c2; col += 1) {
       const existing = sheet.cells[cellKey(row, col)];
       const base = cellStyle(next, existing);
-      const merged = { ...base, ...patch } as CellStyle;
+      // 功能：修改单条边框时保留单元格其余三条边，避免选区格式操作互相覆盖；时间：2026-10-24；作者：lq。
+      const merged = {
+        ...base,
+        ...patch,
+        ...(patch.borders && base.borders
+          ? { borders: { ...base.borders, ...patch.borders } }
+          : {}),
+      } as CellStyle;
       let styleId = styleCache.get(styleKey(merged));
       if (!styleId) {
         const found = findOrCreateStyle(next, merged);

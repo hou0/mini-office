@@ -99,9 +99,12 @@ fn write_file(path: String, bytes: Vec<u8>) -> Result<SaveOutcome, String> {
     atomic_write(&path, &bytes, true).map_err(|error| error.to_string())
 }
 
+/// 功能：在线程池扫描字体，避免冷启动字体文件读取阻塞原生窗口事件和加载动画；时间：2026-10-24；作者：lq。
 #[tauri::command]
-fn list_fonts() -> Vec<office_font::FontInfo> {
-    office_font::cached_fonts().to_vec()
+async fn list_fonts() -> Result<Vec<office_font::FontInfo>, String> {
+    tauri::async_runtime::spawn_blocking(|| office_font::cached_fonts().to_vec())
+        .await
+        .map_err(|error| format!("字体扫描失败：{error}"))
 }
 
 #[tauri::command]

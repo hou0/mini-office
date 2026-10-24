@@ -6,6 +6,7 @@ import {
 import { analyzeCapabilities, detectKind, loadOoxmlPackage } from '@mini-office/ooxml';
 import { ErrorCodes, OfficeError, type DocumentStats } from '@mini-office/shared';
 import { deckStats, parsePptxPackage } from './parse';
+import { serializePptx } from './serialize';
 
 export const slidesFormatHandler: FormatHandler<SlideDeck> = {
   kind: 'pptx',
@@ -30,10 +31,17 @@ export const slidesFormatHandler: FormatHandler<SlideDeck> = {
         knownFonts: input.knownFonts,
       });
       const data = await parsePptxPackage(pkg, { fileName: input.name });
+      // 功能：编辑器层将 PPTX 提升为需另存的 L2，同时底层能力扫描仍保留只读基线供兼容性报告使用；时间：2026-10-24；作者：lq。
+      const blocked = capability.warnings.some((warning) => warning.severity === 'blocking');
+      const editableCapability = {
+        ...capability,
+        level: blocked ? 1 as const : 2 as const,
+        warnings: capability.warnings.filter((warning) => warning.code !== 'pptx.readonly'),
+      };
       return {
         data,
-        capability,
-        readonly: true,
+        capability: editableCapability,
+        readonly: blocked,
         displayName: input.name,
       };
     } finally {
@@ -41,12 +49,13 @@ export const slidesFormatHandler: FormatHandler<SlideDeck> = {
     }
   },
 
-  async serialize(_data, context) {
-    if (context.sourceBytes) return context.sourceBytes;
-    throw new OfficeError(
-      ErrorCodes.SAVE_FAILED,
-      'V1 的 PPTX 仅支持静态预览与演示，不支持保存编辑结果。',
-    );
+  async serialize(data, context) {
+    try {
+      return await serializePptx(data, context.sourceBytes);
+    } catch (error) {
+      if (error instanceof OfficeError) throw error;
+      throw new OfficeError(ErrorCodes.SAVE_FAILED, error instanceof Error ? error.message : String(error));
+    }
   },
 
   getStats(data): DocumentStats {

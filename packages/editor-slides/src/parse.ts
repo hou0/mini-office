@@ -411,6 +411,9 @@ function parseShape(
   const name = getAttr(firstDescendant(shape, 'p:cNvPr'), 'name') ?? undefined;
   const base = {
     id: uid('el'),
+    // 功能：保留 OOXML 对象身份与原文字以支持精确、增量保存；时间：2026-10-24；作者：lq。
+    sourceId: getAttr(firstDescendant(shape, 'p:cNvPr'), 'id'),
+    sourceText: JSON.stringify(paragraphs),
     name,
     x,
     y,
@@ -513,6 +516,7 @@ async function parsePicture(
   return {
     id: uid('el'),
     type: 'image',
+    sourceId: getAttr(firstDescendant(pic, 'p:cNvPr'), 'id'),
     src,
     part,
     name: getAttr(firstDescendant(pic, 'p:cNvPr'), 'name') ?? undefined,
@@ -543,7 +547,7 @@ async function parseTable(
   for (const tr of childrenNamed(tbl, 'a:tr')) {
     rowHeights.push(emuToPx(numberAttr(tr, 'h', 0)));
     const cells: SlideTableElement['rows'][number]['cells'] = [];
-    for (const tc of childrenNamed(tr, 'a:tc')) {
+    for (const [sourceIndex, tc] of childrenNamed(tr, 'a:tc').entries()) {
       const tcPr = firstNamed(tc, 'a:tcPr');
       const fill = parseFillElement(tcPr, ctx);
       const anchor = getAttr(tcPr, 'anchor');
@@ -555,6 +559,7 @@ async function parseTable(
       const borderColor = resolveColor(firstNamed(tcPr, 'a:lnL'), ctx);
       const cell: SlideTableElement['rows'][number]['cells'][number] = {
         text: paragraphs,
+        sourceIndex,
         fill,
         borders: borderColor ? { color: borderColor, widthPx: 0.75 } : undefined,
         verticalAlign: anchor === 'ctr' ? 'middle' : anchor === 'b' ? 'bottom' : 'top',
@@ -580,6 +585,8 @@ async function parseTable(
   return {
     id: uid('el'),
     type: 'table',
+    sourceId: getAttr(firstDescendant(frame, 'p:cNvPr'), 'id'),
+    sourceText: JSON.stringify(rows),
     x: emuToPx(numberAttr(off, 'x')),
     y: emuToPx(numberAttr(off, 'y')),
     w: emuToPx(numberAttr(ext, 'cx')),
@@ -628,7 +635,12 @@ async function parseGroup(
       children.push(element);
     }
   }
-  return { id: uid('el'), type: 'group', x, y, w, h, children };
+  return { id: uid('el'), type: 'group', x, y, w, h, children,
+    sourceId: getAttr(firstDescendant(group, 'p:cNvPr'), 'id'),
+    sourceChildren: children.flatMap((child) => child.sourceId ? [child.sourceId] : []),
+    rotation: numberAttr(xfrm, 'rot') / 60_000 || undefined,
+    flipH: boolAttr(xfrm, 'flipH') || undefined, flipV: boolAttr(xfrm, 'flipV') || undefined,
+  };
 }
 
 async function parseElement(
@@ -729,7 +741,7 @@ async function parseSlide(
 
   // Layout/master decorations that are not placeholders are shown behind the slide.
   for (const decoration of [...(master?.elements ?? []), ...(layout?.elements ?? [])]) {
-    if (!isPlaceholderElement(decoration)) elements.push({ ...decoration });
+    if (!isPlaceholderElement(decoration)) elements.push({ ...decoration, inherited: true });
   }
 
   const cSld = firstDescendant(root, 'p:cSld');
@@ -789,6 +801,10 @@ async function parseSlide(
   const hasMedia = /<p:video\b|<p:audio\b/.test(await ctx.pkg.text(part));
   return {
     id: uid('slide'),
+    // 功能：固定页面身份，复制或排序后仍对应正确的源文件部件；时间：2026-10-24；作者：lq。
+    sourcePart: part,
+    sourceElementIds: elements.filter((element) => !element.inherited).flatMap((element) => element.sourceId ? [element.sourceId] : []),
+    sourceNotes: notes ?? '',
     index,
     title: title || `${fallbackTitle} ${index + 1}`,
     background,

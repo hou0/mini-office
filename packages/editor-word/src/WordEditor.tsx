@@ -41,6 +41,8 @@ import {
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
 import { pageMetrics, paginateDocument, type PageSlice } from './pagination';
 import { WordToolbar } from './WordToolbar';
+// 功能：复用 Word 原版平台缩放快捷键，比例与文档视图同步；时间：2026-10-24；作者：lq。
+import { normalizeWordZoom, useWordZoomShortcuts } from './zoom-shortcuts';
 // 功能：接入页眉页脚草稿设置；时间：2026-10-24；作者：lq。
 import { HeaderFooterDialog } from './HeaderFooterDialog';
 // 功能：接入模板字段和批量报告流程；时间：2026-10-24；作者：lq。
@@ -92,7 +94,8 @@ import {
   X,
 } from 'lucide-react';
 
-const PAGE_SIZE_OPTIONS = ['A4', 'A3', 'A5', 'Letter'] as const;
+// 功能：提供常用办公纸张尺寸，页面布局修改即时重新分页；时间：2026-10-24；作者：lq。
+const PAGE_SIZE_OPTIONS = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'B5'] as const;
 
 interface HistoryState {
   past: DocModel[];
@@ -220,6 +223,29 @@ function replaceTableInBlocks(blocks: DocBlock[], tableId: string, updater: (tab
   return result;
 }
 
+/** 功能：在正文、表格及嵌套表格中查找图片；时间：2026-10-24；作者：lq。 */
+function findImageInBlocks(blocks: DocBlock[], imageId: string): DocImage | undefined {
+  for (const block of blocks) {
+    if (block.type === 'paragraph') {
+      const run = block.runs.find((item) => item.image && (item.image.id === imageId || item.image.relId === imageId));
+      if (run?.image) return run.image;
+    } else if (block.type === 'table') {
+      const found = block.rows.flatMap((row) => row.cells).map((cell) => findImageInBlocks(cell.blocks, imageId)).find(Boolean);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/** 功能：统一修改图片尺寸与环绕属性并保留其他文档结构；时间：2026-10-24；作者：lq。 */
+function updateImageInBlocks(blocks: DocBlock[], imageId: string, patch: Partial<DocImage>): DocBlock[] {
+  return blocks.map((block) => {
+    if (block.type === 'paragraph') return { ...block, runs: block.runs.map((run) => run.image && (run.image.id === imageId || run.image.relId === imageId) ? { ...run, image: { ...run.image, ...patch } } : run) };
+    if (block.type === 'table') return { ...block, rows: block.rows.map((row) => ({ ...row, cells: row.cells.map((cell) => ({ ...cell, blocks: updateImageInBlocks(cell.blocks, imageId, patch) })) })) };
+    return block;
+  });
+}
+
 function borderCss(border: TableBorderSide | undefined): string | undefined {
   if (!border || border.style === 'none' || border.widthPx <= 0) return undefined;
   const cssStyle =
@@ -260,6 +286,13 @@ interface ParagraphHandlers {
   tableSelection?: TableSelection | null;
   onTableResize: (event: React.PointerEvent, table: DocTable, index: number, axis: 'row' | 'column') => void;
   onPaste?: (event: React.ClipboardEvent<HTMLDivElement>) => void;
+  /** 功能：记录当前选中的图片对象，供边框手柄与右键菜单使用；时间：2026-10-24；作者：lq。 */
+  onImageSelect?: (imageId: string) => void;
+  /** 功能：处理图片边框手柄拖动，实时预览并在松开时保存尺寸；时间：2026-10-24；作者：lq。 */
+  onImageResizeStart?: (event: React.PointerEvent, imageId: string, handle: string) => void;
+  /** 功能：将图片环绕与对象操作入口放入图片右键菜单；时间：2026-10-24；作者：lq。 */
+  onImageContextMenu?: (event: React.MouseEvent, imageId: string) => void;
+  selectedImageId?: string;
 }
 
 const StaticParagraph = memo(function StaticParagraph({
@@ -328,6 +361,19 @@ const EditableParagraph = memo(function EditableParagraph({
     lastSyncToken.current = handlers.syncToken;
   }, [handlers.syncToken, html]);
 
+  useEffect(() => {
+    ref.current?.querySelectorAll<HTMLElement>('[data-image-frame]').forEach((frame) => {
+      const selected = !!handlers.selectedImageId && frame.dataset.imageId === handlers.selectedImageId;
+      frame.style.outline = selected ? '2px solid #3478f6' : '';
+      frame.style.outlineOffset = selected ? '2px' : '';
+      frame.dataset.selected = selected ? 'true' : 'false';
+      frame.querySelectorAll<HTMLElement>('[data-image-handle]').forEach((handle) => {
+        handle.style.opacity = selected ? '1' : '0';
+        handle.style.pointerEvents = selected ? 'auto' : 'none';
+      });
+    });
+  }, [handlers.selectedImageId, html]);
+
   return (
     <div style={paragraphWrapperStyle(paragraph)}>
       <div
@@ -342,6 +388,27 @@ const EditableParagraph = memo(function EditableParagraph({
         aria-label="文档段落"
         style={{ ...paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt), outline: 'none' }}
         onInput={(event) => handlers.onInput(paragraph.id, event.currentTarget)}
+        onPointerDown={(event) => {
+          const handle = (event.target as HTMLElement).closest<HTMLElement>('[data-image-handle]');
+          const frame = (event.target as HTMLElement).closest<HTMLElement>('[data-image-frame]');
+          if (handle && frame && handlers.onImageResizeStart) {
+            event.preventDefault();
+            event.stopPropagation();
+            handlers.onImageResizeStart(event, frame.dataset.imageId ?? '', handle.dataset.imageHandle ?? 'se');
+          }
+        }}
+        // 功能：点击图片进入图片上下文工具，避免把图片当作普通文本处理；时间：2026-10-24；作者：lq。
+        onClick={(event) => {
+          const image = (event.target as HTMLElement).closest<HTMLImageElement>('img[data-image-id]');
+          if (image) {
+            event.preventDefault();
+            handlers.onImageSelect?.(image.dataset.imageId ?? '');
+          }
+        }}
+        onContextMenu={(event) => {
+          const frame = (event.target as HTMLElement).closest<HTMLElement>('[data-image-frame]');
+          if (frame) handlers.onImageContextMenu?.(event, frame.dataset.imageId ?? '');
+        }}
         onBlur={() => handlers.onBlur(paragraph.id)}
       />
     </div>
@@ -825,6 +892,12 @@ interface TableMenuState {
   rowIndex: number;
 }
 
+interface ImageMenuState {
+  x: number;
+  y: number;
+  imageId: string;
+}
+
 export function WordEditor({ session }: { session: WordSession }) {
   const doc = session.data as DocModel;
   const readonly = session.readonly;
@@ -836,6 +909,8 @@ export function WordEditor({ session }: { session: WordSession }) {
   const openCompatibility = useWorkspaceStore((state) => state.openDialog);
   const notify = useWorkspaceStore((state) => state.notify);
 
+  // 功能：限定文档缩放快捷键的工作区范围；时间：2026-10-24；作者：lq。
+  const editorRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pagesRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -849,6 +924,8 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeParagraphId, setActiveParagraphId] = useState<string>();
+  // 功能：记录当前图片选中状态，驱动边框手柄与右键菜单；时间：2026-10-24；作者：lq。
+  const [selectedImageId, setSelectedImageId] = useState<string>();
   const [activeStyle, setActiveStyle] = useState<RunStyle>({
     fontFamily: doc.defaultFont,
     fontSizePt: doc.defaultFontSizePt,
@@ -866,6 +943,8 @@ export function WordEditor({ session }: { session: WordSession }) {
   const explicitTableSelectionRef = useRef(false);
   const [tableSelection, setTableSelection] = useState<TableSelection | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
+  // 功能：保存图片右键菜单位置与目标对象；时间：2026-10-24；作者：lq。
+  const [imageMenu, setImageMenu] = useState<ImageMenuState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   // 功能：按双击区域打开设置，每次打开重建草稿；时间：2026-10-24；作者：lq。
   const [headerFooterRegion, setHeaderFooterRegion] = useState<'header' | 'footer' | null>(null);
@@ -1117,12 +1196,15 @@ export function WordEditor({ session }: { session: WordSession }) {
 
   const changeZoom = useCallback(
     (value: number) => {
-      const next = Math.max(0.4, Math.min(2.5, Number(value.toFixed(2))));
+      const next = normalizeWordZoom(value);
       setZoom(next);
       updateView(session.id, { zoom: next });
     },
     [session.id, updateView],
   );
+
+  // 功能：只读文档同样允许缩放，导出时暂停快捷键以保护固定的导出版式；时间：2026-10-24；作者：lq。
+  useWordZoomShortcuts({ editorRef, scrollRef, zoom, onZoomChange: changeZoom, enabled: !exporting });
 
   const fitWidth = useCallback(() => {
     const container = scrollRef.current;
@@ -1561,6 +1643,80 @@ export function WordEditor({ session }: { session: WordSession }) {
     [commit, latestDoc],
   );
 
+  const updateImage = useCallback((imageId: string, patch: Partial<DocImage>) => {
+    if (readonly || !imageId) return;
+    const current = latestDoc();
+    commit({ ...current, blocks: updateImageInBlocks(current.blocks, imageId, patch) }, { reflow: true, key: `image:${imageId}` });
+  }, [commit, latestDoc, readonly]);
+
+  // 功能：拖动图片边框手柄调整尺寸，角点默认保持原始比例；时间：2026-10-24；作者：lq。
+  const handleImageResizeStart = useCallback((event: React.PointerEvent, imageId: string, handle: string) => {
+    if (readonly || event.button !== 0 || !imageId) return;
+    const image = findImageInBlocks(latestDoc().blocks, imageId);
+    const frame = event.currentTarget.closest<HTMLElement>('[data-image-frame]')
+      ?? (event.target as HTMLElement).closest<HTMLElement>('[data-image-frame]');
+    if (!image || !frame) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = Math.max(8, image.widthPx);
+    const startHeight = Math.max(8, image.heightPx);
+    const ratio = startWidth / startHeight;
+    const horizontal = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0;
+    const vertical = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0;
+    const isCorner = handle.length === 2;
+    const originalFrameStyle = frame.getAttribute('style');
+    const preview = frame.querySelector<HTMLImageElement>('img[data-image-id]');
+    const originalImageStyle = preview?.getAttribute('style') ?? null;
+    let nextWidth = startWidth;
+    let nextHeight = startHeight;
+    const applyPreview = (width: number, height: number) => {
+      frame.style.width = `${width}px`;
+      if (preview) {
+        preview.style.width = `${width}px`;
+        preview.style.height = `${height}px`;
+      }
+    };
+    const move = (pointer: PointerEvent) => {
+      const dx = (pointer.clientX - startX) / effectiveZoom;
+      const dy = (pointer.clientY - startY) / effectiveZoom;
+      const widthFromX = Math.max(8, startWidth + horizontal * dx);
+      const heightFromY = Math.max(8, startHeight + vertical * dy);
+      if (isCorner && !pointer.shiftKey) {
+        const widthScale = widthFromX / startWidth;
+        const heightScale = heightFromY / startHeight;
+        const scale = Math.max(widthScale, heightScale, 8 / Math.min(startWidth, startHeight));
+        nextWidth = Math.max(8, startWidth * scale);
+        nextHeight = Math.max(8, nextWidth / ratio);
+      } else {
+        nextWidth = horizontal === 0 ? startWidth : widthFromX;
+        nextHeight = vertical === 0 ? startHeight : heightFromY;
+      }
+      applyPreview(nextWidth, nextHeight);
+    };
+    const finish = (pointer: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      if (originalFrameStyle !== null) frame.setAttribute('style', originalFrameStyle);
+      if (preview && originalImageStyle !== null) preview.setAttribute('style', originalImageStyle);
+      if (pointer.type === 'pointercancel') return;
+      if (Math.abs(nextWidth - startWidth) < 0.5 && Math.abs(nextHeight - startHeight) < 0.5) return;
+      updateImage(imageId, { widthPx: nextWidth, heightPx: nextHeight });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+  }, [effectiveZoom, latestDoc, readonly, updateImage]);
+
+  // 功能：打开图片专属右键菜单，把文字环绕等低频操作移出常驻工具栏；时间：2026-10-24；作者：lq。
+  const handleImageContextMenu = useCallback((event: React.MouseEvent, imageId: string) => {
+    if (readonly || !imageId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedImageId(imageId);
+    setImageMenu({ x: event.clientX, y: event.clientY, imageId });
+  }, [readonly]);
+
   /** 功能：在正文或表格当前光标插入原子合并域，统一撤销且恢复光标；时间：2026-10-24；作者：lq。 */
   const insertMergeField = useCallback((field: string) => {
     if (readonly) return;
@@ -1825,8 +1981,12 @@ export function WordEditor({ session }: { session: WordSession }) {
       tableSelection,
       onTableResize: handleTableResize,
       onPaste: handlePaste,
+      onImageSelect: setSelectedImageId,
+      onImageResizeStart: handleImageResizeStart,
+      onImageContextMenu: handleImageContextMenu,
+      selectedImageId,
     }),
-    [handleParagraphBlur, handleParagraphInput, handleKeyDown, handlePaste, handleTableContextMenu, handleTableResize, tableSelection, syncToken],
+    [handleImageContextMenu, handleImageResizeStart, handleParagraphBlur, handleParagraphInput, handleKeyDown, handlePaste, handleTableContextMenu, handleTableResize, selectedImageId, tableSelection, syncToken],
   );
 
   const handleReplaceCurrent = useCallback(() => {
@@ -1920,9 +2080,19 @@ export function WordEditor({ session }: { session: WordSession }) {
   const tableMenuItems: MenuItem[] = tableMenu && tableSelection && activeTable
     ? ([['merge', '合并选中单元格'], ['split', '拆分已合并单元格'], ['row-above', '在上方插入行'], ['row-below', '在下方插入行'], ['column-before', '在左侧插入列'], ['column-after', '在右侧插入列'], ['row-delete', '删除选中行'], ['column-delete', '删除选中列'], ['table-delete', '删除表格']] as [TableAction, string][]).map(([id, label]) => ({ id, label, danger: id.endsWith('delete'), onSelect: () => runTableAction(id) }))
     : [];
+  // 功能：提供图片右键环绕菜单，集中低频对象布局操作；时间：2026-10-24；作者：lq。
+  const imageMenuItems: MenuItem[] = imageMenu ? [
+    { type: 'label', label: '图片文字环绕' },
+    { id: 'inline', label: '嵌入型', checked: (findImageInBlocks(doc.blocks, imageMenu.imageId)?.wrap ?? 'inline') === 'inline', onSelect: () => updateImage(imageMenu.imageId, { wrap: 'inline' }) },
+    { id: 'square-left', label: '左侧环绕', checked: findImageInBlocks(doc.blocks, imageMenu.imageId)?.wrap === 'square-left', onSelect: () => updateImage(imageMenu.imageId, { wrap: 'square-left' }) },
+    { id: 'square-right', label: '右侧环绕', checked: findImageInBlocks(doc.blocks, imageMenu.imageId)?.wrap === 'square-right', onSelect: () => updateImage(imageMenu.imageId, { wrap: 'square-right' }) },
+    { id: 'top-bottom', label: '上下型', checked: findImageInBlocks(doc.blocks, imageMenu.imageId)?.wrap === 'top-bottom', onSelect: () => updateImage(imageMenu.imageId, { wrap: 'top-bottom' }) },
+    { type: 'separator' },
+    { id: 'image-done', label: '完成图片选择', onSelect: () => setSelectedImageId(undefined) },
+  ] : [];
 
   return (
-    <div className="flex h-full min-h-0 w-full">
+    <div ref={editorRef} className="flex h-full min-h-0 w-full">
       <div className="flex min-w-0 flex-1 flex-col">
         {settings.showToolbar ? (
         <WordToolbar
@@ -2126,6 +2296,14 @@ export function WordEditor({ session }: { session: WordSession }) {
           y={tableMenu.y}
           items={tableMenuItems}
           onClose={() => setTableMenu(null)}
+        />
+      ) : null}
+      {imageMenu ? (
+        <ContextMenu
+          x={imageMenu.x}
+          y={imageMenu.y}
+          items={imageMenuItems}
+          onClose={() => setImageMenu(null)}
         />
       ) : null}
 

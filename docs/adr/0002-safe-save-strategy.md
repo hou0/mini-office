@@ -46,7 +46,7 @@ serialize（保留未知部件）
 - DOCX：复制源 ZIP 的全部条目，仅替换 `word/document.xml`；新增图片补关系与内容类型。
 - XLSX：重建 `workbook.xml`、`styles.xml`、工作表 XML，删除 `calcChain.xml` 并强制重算；
   其余部件原样保留。
-- PPTX：V1 只读，保存直接返回源字节（不会写回）。
+- PPTX：基础编辑保存为 L2 副本，原始压缩包中的未知部件和复杂效果保持不变。
 - L2 文档首次保存强制 `Save As`；之后可继续保存副本。
 - 保存失败进入 `SAVE_FAILED`，保留未保存状态和恢复快照；临时文件与备份保留用于排查。
 

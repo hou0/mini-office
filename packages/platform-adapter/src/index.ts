@@ -28,6 +28,20 @@ export function platformName(): 'web' | 'tauri' {
   return getPlatformAdapter().kind;
 }
 
+// 功能：在桌面端使用系统默认浏览器打开外部链接；时间：2026-10-24；作者：lq。
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isTauriRuntime()) {
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener');
+      await openUrl(url);
+      return;
+    } catch (error) {
+      console.warn('打开外部链接失败', error);
+    }
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 export async function startWindowDrag(): Promise<void> {
   if (!isTauriRuntime()) return;
   try {

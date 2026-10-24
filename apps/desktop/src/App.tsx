@@ -1,4 +1,3 @@
-import { BrandIcon } from '@mini-office/ui';
 import { useEffect } from 'react';
 import { useWorkspaceStore } from '@mini-office/document-model';
 import {
@@ -9,6 +8,8 @@ import {
 } from '@mini-office/platform-adapter';
 import { AppShell } from '@mini-office/editor-shell';
 import { applyAppearance } from '@mini-office/design-system';
+// 功能：使用静态启动面板，待工作区首页完成首帧绘制后移除；时间：2026-10-24；作者：lq。
+import { finishStartup } from './startup';
 
 export default function App() {
   const hydrated = useWorkspaceStore((state) => state.hydrated);
@@ -17,10 +18,19 @@ export default function App() {
   const openPath = useWorkspaceStore((state) => state.openPath);
 
   useEffect(() => {
-    applyAppearance(settings);
     void initialize();
     document.documentElement.dataset.platform = isTauriRuntime() ? 'tauri' : 'web';
-  }, [initialize, settings.theme, settings.accent, settings.customAccent]);
+  }, [initialize]);
+
+  // 功能：外观变化不再重复初始化工作区；时间：2026-10-24；作者：lq。
+  useEffect(() => {
+    applyAppearance(settings);
+  }, [settings.theme, settings.accent, settings.customAccent]);
+
+  // 功能：双帧确认首页已布局绘制，不用固定延迟延长用户等待；时间：2026-10-24；作者：lq。
+  useEffect(() => {
+    if (hydrated) return finishStartup();
+  }, [hydrated]);
 
   useEffect(() => {
     if (!supportsWindowVibrancy()) {
@@ -85,17 +95,8 @@ export default function App() {
   }, [hydrated, openPath]);
 
   if (!hydrated) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-[var(--mo-bg)]">
-        {/* 功能：启动页显示正式品牌图标；时间：2026-10-18；作者：lq。 */}
-        <BrandIcon size={64} />
-        <div className="text-[13px] font-medium text-[var(--mo-text-primary)]">Mini Office</div>
-        <div className="flex items-center gap-2 text-[11px] text-[var(--mo-text-muted)]">
-          <span className="h-3 w-3 animate-[mo-spin_0.9s_linear_infinite] rounded-full border-2 border-[var(--mo-line-strong)] border-t-[var(--mo-accent)]" />
-          正在准备本地工作区…
-        </div>
-      </div>
-    );
+    // 功能：保留 HTML 启动面板，覆盖 React 下载、执行和工作区初始化全过程；时间：2026-10-24；作者：lq。
+    return null;
   }
 
   return <AppShell />;

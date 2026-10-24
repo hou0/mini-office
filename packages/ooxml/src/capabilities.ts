@@ -255,6 +255,10 @@ async function scanXlsx(pkg: OoxmlPackage, state: ScanState): Promise<void> {
 }
 
 async function scanPptx(pkg: OoxmlPackage, state: ScanState): Promise<void> {
+  if (pkg.names().some((name) => /vbaProject\.bin$/i.test(name))) {
+    addFeature(state, 'pptx.macro', 'VBA 宏', false, 'blocking', '不会执行或覆盖宏部件。');
+    addWarning(state, 'pptx.macro', '演示文稿包含 VBA 宏，为保护宏和原文件，当前以只读方式打开。', 'blocking');
+  }
   const presentationXml = await readIfPresent(pkg, 'ppt/presentation.xml');
   const themeXml = await pkg.names().find((name) => /^ppt\/theme\/theme\d+\.xml$/.test(name));
   if (themeXml) collectFontNamesFromXml(await readIfPresent(pkg, themeXml), state);
@@ -270,7 +274,7 @@ async function scanPptx(pkg: OoxmlPackage, state: ScanState): Promise<void> {
     if (/<p:video\b|<p:audio\b/.test(xml)) media = true;
     if (/<a:tbl\b/.test(xml)) addFeature(state, 'pptx.tables', '表格', true, 'info');
     if (/<p:pic\b/.test(xml)) addFeature(state, 'pptx.pictures', '图片', true, 'info');
-    if (/<p:graphicFrame\b/.test(xml)) addFeature(state, 'pptx.graphicFrames', '图表/图形框', false, 'warning');
+    if (/<c:chart\b|<dgm:relIds\b/.test(xml)) addFeature(state, 'pptx.graphicFrames', '图表/SmartArt（保留原部件）', false, 'warning');
   }
   notes = pkg.names().some((name) => /^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(name));
   if (animations) {
@@ -295,12 +299,9 @@ async function scanPptx(pkg: OoxmlPackage, state: ScanState): Promise<void> {
   if (notes) addFeature(state, 'pptx.notes', '演讲者备注', true, 'info');
   if (presentationXml) addFeature(state, 'pptx.theme', '主题与母版', true, 'info');
   addFeature(state, 'pptx.preview', '静态高保真预览', true, 'info');
-  addWarning(
-    state,
-    'pptx.readonly',
-    'V1 对 PPTX 提供静态高保真预览与演示，暂不支持编辑；原始文件不会被修改。',
-    'info',
-  );
+  // 功能：PPT 开启基础内容编辑并默认另存副本保护原文件；时间：2026-10-24；作者：lq。
+  addFeature(state, 'pptx.editing', '文字、表格、对象布局与备注编辑', true, 'info');
+  addWarning(state, 'pptx.editing', '支持基础内容编辑，首次保存为副本。母版装饰、图表、动画和媒体保留原部件，复杂效果请在 PowerPoint 中核对。', 'info');
 }
 
 function levelFor(kind: OfficeKind, state: ScanState): CapabilityLevel {

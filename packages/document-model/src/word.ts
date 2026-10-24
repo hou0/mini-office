@@ -27,6 +27,8 @@ export interface DocImage {
   name?: string;
   /** Base64 data URL for newly inserted images. */
   dataUrl?: string;
+  /** 功能：保存图片的文字环绕方式，支持嵌入、左右环绕和上下型；时间：2026-10-24；作者：lq。 */
+  wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom';
 }
 
 export interface DocRun {

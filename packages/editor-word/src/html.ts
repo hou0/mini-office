@@ -33,10 +33,29 @@ function imageHtml(run: DocRun): string {
   const image = run.image;
   if (!image) return '';
   const alt = escapeHtml(image.alt ?? image.name ?? '');
-  const style = `width:${image.widthPx}px;height:${image.heightPx}px;max-width:100%;object-fit:contain;vertical-align:baseline;`;
-  return `<img src="${escapeHtml(image.src)}" alt="${alt}" data-image-id="${escapeHtml(
-    image.id ?? image.relId ?? '',
-  )}" contenteditable="false" draggable="false" style="${style}">`;
+  const imageId = escapeHtml(image.id ?? image.relId ?? '');
+  const wrap = image.wrap ?? 'inline';
+  const layout = wrap === 'square-left'
+    ? 'float:left;margin:0 12px 8px 0;'
+    : wrap === 'square-right'
+      ? 'float:right;margin:0 0 8px 12px;'
+      : wrap === 'top-bottom'
+        ? 'display:block;margin:8px auto;'
+        : 'display:inline-block;vertical-align:baseline;';
+  const frameStyle = `position:relative;line-height:0;${layout}`;
+  const imageStyle = `display:block;width:${image.widthPx}px;height:${image.heightPx}px;max-width:100%;object-fit:contain;`;
+  // 功能：为 Word 图片输出可直接拖动的八方向尺寸手柄；时间：2026-10-24；作者：lq。
+  const handles = [
+    ['nw', 'nwse-resize', 'left:-5px;top:-5px;'],
+    ['n', 'ns-resize', 'left:calc(50% - 4px);top:-5px;'],
+    ['ne', 'nesw-resize', 'right:-5px;top:-5px;'],
+    ['e', 'ew-resize', 'right:-5px;top:calc(50% - 4px);'],
+    ['se', 'nwse-resize', 'right:-5px;bottom:-5px;'],
+    ['s', 'ns-resize', 'left:calc(50% - 4px);bottom:-5px;'],
+    ['sw', 'nesw-resize', 'left:-5px;bottom:-5px;'],
+    ['w', 'ew-resize', 'left:-5px;top:calc(50% - 4px);'],
+  ].map(([name, cursor, position]) => `<span data-image-handle="${name}" contenteditable="false" aria-hidden="true" style="position:absolute;z-index:3;width:8px;height:8px;box-sizing:border-box;border:1px solid #3478f6;background:#fff;border-radius:2px;opacity:0;pointer-events:none;cursor:${cursor};${position}"></span>`).join('');
+  return `<span data-image-frame data-image-id="${imageId}" contenteditable="false" style="${frameStyle}"><img src="${escapeHtml(image.src)}" alt="${alt}" data-image-id="${imageId}" contenteditable="false" draggable="false" style="${imageStyle}">${handles}</span>`;
 }
 
 export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): string {

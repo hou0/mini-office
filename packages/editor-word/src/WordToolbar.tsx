@@ -1,5 +1,8 @@
 import type { DocParagraph, DocModel, ParagraphStyle, RunStyle } from '@mini-office/document-model';
 import { FONT_CHOICES } from '@mini-office/design-system';
+// 功能：按操作系统展示 Word 缩放快捷键，并使用统一比例上下限；时间：2026-10-24；作者：lq。
+import { MOD_KEY } from '@mini-office/shared';
+import { WORD_ZOOM_MIN, WORD_ZOOM_MAX } from './zoom-shortcuts';
 import {
   AlignCenter,
   AlignJustify,
@@ -326,7 +329,8 @@ export function WordToolbar(props: WordToolbarProps) {
           <Search size={15} />
         </IconButton>
       </Tooltip>
-      <IconButton label="属性面板" active={props.propertiesOpen} onClick={props.onToggleProperties}>
+      {/* 功能：常驻打开页面布局与文档属性，支持页边距、方向和纸张大小；时间：2026-10-24；作者：lq。 */}
+      <IconButton label="布局与属性" active={props.propertiesOpen} onClick={props.onToggleProperties}>
         <PanelRight size={15} />
       </IconButton>
       <Tooltip label="打印 ⌘P">
@@ -343,11 +347,14 @@ export function WordToolbar(props: WordToolbarProps) {
         </IconButton>
         <Select
           aria-label="缩放"
+          // 功能：提示原版 Word 的缩放组合键，便于用户发现；时间：2026-10-24；作者：lq。
+          title={`放大 ${MOD_KEY} +；缩小 ${MOD_KEY} -；100% ${MOD_KEY} 0；${MOD_KEY} + 滚轮`}
           className="h-7 w-[70px] border-transparent bg-transparent text-[11px]"
           value={String(Math.round(props.zoom * 100))}
           onChange={(event) => props.onZoomChange(Number(event.target.value) / 100)}
         >
-          {[50, 75, 90, 100, 110, 125, 150, 175, 200].map((percent) => (
+          {/* 功能：包含快捷键产生的任意比例，防止 120% 等值在下拉框显示为空；时间：2026-10-24；作者：lq。 */}
+          {[...new Set([WORD_ZOOM_MIN * 100, 50, 75, 90, 100, 110, 125, 150, 175, 200, WORD_ZOOM_MAX * 100, Math.round(props.zoom * 100)])].sort((a, b) => a - b).map((percent) => (
             <option key={percent} value={percent}>
               {percent}%
             </option>

@@ -69,7 +69,7 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 2. 拖拽打开 DOCX/XLSX/PPTX/CSV。
 3. Word 查找（计数、上下一个）、选中文本加粗、撤销恢复 DOM、编辑后保存。
 4. Excel 单元格编辑、公式输入、总计重算、加粗/填充、合并、冻结、排序、筛选、查找。
-5. PPT 缩略图、全屏演示、方向键换页、备注、PDF、图片 ZIP。
+5. PPT 文本框/形状文字编辑、对象选择移动与键盘缩放、页面复制/新增/删除、备注、缩略图、全屏演示、PDF、图片 ZIP。
 6. Word/Excel/PPT 导出文件可由 python-docx / openpyxl / PDF 解析器打开。
 7. 兼容性报告/保存确认在 750×624 小窗口下无横向溢出；长文件名自动解码并截断。
 8. 颜色面板、下拉菜单、悬停提示、Word 字体/字号/颜色/高亮与 Excel 填充色。
@@ -96,6 +96,8 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 ### PowerPoint
 
 - 打开 `tests/fixtures/pptx/deck.pptx`，确认三页缩略图、形状、图片、表格、备注。
+- 双击文字进入编辑，点击对象后用方向键移动、Alt+方向键缩放；使用粗体/斜体、撤销/重做、复制页和新增页。
+- 保存时确认进入另存副本流程，用 Microsoft PowerPoint / LibreOffice 重新打开，核对文字、页数、备注、图片和原始复杂部件。
 - F5 全屏演示，方向键/空格/Home/End/Esc，N 显示备注。
 - 导出 PDF 与图片 ZIP，检查页数/尺寸。
 

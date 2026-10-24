@@ -1,16 +1,14 @@
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { registerFormatHandler, useWorkspaceStore } from '@mini-office/document-model';
+import { useWorkspaceStore } from '@mini-office/document-model';
 import { applyAppearance } from '@mini-office/design-system';
-import { wordFormatHandler } from '@mini-office/editor-word';
-import { sheetFormatHandler } from '@mini-office/editor-sheet';
-import { slidesFormatHandler } from '@mini-office/editor-slides';
+// 功能：首屏只加载格式代理和启动状态，移除三种编辑器的同步依赖；时间：2026-10-24；作者：lq。
+import { registerDeferredFormats } from './format-handlers';
+import { dismissStartup } from './startup';
 import App from './App';
 import './styles.css';
 
-registerFormatHandler(wordFormatHandler);
-registerFormatHandler(sheetFormatHandler);
-registerFormatHandler(slidesFormatHandler);
+registerDeferredFormats();
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -20,6 +18,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // 功能：发生界面异常时展示可操作的错误页；时间：2026-10-24；作者：lq。
+    dismissStartup();
     console.error('[mini-office] uncaught error', error, info);
   }
 

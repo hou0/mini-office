@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import {
   ArrowRight,
   Clock3,
+  ExternalLink,
   FilePlus2,
   FileText,
   FolderOpen,
@@ -16,9 +17,11 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@mini-office/document-model';
-import { Button, IconButton, Input } from '@mini-office/ui';
+import { Button, Dialog, IconButton, Input } from '@mini-office/ui';
 import { APP_VERSION, OFFICE_META, formatBytes, formatDateTime, type OfficeKind } from '@mini-office/shared';
-import { contractTemplate, expenseTemplate } from './templates';
+import { isTauriRuntime, openExternalUrl } from '@mini-office/platform-adapter';
+
+const RELEASES_URL = 'https://github.com/lq0910/mini-office/releases';
 
 const KIND_ICONS: Record<OfficeKind, typeof FileText> = {
   docx: FileText,
@@ -38,11 +41,16 @@ export function HomePage() {
   const openFileDialog = useWorkspaceStore((state) => state.openFileDialog);
   const openSnapshot = useWorkspaceStore((state) => state.openSnapshot);
   const deleteSnapshot = useWorkspaceStore((state) => state.deleteSnapshot);
+  // 功能：复用工作区快照清理并同步最近文件列表；时间：2026-10-24；作者：lq。
+  const clearSnapshots = useWorkspaceStore((state) => state.clearSnapshots);
   const updateData = useWorkspaceStore((state) => state.updateData);
   const notify = useWorkspaceStore((state) => state.notify);
   const openDialog = useWorkspaceStore((state) => state.openDialog);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
+  // 功能：管理批量清空确认和处理中状态，防止误删与重复提交；时间：2026-10-24；作者：lq。
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -72,6 +80,8 @@ export function HomePage() {
     try {
       const id = await createDocument('docx');
       if (!id) return;
+      // 功能：选择模板后再加载模板与计算逻辑，首页启动不加载报销表公式引擎；时间：2026-10-24；作者：lq。
+      const { contractTemplate } = await import('./templates');
       updateData(id, contractTemplate(), { dirty: true });
       notify('success', '已创建合同模板', '可按需修改条款并另存为正式合同。');
     } finally {
@@ -85,6 +95,8 @@ export function HomePage() {
     try {
       const id = await createDocument('xlsx');
       if (!id) return;
+      // 功能：费用模板按需加载，保留公式预计算行为；时间：2026-10-24；作者：lq。
+      const { expenseTemplate } = await import('./templates');
       updateData(id, expenseTemplate(), { dirty: true });
       notify('success', '已创建费用报销模板', '公式已自动计算，可直接填写金额。');
     } finally {
@@ -108,6 +120,27 @@ export function HomePage() {
     try {
       await openSnapshot(id);
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // 功能：清空所有最近快照并重置搜索，失败时保留确认框供重试；时间：2026-10-24；作者：lq。
+  const clearRecent = async () => {
+    if (busy || clearing) return;
+    setBusy(true);
+    setClearing(true);
+    try {
+      await clearSnapshots();
+      if (useWorkspaceStore.getState().recent.length > 0) {
+        throw new Error('部分恢复快照未能清除，请重试。');
+      }
+      setQuery('');
+      setShowClearConfirm(false);
+      notify('success', '已清空最近文件与恢复快照', '磁盘上的原始 Office 文件不受影响。');
+    } catch (error) {
+      notify('error', '清空失败', error instanceof Error ? error.message : String(error));
+    } finally {
+      setClearing(false);
       setBusy(false);
     }
   };
@@ -197,9 +230,10 @@ export function HomePage() {
             <CreateCard
               kind="pptx"
               title="PowerPoint"
-              description="高保真静态预览与全屏演示"
-              actionLabel="打开演示"
-              onAction={() => void openFile()}
+              // 功能：启用 PPT 新建与日常编辑入口；时间：2026-10-24；作者：lq。
+              description="内容编辑、页面排版与全屏演示"
+              actionLabel="新建演示"
+              onAction={() => void createBlank('pptx')}
             />
           </div>
 
@@ -262,14 +296,31 @@ export function HomePage() {
                 本机保留 {recent.length} 个恢复快照
               </span>
             </div>
-            <div className="relative w-[240px]">
-              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--mo-text-faint)]" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索最近文件…"
-                className="h-8 pl-8 text-[12px]"
-              />
+            {/* 功能：将快照清空入口置于搜索框旁，窄窗口允许换行；时间：2026-10-24；作者：lq。 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-[240px] max-w-full">
+                <Search aria-hidden size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--mo-text-faint)]" />
+                {/* 功能：提高左侧留白优先级，避免全局 mo-field 内边距覆盖后图文重叠；时间：2026-10-24；作者：lq。 */}
+                <Input
+                  aria-label="搜索最近文件"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索最近文件…"
+                  className="h-8 !pl-8 text-[12px]"
+                />
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Trash2 size={13} />}
+                disabled={recent.length === 0 || busy}
+                loading={clearing}
+                onClick={() => setShowClearConfirm(true)}
+                title="删除本机所有最近文件记录与恢复快照"
+                className="text-[var(--mo-text-muted)] hover:text-[var(--mo-danger)]"
+              >
+                一键清空
+              </Button>
             </div>
           </div>
           <div className="overflow-hidden rounded-xl border border-[var(--mo-line)] bg-[var(--mo-surface)] shadow-panel">
@@ -343,6 +394,8 @@ export function HomePage() {
                         </button>
                         <IconButton
                           label="从最近文件移除"
+                          // 功能：批量清空期间避免并发移除快照；时间：2026-10-24；作者：lq。
+                          disabled={clearing}
                           onClick={() => void deleteSnapshot(item.id)}
                           className="opacity-0 transition-opacity group-hover:opacity-100"
                         >
@@ -357,12 +410,52 @@ export function HomePage() {
           </div>
         </section>
 
+        {/* 功能：清空前确认全部快照范围及未保存内容风险，兼容桌面 WebView；时间：2026-10-24；作者：lq。 */}
+        <Dialog
+          open={showClearConfirm}
+          onClose={() => { if (!clearing) setShowClearConfirm(false); }}
+          title="清空最近文件与恢复快照？"
+          icon={<Trash2 size={16} />}
+          width="sm"
+          closeOnBackdrop={!clearing}
+          footer={
+            <>
+              <Button disabled={clearing} onClick={() => setShowClearConfirm(false)}>取消</Button>
+              <Button variant="danger" loading={clearing} onClick={() => void clearRecent()}>确认清空</Button>
+            </>
+          }
+        >
+          <p className="text-[12px] leading-6 text-[var(--mo-text-muted)]">
+            将删除本机全部 {recent.length} 个恢复快照和最近文件记录，包括搜索结果以外的快照。磁盘上的原始 Office 文件不会被删除，已打开的文档也不会关闭。
+          </p>
+          {dirtyCount > 0 ? (
+            <p className="mt-3 rounded-lg bg-[var(--mo-warning-soft)] px-3 py-2 text-[12px] leading-5 text-[var(--mo-warning)]">
+              其中 {dirtyCount} 个快照包含未保存内容，删除后将无法通过这些快照恢复。请确认需要的内容已另行保存。
+            </p>
+          ) : null}
+        </Dialog>
+
         <section className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--mo-line)] pt-5 text-[10px] text-[var(--mo-text-faint)]">
           <div className="flex flex-wrap items-center gap-4">
             {/* 功能：展示统一版本号；时间：2026-10-24；作者：lq。 */}
             <span>Mini Office {APP_VERSION}</span>
             <span>离线优先 · 不上传文件</span>
             <span>DOCX / XLSX / PPTX</span>
+            <a
+              href={RELEASES_URL}
+              target="_blank"
+              rel="noreferrer"
+              // 功能：提供新版本发布页入口；时间：2026-10-24；作者：lq。
+              onClick={(event) => {
+                if (!isTauriRuntime()) return;
+                event.preventDefault();
+                void openExternalUrl(RELEASES_URL);
+              }}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[var(--mo-accent)] hover:bg-[var(--mo-surface-2)] hover:underline"
+            >
+              新版本更新
+              <ExternalLink size={11} />
+            </a>
           </div>
           <button
             type="button"

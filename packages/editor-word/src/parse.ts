@@ -618,6 +618,10 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
     name,
     relId: rid,
     part,
+    // 功能：识别 Word 图片的内嵌/浮动形态，重新打开后保持文字环绕；时间：2026-10-24；作者：lq。
+    wrap: drawing.getElementsByTagName('wp:anchor').length
+      ? (firstDescendant(drawing, 'wp:wrapTopAndBottom') ? 'top-bottom' : attrValue(firstDescendant(drawing, 'wp:wrapSquare'), 'wrapText') === 'right' ? 'square-right' : 'square-left')
+      : 'inline',
   };
   ctx.usedImages.set(rid, { src, part });
   return [{ text: '', style: {}, image }];

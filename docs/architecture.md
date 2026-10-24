@@ -120,7 +120,7 @@ Rust `office-security` 提供同一套策略的服务端版本，并额外检查
   表格支持合并与单元格填充；文本支持段落/run 级样式、项目符号、行距与垂直对齐。
 - 全屏演示：独立覆盖层、键盘/点击换页、备注（N 键）、Esc 退出；浏览器使用 Fullscreen API，
   Tauri 使用原生 `setFullscreen(true)`，退出演示时同步恢复窗口。
-- V1 只读：PPTX 的 `FormatHandler.serialize` 只在有源字节时返回原字节，从不写回。
+- PPTX 基础编辑：`FormatHandler.serialize` 保留原始压缩包并按页面/对象身份增量回写，复杂未支持部件原样保留；首次保存按 L2 另存副本。
 
 ## 4. 保存与导出
 

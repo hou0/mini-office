@@ -8,10 +8,13 @@ import {
 } from 'react';
 import {
   cellKey,
+  defaultSheetPageSetup,
   type CellRange,
   type CellStyle,
+  type BorderSide,
   type SheetModel,
   type SheetSession,
+  type SheetPageSetup,
   type WorkbookModel,
 } from '@mini-office/document-model';
 import { useWorkspaceStore } from '@mini-office/document-model';
@@ -48,7 +51,9 @@ import {
   uid,
 } from '@mini-office/shared';
 import { SheetGrid, type EditingCell, type GridAction } from './SheetGrid';
-import { SheetToolbar, type BorderPreset } from './SheetToolbar';
+import { SheetToolbar, type BorderPreset, type BorderWeight } from './SheetToolbar';
+// 功能：接入 Excel 原版缩放快捷键；时间：2026-10-24；作者：lq。
+import { normalizeSheetZoom, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, useSheetZoomShortcuts } from './zoom-shortcuts';
 import { recalculateWorkbook } from './formula/engine';
 import {
   activeSheet as activeSheetOf,
@@ -149,12 +154,17 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const [formulaText, setFormulaText] = useState('');
   const [historyVersion, setHistoryVersion] = useState(0);
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
+  // 功能：保存当前边框工具的线宽选择，供后续边框预设复用；时间：2026-10-24；作者：lq。
+  const [borderWeight, setBorderWeight] = useState<BorderWeight>('thin');
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findActive, setFindActive] = useState(0);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [filterState, setFilterState] = useState<FilterState | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  // 功能：保存页面设置弹窗草稿，取消时不污染当前工作表；时间：2026-10-24；作者：lq。
+  const [pageSetupOpen, setPageSetupOpen] = useState(false);
+  const [pageSetupDraft, setPageSetupDraft] = useState<SheetPageSetup | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -173,6 +183,8 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const clipboardRef = useRef<SheetClipboard | null>(null);
   const clipboardTsvRef = useRef('');
   const cancelExportRef = useRef(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const sheetScrollRef = useRef<HTMLDivElement>(null);
 
   const latestWorkbook = useCallback((): WorkbookModel => {
     const latest = useWorkspaceStore.getState().sessions[session.id]?.data as WorkbookModel | undefined;
@@ -240,6 +252,24 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const active = selection.focus;
   const range = selectionRange(selection);
   const activeCell = cellAt(sheet, active.row, active.col);
+
+  // 功能：按 Excel 的 40%–250%范围统一缩放，并把比例保存到当前工作表视图；时间：2026-10-24；作者：lq。
+  const changeZoom = useCallback(
+    (value: number) => {
+      const next = normalizeSheetZoom(value);
+      setZoom(next);
+      updateView(session.id, { activeSheetId: sheet.id, zoom: next });
+    },
+    [session.id, sheet.id, updateView],
+  );
+
+  useSheetZoomShortcuts({
+    editorRef,
+    scrollRef: sheetScrollRef,
+    zoom,
+    onZoomChange: changeZoom,
+    enabled: true,
+  });
 
   useEffect(() => {
     if (editing) return;
@@ -320,7 +350,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const applyBorders = useCallback(
     (preset: BorderPreset) => {
       if (readonly) return;
-      const side = { style: 'thin' as const, color: '#1D2939' };
+      const side: BorderSide = { style: borderWeight, color: '#1D2939' };
       let next = latestWorkbook();
       if (preset === 'none') {
         next = applyStyleToRange(next, sheet.id, range, { borders: undefined });
@@ -329,9 +359,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           borders: { top: side, right: side, bottom: side, left: side },
         });
       } else if (preset === 'bottom') {
-        next = applyStyleToRange(next, sheet.id, range, {
-          borders: { ...(cellStyle(next, cellAt(sheet, range.r1, range.c1)).borders ?? {}), bottom: side },
-        });
+        next = applyStyleToRange(next, sheet.id, range, { borders: { bottom: side } });
       } else {
         const top: CellRange = { r1: range.r1, c1: range.c1, r2: range.r1, c2: range.c2 };
         const bottom: CellRange = { r1: range.r2, c1: range.c1, r2: range.r2, c2: range.c2 };
@@ -344,8 +372,41 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       }
       commit(next, { key: 'borders' });
     },
-    [commit, latestWorkbook, range, readonly, sheet],
+    [borderWeight, commit, latestWorkbook, range, readonly, sheet],
   );
+
+  // 功能：打开页面设置草稿，提供方向、缩放、页边距、打印网格线和首个页码；时间：2026-10-24；作者：lq。
+  const openPageSetup = useCallback(() => {
+    const current = sheet.pageSetup ?? defaultSheetPageSetup();
+    setPageSetupDraft({ ...current, margins: { ...current.margins } });
+    setPageSetupOpen(true);
+  }, [sheet.pageSetup]);
+
+  const applyPageSetup = useCallback(() => {
+    if (readonly || !pageSetupDraft) return;
+    const normalized: SheetPageSetup = {
+      ...pageSetupDraft,
+      scalePercent: Math.max(10, Math.min(400, Math.round(pageSetupDraft.scalePercent || 100))),
+      fitToWidth: pageSetupDraft.fitToWidth && pageSetupDraft.fitToWidth > 0 ? Math.round(pageSetupDraft.fitToWidth) : undefined,
+      fitToHeight: pageSetupDraft.fitToHeight && pageSetupDraft.fitToHeight > 0 ? Math.round(pageSetupDraft.fitToHeight) : undefined,
+      firstPageNumber: pageSetupDraft.firstPageNumber && pageSetupDraft.firstPageNumber > 0 ? Math.round(pageSetupDraft.firstPageNumber) : undefined,
+      margins: Object.fromEntries(
+        Object.entries(pageSetupDraft.margins).map(([key, value]) => [key, Math.max(0, Math.min(5, Number(value) || 0))]),
+      ) as SheetPageSetup['margins'],
+    };
+    commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, pageSetup: normalized })), { key: 'page-setup' });
+    setPageSetupOpen(false);
+    setPageSetupDraft(null);
+    notify('success', '页面设置已应用');
+  }, [commit, latestWorkbook, notify, pageSetupDraft, readonly, sheet.id]);
+
+  const patchPageSetupDraft = useCallback((patch: Partial<SheetPageSetup>) => {
+    setPageSetupDraft((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
+  const patchPageMargins = useCallback((key: keyof SheetPageSetup['margins'], value: number) => {
+    setPageSetupDraft((current) => (current ? { ...current, margins: { ...current.margins, [key]: value } } : current));
+  }, []);
 
   const toggleMerge = useCallback(() => {
     if (readonly) return;
@@ -396,9 +457,12 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       const singleCell = range.r1 === range.r2 && range.c1 === range.c2;
       let target = singleCell ? usedRange(currentSheet) : range;
       if (singleCell && currentSheet.autoFilter) {
-        // Auto filter ranges include the header row; sort only the data rows.
+        // 功能：单元格排序默认保留首行为表头，避免把字段名排入数据；时间：2026-10-24；作者：lq。
         target = { ...currentSheet.autoFilter, r1: currentSheet.autoFilter.r1 + 1 };
+      } else if (singleCell && target.r2 > target.r1) {
+        target = { ...target, r1: target.r1 + 1 };
       }
+      const sortColumn = Math.min(target.c2, Math.max(target.c1, active.col));
       if (target.r2 <= target.r1) {
         notify('info', '没有可排序的数据', '请选择包含数据的区域。');
         return;
@@ -408,7 +472,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         return;
       }
       changeStructure(() => {
-        commit(sortRange(current, currentSheet, target, active.col, ascending), { key: 'sort' });
+        commit(sortRange(current, currentSheet, target, sortColumn, ascending), { key: 'sort' });
         notify('success', ascending ? '已按当前列升序排序' : '已按当前列降序排序');
       });
     },
@@ -448,7 +512,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     const current = latestWorkbook();
     const target = sheet.autoFilter ?? usedRange(sheet);
     const next = applyFilter(current, sheet, active.col, null, { ...target, r1: target.r1 + 1 });
-    commit(next, { key: 'filter-clear' });
+    commit(updateSheet(next, sheet.id, (item) => ({ ...item, autoFilter: undefined })), { key: 'filter-clear' });
     setFilterOpen(false);
     notify('info', '已清除筛选');
   }, [active.col, commit, latestWorkbook, notify, sheet]);
@@ -739,6 +803,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   }, [exportBytes, exportState.busy, exportState.name, notify, session.displayName, sheet, workbook]);
 
   const printSheet = useCallback(async () => {
+    const setup = sheet.pageSetup ?? defaultSheetPageSetup();
     const container = document.createElement('div');
     container.dataset.sheetPrint = 'true';
     buildSheetPrintPages(workbook, sheet, container);
@@ -749,7 +814,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       [data-sheet-print], [data-sheet-print] * { visibility: visible !important; }
       [data-sheet-print] { position: absolute !important; left: 0 !important; top: 0 !important; width: auto !important; }
       [data-sheet-print] > div { page-break-after: always; break-after: page; }
-      @page { size: A4 landscape; margin: 0; }
+      @page { size: A4 ${setup.orientation}; margin: ${setup.margins.top}in ${setup.margins.right}in ${setup.margins.bottom}in ${setup.margins.left}in; }
     }`;
     document.head.appendChild(style);
     const cleanup = () => {
@@ -807,7 +872,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full">
+    <div ref={editorRef} className="flex h-full min-h-0 w-full">
       <div className="flex min-w-0 flex-1 flex-col">
         {settings.showToolbar ? (
         <SheetToolbar
@@ -827,6 +892,8 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onStyle={applyStyle}
           onNumberFormat={(format) => applyStyle({ numFmt: format })}
           onBorders={applyBorders}
+          borderWeight={borderWeight}
+          onBorderWeight={setBorderWeight}
           onMergeToggle={toggleMerge}
           onFreeze={freeze}
           onInsertRow={insertRow}
@@ -838,6 +905,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onFind={() => setFindOpen(true)}
           onExport={openExport}
           onPrint={printSheet}
+          onPageSetup={openPageSetup}
           onCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
           onToggleProperties={() => updateSettings({ showProperties: !settings.showProperties })}
           onZoom={setZoom}
@@ -850,6 +918,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         <div className="relative min-h-0 flex-1" style={{ zoom }}>
           <SheetGrid
             gridId={session.id}
+            scrollElementRef={sheetScrollRef}
             workbook={workbook}
             sheet={sheet}
             selection={selection}
@@ -956,6 +1025,101 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onClose={() => setContextMenu(null)}
         />
       ) : null}
+
+      <Dialog
+        open={pageSetupOpen}
+        onClose={() => { setPageSetupOpen(false); setPageSetupDraft(null); }}
+        title="页面设置"
+        description="设置当前工作表的打印方向、缩放、页边距和打印辅助项。"
+        width="md"
+        footer={
+          <>
+            <Button onClick={() => { setPageSetupOpen(false); setPageSetupDraft(null); }}>取消</Button>
+            <Button variant="primary" onClick={applyPageSetup}>确定</Button>
+          </>
+        }
+      >
+        {pageSetupDraft ? (
+          <div className="space-y-4 text-[12px]">
+            <section className="grid grid-cols-2 gap-3">
+              <Field label="方向">
+                <Select
+                  value={pageSetupDraft.orientation}
+                  onChange={(event) => patchPageSetupDraft({ orientation: event.target.value as SheetPageSetup['orientation'] })}
+                >
+                  <option value="portrait">纵向</option>
+                  <option value="landscape">横向</option>
+                </Select>
+              </Field>
+              <Field label="缩放比例（%）">
+                <Input
+                  type="number"
+                  min={10}
+                  max={400}
+                  value={pageSetupDraft.scalePercent}
+                  onChange={(event) => patchPageSetupDraft({ scalePercent: Number(event.target.value) })}
+                />
+              </Field>
+            </section>
+            <section className="grid grid-cols-2 gap-3">
+              <Field label="调整为页宽（0 为自动）">
+                <Input
+                  type="number"
+                  min={0}
+                  value={pageSetupDraft.fitToWidth ?? ''}
+                  onChange={(event) => patchPageSetupDraft({ fitToWidth: Number(event.target.value) || undefined })}
+                />
+              </Field>
+              <Field label="调整为页高（0 为自动）">
+                <Input
+                  type="number"
+                  min={0}
+                  value={pageSetupDraft.fitToHeight ?? ''}
+                  onChange={(event) => patchPageSetupDraft({ fitToHeight: Number(event.target.value) || undefined })}
+                />
+              </Field>
+            </section>
+            <section className="grid grid-cols-3 gap-2">
+              {([
+                ['left', '左'], ['right', '右'], ['top', '上'], ['bottom', '下'], ['header', '页眉'], ['footer', '页脚'],
+              ] as Array<[keyof SheetPageSetup['margins'], string]>).map(([key, label]) => (
+                <Field key={key} label={`${label}边距（英寸）`}>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={5}
+                    step="0.05"
+                    value={pageSetupDraft.margins[key]}
+                    onChange={(event) => patchPageMargins(key, Number(event.target.value))}
+                  />
+                </Field>
+              ))}
+            </section>
+            <section className="grid grid-cols-2 gap-3 border-t border-[var(--mo-line)] pt-3">
+              <Field label="首页页码（空为自动）">
+                <Input
+                  type="number"
+                  min={1}
+                  value={pageSetupDraft.firstPageNumber ?? ''}
+                  onChange={(event) => patchPageSetupDraft({ firstPageNumber: Number(event.target.value) || undefined })}
+                />
+              </Field>
+              <div className="space-y-2 pt-5">
+                <Switch
+                  checked={pageSetupDraft.printGridLines}
+                  onChange={(checked) => patchPageSetupDraft({ printGridLines: checked })}
+                  label="打印网格线"
+                />
+                <Switch
+                  checked={pageSetupDraft.printHeadings}
+                  onChange={(checked) => patchPageSetupDraft({ printHeadings: checked })}
+                  label="打印行列标题"
+                />
+              </div>
+            </section>
+          </div>
+        ) : null}
+      </Dialog>
 
       <Dialog
         open={filterOpen}
@@ -1395,18 +1559,23 @@ export function buildSheetPrintPages(
   sheet: SheetModel,
   container: HTMLElement,
 ): HTMLElement[] {
-  const PAGE_WIDTH = 1123;
-  const PAGE_HEIGHT = 794;
-  const MARGIN = 36;
-  const contentWidth = PAGE_WIDTH - MARGIN * 2;
-  const contentHeight = PAGE_HEIGHT - MARGIN * 2;
+  const setup = sheet.pageSetup ?? defaultSheetPageSetup();
+  const PAGE_WIDTH = setup.orientation === 'portrait' ? 794 : 1123;
+  const PAGE_HEIGHT = setup.orientation === 'portrait' ? 1123 : 794;
+  const marginLeft = Math.round(setup.margins.left * 96);
+  const marginRight = Math.round(setup.margins.right * 96);
+  const marginTop = Math.round(setup.margins.top * 96);
+  const marginBottom = Math.round(setup.margins.bottom * 96);
+  const contentWidth = PAGE_WIDTH - marginLeft - marginRight;
+  const contentHeight = PAGE_HEIGHT - marginTop - marginBottom;
   const target = usedRange(sheet);
   const columnWidths: number[] = [];
   for (let col = target.c1; col <= target.c2; col += 1) {
     columnWidths.push(sheet.colWidths[col] ?? sheet.defaultColWidth);
   }
   const totalWidth = columnWidths.reduce((sum, width) => sum + width, 0) || 100;
-  const scale = Math.min(1, contentWidth / totalWidth);
+  const fitScale = setup.fitToWidth ? contentWidth / totalWidth : setup.scalePercent / 100;
+  const scale = Math.max(0.1, Math.min(4, setup.fitToWidth ? fitScale : Math.min(1, fitScale)));
   const rowHeight = sheet.defaultRowHeight;
   const titleHeight = 30;
   const rowsPerPage = Math.max(
@@ -1430,10 +1599,11 @@ export function buildSheetPrintPages(
   pageRows.forEach((chunk, pageIndex) => {
     const page = document.createElement('div');
     page.dataset.sheetPrintPage = 'true';
-    page.style.cssText = `width:${PAGE_WIDTH}px;height:${PAGE_HEIGHT}px;background:#fff;color:#1D2939;box-sizing:border-box;padding:${MARGIN}px;font-family:等线,PingFang SC,sans-serif;position:relative;overflow:hidden;`;
+    page.style.cssText = `width:${PAGE_WIDTH}px;height:${PAGE_HEIGHT}px;background:#fff;color:#1D2939;box-sizing:border-box;padding:${marginTop}px ${marginRight}px ${marginBottom}px ${marginLeft}px;font-family:等线,PingFang SC,sans-serif;position:relative;overflow:hidden;`;
     const title = document.createElement('div');
     title.style.cssText = `height:${titleHeight}px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#667085;border-bottom:1px solid #E4E9F2;margin-bottom:6px;`;
-    title.innerHTML = `<span style="font-weight:600;color:#1D2939;">${escapeHtml(sheet.name)}</span><span>Mini Office · 第 ${pageIndex + 1} / ${pageRows.length} 页</span>`;
+    const pageNumber = (setup.firstPageNumber ?? 1) + pageIndex;
+    title.innerHTML = `<span style="font-weight:600;color:#1D2939;">${escapeHtml(sheet.name)}</span><span>Mini Office · 第 ${pageNumber} / ${pageRows.length} 页</span>`;
     page.appendChild(title);
 
     const wrapper = document.createElement('div');
@@ -1449,12 +1619,12 @@ export function buildSheetPrintPages(
     table.appendChild(colgroup);
     if (headerRow !== null) {
       const thead = document.createElement('thead');
-      thead.appendChild(buildPrintRow(workbook, sheet, headerRow, target, true));
+      thead.appendChild(buildPrintRow(workbook, sheet, headerRow, target, true, setup.printGridLines));
       table.appendChild(thead);
     }
     const tbody = document.createElement('tbody');
     for (let row = chunk.start; row <= chunk.end; row += 1) {
-      tbody.appendChild(buildPrintRow(workbook, sheet, row, target, false));
+      tbody.appendChild(buildPrintRow(workbook, sheet, row, target, false, setup.printGridLines));
     }
     table.appendChild(tbody);
     wrapper.appendChild(table);
@@ -1472,6 +1642,7 @@ function buildPrintRow(
   row: number,
   target: CellRange,
   header: boolean,
+  printGridLines: boolean,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
   for (let col = target.c1; col <= target.c2; col += 1) {
@@ -1486,7 +1657,7 @@ function buildPrintRow(
         : typeof cell?.value === 'number'
           ? 'right'
           : 'left';
-    td.style.cssText = `border:1px solid #D0D5DD;padding:2px 5px;vertical-align:${
+    td.style.cssText = `border:${printGridLines ? '1px solid #D0D5DD' : 'none'};padding:2px 5px;vertical-align:${
       style.verticalAlign ?? 'bottom'
     };text-align:${horizontal};overflow:hidden;white-space:pre-wrap;word-break:break-word;background:${
       header ? '#EEF2F9' : style.fill ?? '#FFFFFF'

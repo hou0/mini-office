@@ -1,5 +1,5 @@
-import type { CellRange, CellStyle, SheetModel, WorkbookModel } from '@mini-office/document-model';
-import { columnLabel } from '@mini-office/shared';
+import type { BorderSide, CellRange, CellStyle, SheetModel, WorkbookModel } from '@mini-office/document-model';
+import { columnLabel, MOD_KEY } from '@mini-office/shared';
 import {
   AlignCenter,
   AlignLeft,
@@ -18,6 +18,7 @@ import {
   Redo2,
   Rows3,
   Search,
+  Settings2,
   Snowflake,
   Strikethrough,
   Trash2,
@@ -36,6 +37,9 @@ import {
 } from '@mini-office/ui';
 import { FONT_CHOICES } from '@mini-office/design-system';
 import { cellAt, cellStyle } from './sheet-utils';
+// 功能：在顶部公式栏复用函数智能提示；时间：2026-10-24；作者：lq。
+import { FormulaInput } from './FormulaInput';
+import { SHEET_ZOOM_MAX, SHEET_ZOOM_MIN } from './zoom-shortcuts';
 
 const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36];
 
@@ -57,6 +61,7 @@ export const NUMBER_FORMATS: NumberFormatOption[] = [
 ];
 
 export type BorderPreset = 'all' | 'outline' | 'bottom' | 'none';
+export type BorderWeight = Extract<BorderSide['style'], 'thin' | 'medium' | 'thick'>;
 
 export interface SheetToolbarProps {
   workbook: WorkbookModel;
@@ -75,6 +80,8 @@ export interface SheetToolbarProps {
   onStyle: (patch: Partial<CellStyle>) => void;
   onNumberFormat: (format: string) => void;
   onBorders: (preset: BorderPreset) => void;
+  borderWeight: BorderWeight;
+  onBorderWeight: (weight: BorderWeight) => void;
   onMergeToggle: () => void;
   onFreeze: () => void;
   onInsertRow: () => void;
@@ -86,6 +93,7 @@ export interface SheetToolbarProps {
   onFind: () => void;
   onExport: () => void;
   onPrint: () => void;
+  onPageSetup: () => void;
   onCompatibility: () => void;
   onToggleProperties: () => void;
   onZoom: (zoom: number) => void;
@@ -131,8 +139,9 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
   return (
     <div className="mo-glass mo-no-print shrink-0 border-b border-[var(--mo-line)] bg-[var(--mo-surface)]">
+      {/* 功能：拉开 Excel 工具栏控件间距，降低图标拥挤并保持窄窗口可横向滚动；时间：2026-10-24；作者：lq。 */}
       <div
-        className="flex h-11 items-center gap-0.5 overflow-x-auto px-2"
+        className="flex h-11 items-center gap-1 overflow-x-auto px-2"
         onMouseDown={(event) => {
           if ((event.target as HTMLElement).closest('button')) event.preventDefault();
         }}
@@ -215,6 +224,19 @@ export function SheetToolbar(props: SheetToolbarProps) {
             </IconButton>
           )}
         />
+        {/* 功能：提供 Excel 边框线细、中、粗三档设置；时间：2026-10-24；作者：lq。 */}
+        <Select
+          aria-label="边框粗细"
+          title="边框粗细"
+          className="h-7 w-[72px] shrink-0 border-transparent bg-transparent text-[11px]"
+          value={props.borderWeight}
+          disabled={readonly}
+          onChange={(event) => props.onBorderWeight(event.target.value as BorderWeight)}
+        >
+          <option value="thin">细线</option>
+          <option value="medium">中线</option>
+          <option value="thick">粗线</option>
+        </Select>
         <span className="mx-1 h-4 w-px bg-[var(--mo-line)]" />
         <IconButton label="左对齐" active={style.horizontalAlign === 'left'} disabled={readonly} onClick={() => props.onStyle({ horizontalAlign: 'left' })}>
           <AlignLeft size={15} />
@@ -267,17 +289,19 @@ export function SheetToolbar(props: SheetToolbarProps) {
         <IconButton label="属性面板" active={props.propertiesOpen} onClick={props.onToggleProperties}>
           <PanelRight size={15} />
         </IconButton>
-        <div className="ml-auto flex shrink-0 items-center gap-1 pl-2">
+        {/* 功能：为视图与输出操作保留独立呼吸空间，便于识别页面设置；时间：2026-10-24；作者：lq。 */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 pl-3">
           <span className="whitespace-nowrap text-[10px] text-[var(--mo-text-muted)]">
             {rangeLabel}
           </span>
           <Select
             aria-label="缩放"
+            title={`放大 ${MOD_KEY} +；缩小 ${MOD_KEY} -；100% ${MOD_KEY} 0；${MOD_KEY} + 滚轮`}
             className="h-7 w-[68px] border-transparent bg-transparent text-[11px]"
             value={String(Math.round(props.zoom * 100))}
             onChange={(event) => props.onZoom(Number(event.target.value) / 100)}
           >
-            {[75, 90, 100, 110, 125, 150].map((value) => (
+            {[...new Set([SHEET_ZOOM_MIN * 100, 50, 75, 90, 100, 110, 125, 150, 175, 200, SHEET_ZOOM_MAX * 100, Math.round(props.zoom * 100)])].sort((a, b) => a - b).map((value) => (
               <option key={value} value={value}>
                 {value}%
               </option>
@@ -285,6 +309,14 @@ export function SheetToolbar(props: SheetToolbarProps) {
           </Select>
           <IconButton label="打印" onClick={props.onPrint}>
             <Printer size={15} />
+          </IconButton>
+          {/* 功能：放大页面设置按钮的可视图标与点击区域，避免齿轮字符过小；时间：2026-10-24；作者：lq。 */}
+          <IconButton
+            label="页面设置"
+            onClick={props.onPageSetup}
+            className="h-8 w-8 text-[var(--mo-text-primary)]"
+          >
+            <Settings2 size={17} strokeWidth={2.1} />
           </IconButton>
           <IconButton label="导出 PDF" onClick={props.onExport}>
             <Download size={15} />
@@ -310,12 +342,12 @@ export function SheetToolbar(props: SheetToolbarProps) {
           }}
         />
         <span className="shrink-0 font-serif text-[12px] italic text-[var(--mo-text-muted)]">fx</span>
-        <Input
+        <FormulaInput
           aria-label="公式栏"
           className="h-6 min-w-0 flex-1 font-mono text-[12px]"
           value={props.formulaText}
           disabled={readonly}
-          onChange={(event) => props.onFormulaChange(event.target.value)}
+          onValueChange={props.onFormulaChange}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();

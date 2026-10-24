@@ -319,9 +319,15 @@ pub fn analyze(bytes: &[u8], file_name: &str) -> Result<PackageInspection, Offic
                 true,
                 Severity::Info,
             ));
+            report.feature(CapabilityFeature::new(
+                "pptx.editing",
+                "基础内容编辑与安全另存",
+                true,
+                Severity::Info,
+            ));
             report.warn(CompatibilityWarning::new(
-                "pptx.readonly",
-                "V1 对 PPTX 提供静态高保真预览与演示，暂不支持编辑。",
+                "pptx.editing",
+                "支持基础内容编辑并另存副本；复杂动画、媒体和图表保留原始部件。",
                 Severity::Info,
             ));
         }
@@ -389,12 +395,12 @@ mod tests {
     }
 
     #[test]
-    fn pptx_is_preview_only() {
+    fn pptx_supports_basic_editing() {
         let bytes = fixture("tests/fixtures/pptx/deck.pptx");
         let inspection = analyze(&bytes, "deck.pptx").unwrap();
         assert_eq!(inspection.kind, OfficeKind::Pptx);
         assert_eq!(inspection.capability.level, 1);
-        assert!(inspection.capability.warnings.iter().any(|warning| warning.code == "pptx.readonly"));
+        assert!(inspection.capability.features.iter().any(|feature| feature.code == "pptx.editing"));
     }
 
     #[test]

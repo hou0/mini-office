@@ -6,6 +6,7 @@ import {
   Check,
   CheckCircle2,
   FileWarning,
+  ExternalLink,
   Info,
   Keyboard,
   Languages,
@@ -44,7 +45,10 @@ import {
   resolveTheme,
   type ThemeMode,
 } from '@mini-office/design-system';
-import { supportsWindowVibrancy } from '@mini-office/platform-adapter';
+import { isTauriRuntime, openExternalUrl, supportsWindowVibrancy } from '@mini-office/platform-adapter';
+
+// 功能：统一关于页的新版本发布地址；时间：2026-10-24；作者：lq。
+const RELEASES_URL = 'https://github.com/lq0910/mini-office/releases';
 
 export function WorkspaceDialogs() {
   const dialog = useWorkspaceStore((state) => state.dialog);
@@ -703,6 +707,16 @@ const SHORTCUTS: Array<{ group: string; items: Array<{ label: string; keys: stri
     items: [
       { label: '命令面板', keys: [MOD_KEY, 'K'] },
       { label: '设置', keys: [MOD_KEY, ','] },
+      // 功能：将 Word 文档缩放快捷键加入内置帮助；时间：2026-10-24；作者：lq。
+      { label: '放大 Word 文档', keys: [MOD_KEY, '+'] },
+      { label: '缩小 Word 文档', keys: [MOD_KEY, '-'] },
+      { label: 'Word 文档恢复 100%', keys: [MOD_KEY, '0'] },
+      { label: 'Word 文档滚轮缩放', keys: [MOD_KEY, '滚轮'] },
+      // 功能：将 Excel 工作表缩放快捷键加入内置帮助；时间：2026-10-24；作者：lq。
+      { label: 'Excel 工作表放大', keys: [MOD_KEY, '+'] },
+      { label: 'Excel 工作表缩小', keys: [MOD_KEY, '-'] },
+      { label: 'Excel 工作表恢复 100%', keys: [MOD_KEY, '0'] },
+      { label: 'Excel 工作表滚轮缩放', keys: [MOD_KEY, '滚轮'] },
       { label: '全屏演示（PPT）', keys: ['F5'] },
       { label: '退出演示 / 关闭弹窗', keys: ['Esc'] },
     ],
@@ -752,12 +766,29 @@ function AboutContent() {
           {/* 功能：更正出品方名称；时间：2026-10-24；作者：lq。 */}
           <div className="mt-0.5 text-[12px] font-medium text-[var(--mo-accent)]">非人类程序员出品</div>
           {/* 功能：关于页展示统一版本；时间：2026-10-24；作者：lq。 */}
-          <div className="text-[11px] text-[var(--mo-text-muted)]">版本 {APP_VERSION} · 离线优先的轻量办公套件</div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--mo-text-muted)]">
+            <span>版本 {APP_VERSION} · 离线优先的轻量办公套件</span>
+            <a
+              href={RELEASES_URL}
+              target="_blank"
+              rel="noreferrer"
+              // 功能：从关于页跳转到新版本发布页，桌面端交由系统浏览器打开；时间：2026-10-24；作者：lq。
+              onClick={(event) => {
+                if (!isTauriRuntime()) return;
+                event.preventDefault();
+                void openExternalUrl(RELEASES_URL);
+              }}
+              className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[var(--mo-accent)] hover:bg-[var(--mo-surface-2)] hover:underline"
+            >
+              新版本更新
+              <ExternalLink size={11} />
+            </a>
+          </div>
         </div>
       </div>
       <p className="text-[12px] leading-6 text-[var(--mo-text-muted)]">
         使用 Rust + Tauri 2、React、TypeScript 构建。支持 DOCX 合同编辑、XLSX 表格与公式、
-        PPTX 静态高保真预览与演示，并通过能力扫描与安全保存策略保护原始文件。
+        PPTX 基础内容编辑与高保真演示，并通过能力扫描与安全另存策略保护原始文件。
       </p>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
         <div className="rounded-md border border-[var(--mo-line)] p-2.5">

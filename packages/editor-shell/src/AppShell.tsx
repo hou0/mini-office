@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspaceStore, type WordSession, type SheetSession, type SlidesSession } from '@mini-office/document-model';
 import { applyAppearance, watchSystemTheme } from '@mini-office/design-system';
 import { ToastViewport, TooltipHost } from '@mini-office/ui';
-import { WordEditor } from '@mini-office/editor-word';
-import { SheetEditor } from '@mini-office/editor-sheet';
-import { SlidesEditor } from '@mini-office/editor-slides';
 import { extensionOf } from '@mini-office/shared';
 import {
   BusyIndicator,
@@ -20,6 +17,11 @@ import { WorkspaceDialogs } from './dialogs';
 import { HomePage } from './HomePage';
 import { watchDesktopClose, finishDesktopClose } from '@mini-office/platform-adapter';
 import { confirmWorkspaceClose, type CloseChoice } from './close-workspace';
+
+// 功能：仅在打开对应文档时加载编辑界面，首页不再执行三种编辑器；时间：2026-10-24；作者：lq。
+const WordEditor = lazy(() => import('../../editor-word/src/WordEditor').then((module) => ({ default: module.WordEditor })));
+const SheetEditor = lazy(() => import('../../editor-sheet/src/SheetEditor').then((module) => ({ default: module.SheetEditor })));
+const SlidesEditor = lazy(() => import('../../editor-slides/src/SlidesEditor').then((module) => ({ default: module.SlidesEditor })));
 
 export function AppShell() {
   const sessions = useWorkspaceStore((state) => state.sessions);
@@ -335,7 +337,10 @@ export function AppShell() {
           onSelectTab={() => setShowHome(false)}
         />
       ) : null}
-      <main className="min-h-0 flex-1">{content}</main>
+      {/* 功能：首次加载编辑器时保留标题栏、标签栏和清晰的加载反馈；时间：2026-10-24；作者：lq。 */}
+      <main className="min-h-0 flex-1">
+        <Suspense fallback={<EditorLoading title={activeSession?.displayName ?? '文档'} />}>{content}</Suspense>
+      </main>
       <StatusBar />
       <BusyIndicator />
       <DropOverlay visible={dragging} />

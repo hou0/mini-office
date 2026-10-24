@@ -2,6 +2,7 @@ import {
   DEFAULT_COL_WIDTH,
   DEFAULT_ROW_HEIGHT,
   createBlankWorkbook,
+  defaultSheetPageSetup,
   type BorderSide,
   type Cell,
   type CellBorders,
@@ -296,6 +297,7 @@ async function parseSheet(
     defaultColWidth: DEFAULT_COL_WIDTH,
     defaultRowHeight: DEFAULT_ROW_HEIGHT,
     showGridLines: true,
+    pageSetup: defaultSheetPageSetup(),
   };
 
   const sheetViews = firstChild(worksheet, 'sheetViews');
@@ -313,6 +315,30 @@ async function parseSheet(
   }
 
   const dimension = getAttr(firstChild(worksheet, 'dimension'), 'ref');
+
+  // 功能：读取 XLSX 页面方向、缩放、页边距和打印辅助项；时间：2026-10-24；作者：lq。
+  const pageSetup = firstChild(worksheet, 'pageSetup');
+  const pageMargins = firstChild(worksheet, 'pageMargins');
+  const printOptions = firstChild(worksheet, 'printOptions');
+  const setup = sheet.pageSetup ?? defaultSheetPageSetup();
+  sheet.pageSetup = {
+    ...setup,
+    orientation: getAttr(pageSetup, 'orientation') === 'portrait' ? 'portrait' : 'landscape',
+    scalePercent: Number(getAttr(pageSetup, 'scale') ?? setup.scalePercent) || setup.scalePercent,
+    fitToWidth: Number(getAttr(pageSetup, 'fitToWidth') ?? '') || undefined,
+    fitToHeight: Number(getAttr(pageSetup, 'fitToHeight') ?? '') || undefined,
+    firstPageNumber: Number(getAttr(pageSetup, 'firstPageNumber') ?? '') || undefined,
+    margins: {
+      left: Number(getAttr(pageMargins, 'left') ?? setup.margins.left) || setup.margins.left,
+      right: Number(getAttr(pageMargins, 'right') ?? setup.margins.right) || setup.margins.right,
+      top: Number(getAttr(pageMargins, 'top') ?? setup.margins.top) || setup.margins.top,
+      bottom: Number(getAttr(pageMargins, 'bottom') ?? setup.margins.bottom) || setup.margins.bottom,
+      header: Number(getAttr(pageMargins, 'header') ?? setup.margins.header) || setup.margins.header,
+      footer: Number(getAttr(pageMargins, 'footer') ?? setup.margins.footer) || setup.margins.footer,
+    },
+    printGridLines: getAttr(printOptions, 'gridLines') !== '0',
+    printHeadings: getAttr(printOptions, 'headings') === '1',
+  };
   let maxRow = 0;
   let maxCol = 0;
   if (dimension) {

@@ -60,6 +60,31 @@ export interface FreezePane {
   cols: number;
 }
 
+/**
+ * 功能：保存 Excel 页面布局、打印缩放、页边距和打印辅助项；时间：2026-10-24；作者：lq。
+ */
+export interface SheetPageSetup {
+  orientation: 'portrait' | 'landscape';
+  scalePercent: number;
+  fitToWidth?: number;
+  fitToHeight?: number;
+  firstPageNumber?: number;
+  margins: { left: number; right: number; top: number; bottom: number; header: number; footer: number };
+  printGridLines: boolean;
+  printHeadings: boolean;
+}
+
+/** 功能：返回与 Excel 新工作表一致的页面设置默认值；时间：2026-10-24；作者：lq。 */
+export function defaultSheetPageSetup(): SheetPageSetup {
+  return {
+    orientation: 'landscape',
+    scalePercent: 100,
+    margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    printGridLines: true,
+    printHeadings: false,
+  };
+}
+
 export interface SheetModel {
   id: string;
   name: string;
@@ -78,6 +103,7 @@ export interface SheetModel {
   defaultRowHeight: number;
   showGridLines: boolean;
   tabColor?: string;
+  pageSetup?: SheetPageSetup;
 }
 
 export interface WorkbookModel {
@@ -117,6 +143,7 @@ export function createSheet(name: string, order: number): SheetModel {
     defaultColWidth: DEFAULT_COL_WIDTH,
     defaultRowHeight: DEFAULT_ROW_HEIGHT,
     showGridLines: true,
+    pageSetup: defaultSheetPageSetup(),
   };
 }
 

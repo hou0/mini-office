@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { getPlatformAdapter } from '@mini-office/platform-adapter';
-import { detectKind, loadOoxmlPackage } from '@mini-office/ooxml';
 import {
   DEFAULT_SETTINGS,
   ErrorCodes,
@@ -112,6 +111,8 @@ export interface WorkspaceState {
   notifications: AppNotification[];
 
   initialize(): Promise<void>;
+  /** 功能：后台及文档打开共用同一次字体扫描；时间：2026-10-24；作者：lq。 */
+  loadFonts(): Promise<FontInfo[]>;
   setBusy(message: string | null): void;
   openFileDialog(): Promise<string | null>;
   openBytes(input: OpenBytesInput): Promise<string | null>;
@@ -206,6 +207,8 @@ async function findHandler(name: string, bytes: Uint8Array): Promise<AnyFormatHa
   if (direct && handlers[direct]) return handlers[direct];
   let pkg;
   try {
+    // 功能：仅对扩展名未知的文件加载容器探测代码；时间：2026-10-24；作者：lq。
+    const { detectKind, loadOoxmlPackage } = await import('@mini-office/ooxml');
     pkg = await loadOoxmlPackage(bytes);
     const detection = await detectKind(pkg, name);
     return handlers[detection.kind] ?? null;
@@ -221,6 +224,9 @@ function severityRank(severity: WarningSeverity): number {
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
+  // 功能：合并 StrictMode 重挂载和并发打开触发的初始化、字体扫描；时间：2026-10-24；作者：lq。
+  let initializing: Promise<void> | undefined;
+  let fontsLoading: Promise<FontInfo[]> | undefined;
   const patchSession = (
     id: string,
     patch: Partial<DocumentSession> | ((session: DocumentSession) => Partial<DocumentSession>),
@@ -339,12 +345,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
 
     async initialize() {
       if (get().hydrated) return;
-      const adapter = getPlatformAdapter();
-      const [fonts] = await Promise.all([
-        adapter.listFonts().catch(() => [] as FontInfo[]),
-        refreshSnapshots(),
-      ]);
-      set({ fonts, hydrated: true });
+      // 功能：首页仅等待最近文件元数据，字体扫描不再阻塞工作区就绪；时间：2026-10-24；作者：lq。
+      initializing ??= refreshSnapshots().then(() => { set({ hydrated: true }); });
+      await initializing;
+    },
+
+    loadFonts() {
+      // 功能：首次打开文档可等待真实字体结果，失败后允许重试，避免误报缺失字体；时间：2026-10-24；作者：lq。
+      fontsLoading ??= Promise.resolve().then(() => getPlatformAdapter().listFonts()).then((fonts) => {
+        const available = fonts ?? [];
+        set({ fonts: available });
+        return available;
+      }).catch(() => {
+        fontsLoading = undefined;
+        return [] as FontInfo[];
+      });
+      return fontsLoading;
     },
 
     setBusy(message) {
@@ -414,11 +430,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
       }));
 
       try {
+        // 功能：只在实际打开文档时等待字体扫描，保持兼容性检查使用完整字体清单；时间：2026-10-24；作者：lq。
+        const fonts = await get().loadFonts();
         const openInput: OpenDocumentInput = {
           name: displayName,
           bytes: input.bytes,
           path: input.path,
-          knownFonts: get().fonts.map((font) => font.family),
+          knownFonts: fonts.map((font) => font.family),
         };
         const result: FormatOpenResult = await handler.open(openInput);
         const readonly = result.readonly === true || result.capability.level <= 1;
