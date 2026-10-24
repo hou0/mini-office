@@ -103,7 +103,14 @@ jobs:
             exit 1
           fi
           test -d "$bundle_dir/macos/Mini Office.app"
-          lipo -verify_arch arm64 x86_64 "$bundle_dir/macos/Mini Office.app/Contents/MacOS/mini-office-desktop"
+          # 功能：读取架构列表逐项校验，兼容各版 Xcode 的 lipo；时间：2026-10-24；作者：lq。
+          architectures=$(lipo -archs "$bundle_dir/macos/Mini Office.app/Contents/MacOS/mini-office-desktop")
+          for required_arch in arm64 x86_64; do
+            case " $architectures " in
+              *" $required_arch "*) ;;
+              *) echo "Missing required architecture: $required_arch ($architectures)" >&2; exit 1 ;;
+            esac
+          done
           cp "${installers[0]}" "release-assets/${asset_prefix}.dmg"
           ditto -c -k --sequesterRsrc --keepParent \
             "$bundle_dir/macos/Mini Office.app" "release-assets/${asset_prefix}.zip"
