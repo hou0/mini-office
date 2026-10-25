@@ -178,6 +178,11 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   // 功能：保存页面设置弹窗草稿，取消时不污染当前工作表；时间：2026-10-24；作者：lq。
   const [pageSetupOpen, setPageSetupOpen] = useState(false);
   const [pageSetupDraft, setPageSetupDraft] = useState<SheetPageSetup | null>(null);
+  // 功能：打印前展示真实第一页并允许直接切换纸张方向；时间：2026-10-25；作者：lq。
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [printPreviewSetup, setPrintPreviewSetup] = useState<SheetPageSetup | null>(null);
+  const printPreviewRef = useRef<HTMLDivElement>(null);
+  const printPreviewCleanupRef = useRef<(() => void) | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -859,8 +864,8 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         fileName: ensureExtension(stripExtension(exportState.name || session.displayName), '.pdf'),
         title: session.displayName,
         scale: 2,
-        pageWidthPx: 1123,
-        pageHeightPx: 794,
+        pageWidthPx: (workbook.sheets.find((item) => item.id === sheet.id)?.pageSetup ?? defaultSheetPageSetup()).orientation === 'portrait' ? 794 : 1123,
+        pageHeightPx: (workbook.sheets.find((item) => item.id === sheet.id)?.pageSetup ?? defaultSheetPageSetup()).orientation === 'portrait' ? 1123 : 794,
         onProgress: (progress) => setExportState((state) => ({ ...state, progress })),
         isCancelled: () => cancelExportRef.current,
       });
@@ -879,14 +884,16 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     }
   }, [exportBytes, exportState.busy, exportState.name, notify, session.displayName, sheet, workbook]);
 
-  const printSheet = useCallback(async () => {
-    const setup = sheet.pageSetup ?? defaultSheetPageSetup();
+  const printSheet = useCallback(async (requestedSetup?: SheetPageSetup) => {
+    const setup = requestedSetup ?? sheet.pageSetup ?? defaultSheetPageSetup();
     const container = document.createElement('div');
     container.dataset.sheetPrint = 'true';
-    buildSheetPrintPages(workbook, sheet, container);
+    // 功能：打印确认后的方向和缩放使用同一份页面设置生成页面，避免预览横向而实际打印纵向；时间：2026-10-25；作者：lq。
+    buildSheetPrintPages(workbook, { ...sheet, pageSetup: setup }, container);
     const style = document.createElement('style');
     style.dataset.sheetPrintStyle = 'true';
     style.textContent = `@media print {
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       body * { visibility: hidden !important; }
       [data-sheet-print], [data-sheet-print] * { visibility: visible !important; }
       [data-sheet-print] { position: absolute !important; left: 0 !important; top: 0 !important; width: auto !important; }
@@ -908,10 +915,45 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     setTimeout(cleanup, 30_000);
   }, [notify, sheet, workbook]);
 
+  const openPrintPreview = useCallback(() => {
+    printPreviewCleanupRef.current?.();
+    setPrintPreviewSetup({ ...(sheet.pageSetup ?? defaultSheetPageSetup()), margins: { ...(sheet.pageSetup ?? defaultSheetPageSetup()).margins } });
+    setPrintPreviewOpen(true);
+  }, [sheet.pageSetup]);
+
+  useEffect(() => {
+    if (!printPreviewOpen || !printPreviewSetup || !printPreviewRef.current) return;
+    const host = printPreviewRef.current;
+    host.replaceChildren();
+    const staging = document.createElement('div');
+    const previewSheet = { ...sheet, pageSetup: printPreviewSetup };
+    const pages = buildSheetPrintPages(workbook, previewSheet, staging);
+    const page = pages[0];
+    if (page) {
+      page.style.position = 'absolute';
+      page.style.left = '50%';
+      page.style.top = '12px';
+      page.style.transform = 'translateX(-50%) scale(0.34)';
+      page.style.transformOrigin = 'top center';
+      host.appendChild(page);
+      host.style.height = `${(printPreviewSetup.orientation === 'portrait' ? 1123 : 794) * 0.34 + 24}px`;
+    }
+    printPreviewCleanupRef.current = () => { staging.remove(); host.replaceChildren(); };
+    return () => printPreviewCleanupRef.current?.();
+  }, [printPreviewOpen, printPreviewSetup, sheet, workbook]);
+
+  const confirmPrintPreview = useCallback(async () => {
+    if (!printPreviewSetup) return;
+    setPrintPreviewOpen(false);
+    printPreviewCleanupRef.current?.();
+    if (!readonly) commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, pageSetup: printPreviewSetup })), { key: 'page-setup-print' });
+    await printSheet(printPreviewSetup);
+  }, [commit, latestWorkbook, printPreviewSetup, printSheet, readonly, sheet.id]);
+
   useEffect(() => {
     const handleFind = () => setFindOpen(true);
     const handleExport = () => openExport();
-    const handlePrint = () => printSheet();
+    const handlePrint = () => openPrintPreview();
     window.addEventListener('mo:find', handleFind);
     window.addEventListener('mo:export-pdf', handleExport);
     window.addEventListener('mo:print', handlePrint);
@@ -920,7 +962,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       window.removeEventListener('mo:export-pdf', handleExport);
       window.removeEventListener('mo:print', handlePrint);
     };
-  }, [openExport, printSheet]);
+  }, [openExport, openPrintPreview]);
 
   const formulaCommit = useCallback(() => {
     if (readonly) return;
@@ -992,7 +1034,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onReapplyFilter={reapplyFilter}
           onFind={() => setFindOpen(true)}
           onExport={openExport}
-          onPrint={printSheet}
+          onPrint={openPrintPreview}
           onPageSetup={openPageSetup}
           onCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
           onToggleProperties={() => updateSettings({ showProperties: !settings.showProperties })}
@@ -1113,6 +1155,32 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onClose={() => setContextMenu(null)}
         />
       ) : null}
+
+      <Dialog
+        open={printPreviewOpen}
+        onClose={() => { setPrintPreviewOpen(false); printPreviewCleanupRef.current?.(); }}
+        title="打印预览"
+        description="预览第一页并选择打印方向，确认后调用系统打印。"
+        width="xl"
+        footer={<><Button onClick={() => { setPrintPreviewOpen(false); printPreviewCleanupRef.current?.(); }}>取消</Button><Button variant="primary" onClick={() => void confirmPrintPreview()}>打印</Button></>}
+      >
+        {printPreviewSetup ? <div className="grid grid-cols-[180px_1fr] gap-4 text-[12px]">
+          <div className="space-y-3 rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-3">
+            <Field label="方向">
+              <Select value={printPreviewSetup.orientation} onChange={(event) => setPrintPreviewSetup((current) => current ? { ...current, orientation: event.target.value as SheetPageSetup['orientation'] } : current)}>
+                <option value="portrait">纵向</option>
+                <option value="landscape">横向</option>
+              </Select>
+            </Field>
+            <Field label="缩放比例（%）">
+              <Input type="number" min={10} max={400} value={printPreviewSetup.scalePercent} onChange={(event) => setPrintPreviewSetup((current) => current ? { ...current, scalePercent: Number(event.target.value) || 100, fitToWidth: undefined } : current)} />
+            </Field>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={!!printPreviewSetup.fitToWidth} onChange={(event) => setPrintPreviewSetup((current) => current ? { ...current, fitToWidth: event.target.checked ? 1 : undefined } : current)} />调整为一页宽</label>
+            <p className="leading-5 text-[var(--mo-text-muted)]">彩色填充、字体、边框和合并单元格会按当前表格样式输出。</p>
+          </div>
+          <div ref={printPreviewRef} className="relative min-h-[300px] overflow-hidden rounded-md border border-[var(--mo-line)] bg-[#667085]" aria-label="工作表打印预览" />
+        </div> : null}
+      </Dialog>
 
       <Dialog
         open={pageSetupOpen}
@@ -1267,7 +1335,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             />
           </Field>
           <div className="rounded-md bg-[var(--mo-surface-2)] px-3 py-2 text-[11px] leading-5 text-[var(--mo-text-muted)]">
-            工作表：{sheet.name} · 数据区域 {rangeRef(usedRange(sheet))} · 纸张 A4 横向
+            工作表：{sheet.name} · 数据区域 {rangeRef(usedRange(sheet))} · 纸张 A4 {(sheet.pageSetup ?? defaultSheetPageSetup()).orientation === 'portrait' ? '纵向' : '横向'}
           </div>
           {exportState.progress ? (
             <div className="space-y-1.5">
@@ -1588,20 +1656,31 @@ export function buildSheetPrintPages(
   const totalWidth = columnWidths.reduce((sum, width) => sum + width, 0) || 100;
   const fitScale = setup.fitToWidth ? contentWidth / totalWidth : setup.scalePercent / 100;
   const scale = Math.max(0.1, Math.min(4, setup.fitToWidth ? fitScale : Math.min(1, fitScale)));
-  const rowHeight = sheet.defaultRowHeight;
   const titleHeight = 30;
-  const rowsPerPage = Math.max(
-    1,
-    Math.floor((contentHeight - titleHeight) / Math.max(10, rowHeight * scale)) - 1,
-  );
   const headerRow = target.r2 > target.r1 ? target.r1 : null;
   const bodyStart = headerRow !== null ? target.r1 + 1 : target.r1;
   const pageRows: Array<{ start: number; end: number }> = [];
+  // 功能：按每行实际高度切分页，避免自定义行高或换行内容在打印时发生上下错位；时间：2026-10-25；作者：lq。
+  const pageBodyHeight = Math.max(1, contentHeight - titleHeight);
+  const rowsPerPageFromHeight = (start: number): number => {
+    let used = 0;
+    let end = start - 1;
+    while (end < target.r2) {
+      const next = end + 1;
+      const height = (sheet.rowHeights[next] ?? sheet.defaultRowHeight) * scale;
+      if (end >= start && used + height > pageBodyHeight) break;
+      used += height;
+      end = next;
+    }
+    return Math.max(1, end - start + 1);
+  };
   if (bodyStart > target.r2) {
     pageRows.push({ start: target.r1, end: target.r2 });
   } else {
-    for (let start = bodyStart; start <= target.r2; start += rowsPerPage) {
-      pageRows.push({ start, end: Math.min(target.r2, start + rowsPerPage - 1) });
+    for (let start = bodyStart; start <= target.r2;) {
+      const count = rowsPerPageFromHeight(start);
+      pageRows.push({ start, end: Math.min(target.r2, start + count - 1) });
+      start += count;
     }
   }
   if (pageRows.length === 0) pageRows.push({ start: target.r1, end: target.r1 });
@@ -1621,27 +1700,28 @@ export function buildSheetPrintPages(
     const wrapper = document.createElement('div');
     wrapper.style.cssText = `position:relative;width:${contentWidth}px;height:${contentHeight - titleHeight}px;overflow:hidden;`;
     const table = document.createElement('table');
-    table.style.cssText = `border-collapse:collapse;table-layout:fixed;width:${totalWidth}px;transform:scale(${scale});transform-origin:top left;font-size:${workbook.defaultFontSizePt}pt;`;
+    // 功能：直接写入缩放后的像素尺寸，避免 CSS transform 让打印文字和边框先栅格化后再放大；时间：2026-10-25；作者：lq。
+    table.style.cssText = `border-collapse:collapse;table-layout:fixed;width:${totalWidth * scale}px;font-size:${workbook.defaultFontSizePt * scale}pt;`;
     const colgroup = document.createElement('colgroup');
     columnWidths.forEach((width) => {
       const col = document.createElement('col');
-      col.style.width = `${width}px`;
+      col.style.width = `${width * scale}px`;
       colgroup.appendChild(col);
     });
     table.appendChild(colgroup);
     if (headerRow !== null) {
       const thead = document.createElement('thead');
-      thead.appendChild(buildPrintRow(workbook, sheet, headerRow, target, true, setup.printGridLines));
+      thead.appendChild(buildPrintRow(workbook, sheet, headerRow, target, true, setup.printGridLines, scale));
       table.appendChild(thead);
     }
     const tbody = document.createElement('tbody');
     for (let row = chunk.start; row <= chunk.end; row += 1) {
-      tbody.appendChild(buildPrintRow(workbook, sheet, row, target, false, setup.printGridLines));
+      tbody.appendChild(buildPrintRow(workbook, sheet, row, target, false, setup.printGridLines, scale));
     }
     table.appendChild(tbody);
     wrapper.appendChild(table);
     // 功能：将图片叠加到对应分页位置，跨页图片由每页内容区裁切；时间：2026-10-24；作者：lq。
-    const headerHeight = headerRow !== null ? sheet.rowHeights[headerRow] ?? sheet.defaultRowHeight : 0;
+    const headerHeight = headerRow !== null ? (sheet.rowHeights[headerRow] ?? sheet.defaultRowHeight) : 0;
     images.forEach((image) => {
       const top = image.row === headerRow ? image.offsetY : headerHeight + image.top - rowTop(chunk.start);
       if (top + image.height <= 0 || top * scale >= contentHeight - titleHeight) return;
@@ -1664,11 +1744,14 @@ function buildPrintRow(
   target: CellRange,
   header: boolean,
   printGridLines: boolean,
+  scale: number,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
   // 功能：打印单元格高度与图片锚点使用一致的行高；时间：2026-10-24；作者：lq。
-  tr.style.height = `${sheet.rowHeights[row] ?? sheet.defaultRowHeight}px`;
+  tr.style.height = `${(sheet.rowHeights[row] ?? sheet.defaultRowHeight) * scale}px`;
   for (let col = target.c1; col <= target.c2; col += 1) {
+    const mergedOrigin = sheet.merges.find((item) => item.r1 <= row && row <= item.r2 && item.c1 <= col && col <= item.c2);
+    if (mergedOrigin && (mergedOrigin.r1 !== row || mergedOrigin.c1 !== col)) continue;
     const td = document.createElement('td');
     const cell = cellAt(sheet, row, col);
     const style = cellStyle(workbook, cell);
@@ -1680,13 +1763,17 @@ function buildPrintRow(
         : typeof cell?.value === 'number'
           ? 'right'
           : 'left';
-    td.style.cssText = `border:${printGridLines ? '1px solid #D0D5DD' : 'none'};padding:2px 5px;vertical-align:${
+    const colspan = mergedOrigin ? mergedOrigin.c2 - mergedOrigin.c1 + 1 : 1;
+    const rowspan = mergedOrigin ? mergedOrigin.r2 - mergedOrigin.r1 + 1 : 1;
+    if (colspan > 1) td.colSpan = colspan;
+    if (rowspan > 1) td.rowSpan = rowspan;
+    td.style.cssText = `border:${printGridLines ? '1px solid #D0D5DD' : 'none'};padding:${2 * scale}px ${5 * scale}px;vertical-align:${
       style.verticalAlign ?? 'bottom'
-    };text-align:${horizontal};overflow:hidden;white-space:pre-wrap;word-break:break-word;background:${
-      header ? '#EEF2F9' : style.fill ?? '#FFFFFF'
+    };text-align:${horizontal};overflow:hidden;white-space:${style.wrapText ? 'pre-wrap' : 'nowrap'};word-break:break-word;background:${
+      style.fill ?? '#FFFFFF'
     };color:${style.color ?? '#1D2939'};font-weight:${header || style.bold ? 700 : 400};font-style:${
       style.italic ? 'italic' : 'normal'
-    };font-size:${style.fontSizePt ?? workbook.defaultFontSizePt}pt;font-family:${
+    };font-size:${(style.fontSizePt ?? workbook.defaultFontSizePt) * scale}pt;font-family:${
       style.fontFamily ?? workbook.defaultFont
     };`;
     if (style.borders?.top && style.borders.top.style !== 'none') {

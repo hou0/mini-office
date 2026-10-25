@@ -117,6 +117,24 @@ describe('单元格格式和工作表图片', () => {
     } finally { host.remove(); }
   });
 
+  // 功能：验证打印页面保留单元格填充、合并关系并使用直接像素缩放；时间：2026-10-25；作者：lq。
+  it('打印预览保留彩色填充且不使用会模糊文字的 transform 缩放', () => {
+    const book = createBlankWorkbook(); const sheet = book.sheets[0];
+    sheet.pageSetup = { ...sheet.pageSetup!, fitToWidth: 1 };
+    sheet.cells['0:0'] = { value: '彩色标题', styleId: 'fill' };
+    sheet.cells['1:0'] = { value: '内容' };
+    book.styles.fill = { fill: '#FACA15', bold: true };
+    sheet.merges.push({ r1: 0, c1: 0, r2: 0, c2: 1 });
+    const host = document.createElement('div');
+    try {
+      const page = buildSheetPrintPages(book, sheet, host)[0];
+      const table = page.querySelector('table')!;
+      expect(table.style.transform).toBe('');
+      expect(page.querySelector('td')?.style.background).toBe('rgb(250, 202, 21)');
+      expect(page.querySelector('td')?.colSpan).toBe(2);
+    } finally { host.remove(); }
+  });
+
   it('文本、分数、科学计数和会计负数显示正确', () => {
     expect(formatNumeric(12.34, '@')).toBe('12.34');
     expect(formatNumeric(1.25, '# ?/?')).toBe('1 1/4');

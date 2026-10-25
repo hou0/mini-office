@@ -2,7 +2,7 @@
 
 <!-- 功能：同步当前版本、功能范围与发布限制；时间：2026-10-24；作者：lq。 -->
 
-当前源码版本：**0.1.3** · [版本说明](docs/releases/v0.1.3.md)
+当前源码版本：**0.1.4** · [版本说明](docs/releases/v0.1.4.md)
 
 > 轻量、离线优先的跨平台办公套件。只保留真正需要的 Office 功能。
 
@@ -82,7 +82,7 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 
 验证范围与记录：
 
-- 当前源码的检查结果见 [0.1.3 版本说明](docs/releases/v0.1.3.md)；测试覆盖公式、格式、筛选、图片、工作表操作、OOXML 往返与发布准备逻辑。
+- 当前源码的检查结果见 [0.1.4 版本说明](docs/releases/v0.1.4.md)；测试覆盖公式、格式、筛选、图片、工作表操作、OOXML 往返与发布准备逻辑。
 - 已有 DOCX/XLSX/PPTX 样例、PDF/图片 ZIP 导出及浏览器交互验证记录见 [测试说明](docs/testing.md)。
 - 自动检查与 Web 构建不能代替桌面安装、Microsoft Office 回读、物理打印和 Windows/Linux 实机验收。
 - macOS 原生毛玻璃、打印面板与文件关联仍需在目标设备验证。
@@ -142,7 +142,7 @@ mini-office/
 
 ## 文档索引
 
-- [0.1.3 版本说明](docs/releases/v0.1.3.md)
+- [0.1.4 版本说明](docs/releases/v0.1.4.md)
 - [macOS / Windows 发布打包说明](docs/macos-release-workflow.md)
 - [产品与技术设计（原始 PRD）](docs/prd.md)
 - [架构说明](docs/architecture.md)
@@ -172,7 +172,7 @@ mini-office/
         → 兼容性检查 → 临时文件写入 → 容器校验 → 原子替换 → 原件备份
 ```
 
-## 已知限制（0.1.3）
+## 已知限制（0.1.4）
 
 - PPTX 支持文本框/形状文字、表格文字、对象移动、页面增删复制、演讲者备注和新建演示；编辑文件首次保存为副本。母版装饰、图表、动画和媒体保留原部件，复杂效果需在 PowerPoint 中复核。
 - DOCX 修订、批注、内容控件和嵌入对象不提供专用编辑。修订显示插入内容、内容控件按文本读取，批注不显示批注面板、嵌入对象不渲染；原始部件保留，含这些特性的文档保存时强制另存副本，仍需在 Word 中复核锚点与版式。

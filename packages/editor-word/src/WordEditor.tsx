@@ -2373,6 +2373,8 @@ export function WordEditor({ session }: { session: WordSession }) {
       <style>{`
         /* 功能：导出打印隐藏表格选区与交互柄；时间：2026-10-19；作者：lq。 */
         @media print {
+          /* 功能：强制打印引擎保留段落高亮、表格底纹和文字背景色；时间：2026-10-25；作者：lq。 */
+          *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-table-resize] { display: none !important; }
           [data-cell-id] { box-shadow: none !important; }
           body * { visibility: hidden !important; }
