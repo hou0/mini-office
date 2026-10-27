@@ -58,6 +58,10 @@ struct DocumentInspectionDto {
     entry_count: usize,
     warnings: Vec<office_core::CompatibilityWarning>,
     features: Vec<office_core::CapabilityFeature>,
+    theme_colors: Vec<(String, String)>,
+    major_font: Option<String>,
+    minor_font: Option<String>,
+    relationship_count: usize,
 }
 
 fn allowed_output(path: &str) -> bool {
@@ -115,6 +119,22 @@ fn inspect_document(path: String) -> Result<DocumentInspectionDto, String> {
         .and_then(|value| value.to_str())
         .unwrap_or("document");
     let inspection = office_ooxml::analyze(&bytes, name).map_err(|error| error.to_string())?;
+    // 功能：把主题和关系摘要暴露给兼容性报告，便于后续编辑器复用统一的主题继承结果；时间：2026-10-28；作者：lq。
+    let theme_part = match inspection.kind {
+        OfficeKind::Docx => "word/theme/theme1.xml",
+        OfficeKind::Xlsx => "xl/theme/theme1.xml",
+        OfficeKind::Pptx => "ppt/theme/theme1.xml",
+    };
+    let theme = office_ooxml::read_text_entry(&bytes, theme_part)
+        .map(|xml| office_ooxml::parse_theme(&xml))
+        .unwrap_or_default();
+    let relationship_count = office_ooxml::entry_names(&bytes)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| entry.ends_with(".rels"))
+        .filter_map(|entry| office_ooxml::read_text_entry(&bytes, &entry).ok())
+        .map(|xml| office_ooxml::relationship_records(&xml).len())
+        .sum();
     Ok(DocumentInspectionDto {
         kind: inspection.kind,
         level: inspection.capability.level,
@@ -122,7 +142,23 @@ fn inspect_document(path: String) -> Result<DocumentInspectionDto, String> {
         entry_count: inspection.entry_count,
         warnings: inspection.capability.warnings,
         features: inspection.capability.features,
+        theme_colors: theme.colors.into_iter().collect(),
+        major_font: theme.major_font,
+        minor_font: theme.minor_font,
+        relationship_count,
     })
+}
+
+/// 功能：将旧版 DOC/XLS/PPT 转换为可编辑的 OOXML 副本，供前端兼容模式调用；时间：2026-10-27；作者：lq。
+#[tauri::command]
+fn convert_legacy_document(input: String) -> Result<String, String> {
+    if !Path::new(&input).is_file() {
+        return Err("源文件不存在。".to_string());
+    }
+    let output = office_compat::default_output_path(&input)
+        .ok_or_else(|| "无法根据源文件扩展名生成转换路径。".to_string())?;
+    office_compat::convert_legacy(&input, &output).map_err(|error| error.to_string())?;
+    Ok(output.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -245,6 +281,7 @@ pub fn run() {
             write_file,
             list_fonts,
             inspect_document,
+            convert_legacy_document,
             platform_info,
             app_version,
             recent_list,

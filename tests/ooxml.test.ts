@@ -49,6 +49,20 @@ describe('OOXML package handling', () => {
     }
   });
 
+  // 功能：回归验证 DOCX 编辑保存不丢失未知部件；时间：2026-10-28；作者：lq。
+  it('preserves unknown DOCX parts during an edit save', async () => {
+    const base = await serializeDocx(createBlankDoc(), { name: 'base.docx' });
+    const source = await JSZip.loadAsync(base);
+    source.file('custom/unknown.bin', new Uint8Array([9, 8, 7, 6]));
+    const withUnknown = await source.generateAsync({ type: 'uint8array' });
+    const pkg = await loadOoxmlPackage(withUnknown);
+    const doc = await parseDocxPackage(pkg, { fileName: 'base.docx' });
+    pkg.dispose();
+    const saved = await serializeDocx(doc, { sourceBytes: withUnknown, name: 'edited.docx' });
+    const output = await JSZip.loadAsync(saved);
+    expect(await output.file('custom/unknown.bin')?.async('uint8array')).toEqual(new Uint8Array([9, 8, 7, 6]));
+  });
+
   it('serializes and reparses a blank XLSX', async () => {
     const workbook = createBlankWorkbook();
     workbook.sheets[0].cells = {

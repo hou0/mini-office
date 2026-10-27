@@ -92,6 +92,28 @@ function textBodyXml(element: SlideElement): string {
   return `<p:txBody><a:bodyPr anchor="${element.verticalAlign === 'middle' ? 'ctr' : element.verticalAlign === 'bottom' ? 'b' : 't'}"${margins ? ` tIns="${emu(margins.top)}" rIns="${emu(margins.right)}" bIns="${emu(margins.bottom)}" lIns="${emu(margins.left)}"` : ''}/><a:lstStyle/>${paragraphXml(element.paragraphs ?? [])}</p:txBody>`;
 }
 
+// 功能：将已编辑形状的填充和边框写回原始 p:spPr，同时保留几何和未识别扩展；时间：2026-10-28；作者：lq。
+function writeShapeStyle(node: Element, element: SlideElement): void {
+  if (element.type !== 'text' && element.type !== 'shape') return;
+  if (!element.fill && !element.line) return;
+  const spPr = firstChild(node, 'p:spPr');
+  if (!spPr) return;
+  const doc = node.ownerDocument;
+  if (element.fill) {
+    for (const child of Array.from(spPr.children)) {
+      if (['a:solidFill', 'a:gradFill', 'a:blipFill', 'a:noFill', 'a:pattFill'].includes(child.tagName)) child.remove();
+    }
+    spPr.insertBefore(fragment(doc, fillXml(element.fill)), spPr.firstChild);
+  }
+  if (element.line) {
+    for (const child of Array.from(spPr.children)) if (child.tagName === 'a:ln') child.remove();
+    const line = element.line.color
+      ? `<a:ln w="${emu(element.line.widthPx ?? 1)}"><a:solidFill><a:srgbClr val="${color(element.line.color)}"/></a:solidFill></a:ln>`
+      : '<a:ln><a:noFill/></a:ln>';
+    spPr.appendChild(fragment(doc, line));
+  }
+}
+
 // 功能：新增文本/形状/图片生成原生可编辑 OOXML 对象，图片写入压缩包；时间：2026-10-24；作者：lq。
 async function createObject(doc: Document, element: SlideElement, id: number, zip: JSZip, rels: Document): Promise<Element> {
   const nv = `<p:cNvPr id="${id}" name="mo:${xml(element.id)}"/>`;
@@ -150,6 +172,7 @@ async function writeObjects(parent: Element, elements: SlideElement[], originalI
       parent.appendChild(node);
     }
     writeFrame(node, element, space);
+    writeShapeStyle(node, element);
     if (element.type === 'text' || element.type === 'shape') {
       if (changedText(node, element.paragraphs ?? [], element.sourceText)) {
         let body = firstChild(node, 'p:txBody');

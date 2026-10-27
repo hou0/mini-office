@@ -25,6 +25,7 @@ office-storage.workspace = true
 office-font.workspace = true
 office-pdf.workspace = true
 office-platform.workspace = true
+office-compat.workspace = true
 office-doc.workspace = true
 office-sheet.workspace = true
 office-slides.workspace = true

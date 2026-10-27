@@ -1,0 +1,10 @@
+[package]
+name = "office-compat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+office-core.workspace = true
+office_oxide.workspace = true
+

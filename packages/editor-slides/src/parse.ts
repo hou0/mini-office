@@ -23,6 +23,7 @@ import {
   mimeForPath,
   parseXmlDom,
   readThemeColors,
+  readThemeFonts,
   relationshipMap,
   emuToPx,
   type OoxmlPackage,
@@ -252,7 +253,10 @@ function parseTextRunStyle(
   const latin = firstNamed(rPr, 'a:latin');
   const ea = firstNamed(rPr, 'a:ea');
   const fontFamily = getAttr(ea, 'typeface') ?? getAttr(latin, 'typeface');
-  if (fontFamily && !fontFamily.startsWith('+')) style.fontFamily = fontFamily;
+  // 功能：解析 DrawingML 的主题字体占位符，避免 +mj/+mn 被错误当成实际字体导致字体错位；时间：2026-10-27；作者：lq。
+  if (fontFamily?.startsWith('+mj')) style.fontFamily = ctx.themeFonts.major;
+  else if (fontFamily?.startsWith('+mn')) style.fontFamily = ctx.themeFonts.minor;
+  else if (fontFamily && !fontFamily.startsWith('+')) style.fontFamily = fontFamily;
   const spacing = numberAttr(rPr, 'spc', 0);
   if (spacing) style.letterSpacingPx = (spacing / 100) * (4 / 3);
   return style;
@@ -840,19 +844,12 @@ export async function parsePptxPackage(
   const themeRel = Array.from(presentationRels.values()).find((rel) => rel.type.endsWith('/theme'));
   const themePart = themeRel?.resolved ?? pkg.names().find((name) => /^ppt\/theme\/theme\d+\.xml$/.test(name)) ?? '';
   const theme = themePart ? await readThemeColors(pkg, themePart) : {};
-  const themeFonts = { major: '等线 Light', minor: '等线' };
-  if (themePart) {
-    try {
-      const themeDoc = parseXmlDom(await pkg.text(themePart));
-      const scheme = firstDescendant(themeDoc, 'a:fontScheme');
-      const major = firstDescendant(firstNamed(scheme, 'a:majorFont'), 'a:ea') ?? firstDescendant(firstNamed(scheme, 'a:majorFont'), 'a:latin');
-      const minor = firstDescendant(firstNamed(scheme, 'a:minorFont'), 'a:ea') ?? firstDescendant(firstNamed(scheme, 'a:minorFont'), 'a:latin');
-      themeFonts.major = getAttr(major, 'typeface') || themeFonts.major;
-      themeFonts.minor = getAttr(minor, 'typeface') || themeFonts.minor;
-    } catch {
-      // keep defaults
-    }
-  }
+  // 功能：复用统一 OOXML 主题字体读取，确保 PPTX 与 DOCX 的字体回退规则一致；时间：2026-10-28；作者：lq。
+  const parsedThemeFonts = themePart ? await readThemeFonts(pkg, themePart) : { major: '', minor: '' };
+  const themeFonts = {
+    major: parsedThemeFonts.major || '等线 Light',
+    minor: parsedThemeFonts.minor || '等线',
+  };
 
   const ctx: ParseContext = {
     pkg,

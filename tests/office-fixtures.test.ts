@@ -167,4 +167,18 @@ describe('XLSX fixture compatibility', () => {
       savedPkg.dispose();
     }
   });
+
+  // 功能：回归验证 XLSX 编辑保存不丢失未知部件；时间：2026-10-28；作者：lq。
+  it('preserves unknown XLSX parts during save', async () => {
+    const bytes = fixture('tests/fixtures/xlsx/workbook.xlsx');
+    const source = await (await import('jszip')).default.loadAsync(bytes);
+    source.file('custom/unknown.bin', new Uint8Array([4, 2, 4, 2]));
+    const withUnknown = await source.generateAsync({ type: 'uint8array' });
+    const pkg = await loadOoxmlPackage(withUnknown);
+    const workbook = await parseWorkbookPackage(pkg, 'workbook.xlsx');
+    pkg.dispose();
+    const saved = await serializeXlsx(workbook, { sourceBytes: withUnknown, name: 'edited.xlsx' });
+    const output = await (await import('jszip')).default.loadAsync(saved);
+    expect(await output.file('custom/unknown.bin')?.async('uint8array')).toEqual(new Uint8Array([4, 2, 4, 2]));
+  });
 });

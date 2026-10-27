@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
+pub mod package;
+pub use package::OoxmlPackage;
+pub mod theme;
+pub use theme::{parse_theme, ThemeInfo};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageEntry {
@@ -25,6 +30,16 @@ pub struct PackageInspection {
     pub entries: Vec<PackageEntry>,
     pub security: SecurityReport,
     pub capability: CapabilityReport,
+}
+
+/// 功能：保留 OOXML 关系部件中的 ID、类型和目标，供增量保存复用；时间：2026-10-28；作者：lq。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationshipRecord {
+    pub id: String,
+    pub relationship_type: String,
+    pub target: String,
+    pub target_mode: Option<String>,
 }
 
 pub fn open_archive(bytes: &[u8]) -> Result<ZipArchive<Cursor<&[u8]>>, OfficeError> {
@@ -93,6 +108,40 @@ pub fn relationship_target(xml: &str, suffix: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 功能：解析关系部件全部记录，避免只查找第一个关系而丢失图片、主题和自定义部件；时间：2026-10-28；作者：lq。
+pub fn relationship_records(xml: &str) -> Vec<RelationshipRecord> {
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut records = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) if element.name().as_ref() == b"Relationship" => {
+                let mut id = None;
+                let mut relationship_type = None;
+                let mut target = None;
+                let mut target_mode = None;
+                for attribute in element.attributes().flatten() {
+                    let key = attribute.key.local_name();
+                    let value = String::from_utf8_lossy(&attribute.value).into_owned();
+                    match key.as_ref() {
+                        b"Id" => id = Some(value),
+                        b"Type" => relationship_type = Some(value),
+                        b"Target" => target = Some(value),
+                        b"TargetMode" => target_mode = Some(value),
+                        _ => {}
+                    }
+                }
+                if let (Some(id), Some(relationship_type), Some(target)) = (id, relationship_type, target) {
+                    records.push(RelationshipRecord { id, relationship_type, target, target_mode });
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    records
 }
 
 pub fn main_part(bytes: &[u8]) -> Result<Option<String>, OfficeError> {
@@ -407,5 +456,14 @@ mod tests {
     fn validation_round_trips_our_output() {
         let bytes = fixture("tests/fixtures/docx/contract.docx");
         assert_eq!(validate_package(&bytes).unwrap(), OfficeKind::Docx);
+    }
+
+    #[test]
+    fn parses_all_relationship_records() {
+        let xml = r#"<Relationships xmlns="x"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>"#;
+        let records = relationship_records(xml);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "rId1");
+        assert_eq!(records[1].target_mode.as_deref(), Some("External"));
     }
 }

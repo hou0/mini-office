@@ -59,6 +59,8 @@ export interface ParagraphStyle {
   pageBreakBefore?: boolean;
   outlineLevel?: number;
   backgroundColor?: string;
+  /** 功能：保留段落上下左右边框，用于兼容 Word 横线与签名栏；时间：2026-10-27；作者：lq。 */
+  borders?: TableBorders;
 }
 
 export interface ListInfo {

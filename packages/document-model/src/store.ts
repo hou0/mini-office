@@ -390,6 +390,16 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
 
     async openBytes(input) {
       const adapter = getPlatformAdapter();
+      // 功能：旧版 DOC/XLS/PPT 先经 Rust 兼容桥转换为 OOXML，再复用现有编辑器；时间：2026-10-27；作者：lq。
+      if (input.path && /\.(doc|xls|ppt)$/i.test(input.name) && adapter.convertLegacy) {
+        try {
+          const converted = await adapter.convertLegacy(input.path);
+          if (converted) return get().openBytes(converted);
+        } catch (error) {
+          get().notify('error', '旧版文件转换失败', error instanceof Error ? error.message : String(error));
+          return null;
+        }
+      }
       const handler = await findHandler(input.name, input.bytes);
       if (!handler) {
         get().notify(

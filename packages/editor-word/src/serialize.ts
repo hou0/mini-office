@@ -150,6 +150,11 @@ function paragraphProperties(
   if (style.backgroundColor) {
     parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${style.backgroundColor.replace('#', '')}"/>`);
   }
+  // 功能：保存段落边框，确保横线和签名线往返 DOCX 后仍存在；时间：2026-10-27；作者：lq。
+  if (style.borders) {
+    const content = ['top', 'left', 'bottom', 'right'].map((side) => borderXml(side, style.borders?.[side as keyof TableBorders])).join('');
+    if (content) parts.push(`<w:pBdr>${content}</w:pBdr>`);
+  }
   if (style.outlineLevel !== undefined) parts.push(`<w:outlineLvl w:val="${style.outlineLevel}"/>`);
   return parts.length ? `<w:pPr>${parts.join('')}</w:pPr>` : '';
 }

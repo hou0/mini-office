@@ -12,6 +12,7 @@ members = [
   "crates/office-sheet",
   "crates/office-slides",
   "crates/office-platform",
+  "crates/office-compat",
 ]
 default-members = [
   "crates/office-core",
@@ -53,6 +54,8 @@ office-storage = { path = "crates/office-storage" }
 office-font = { path = "crates/office-font" }
 office-pdf = { path = "crates/office-pdf" }
 office-platform = { path = "crates/office-platform" }
+office-compat = { path = "crates/office-compat" }
+office_oxide = "0.1.15"
 office-doc = { path = "crates/office-doc" }
 office-sheet = { path = "crates/office-sheet" }
 office-slides = { path = "crates/office-slides" }

@@ -6,6 +6,7 @@ import { parsePptx, parsePptxPackage } from '../packages/editor-slides/src/parse
 import { serializePptx } from '../packages/editor-slides/src/serialize';
 import { copySlide, replaceParagraphText } from '../packages/editor-slides/src/editing';
 import { createBlankDeck } from '@mini-office/document-model';
+import JSZip from 'jszip';
 
 function textOf(element: { type: string; paragraphs?: Array<{ runs: Array<{ text: string }> }> }): string {
   return element.paragraphs?.map((paragraph) => paragraph.runs.map((run) => run.text).join('')).join('\n') ?? '';
@@ -48,5 +49,33 @@ describe('PPT 编辑与安全回写', () => {
     } finally {
       pkg.dispose();
     }
+  });
+
+  // 功能：回归验证 PPTX 编辑保存不丢失未知部件；时间：2026-10-28；作者：lq。
+  it('保存 PPTX 时保留未知部件', async () => {
+    const source = new Uint8Array(readFileSync('tests/fixtures/pptx/deck.pptx'));
+    const zip = await JSZip.loadAsync(source);
+    zip.file('custom/unknown.bin', new Uint8Array([1, 3, 3, 7]));
+    const withUnknown = await zip.generateAsync({ type: 'uint8array' });
+    const deck = await parsePptx(withUnknown, { fileName: 'deck.pptx' });
+    const saved = await serializePptx(deck, withUnknown);
+    const output = await JSZip.loadAsync(saved);
+    expect(await output.file('custom/unknown.bin')?.async('uint8array')).toEqual(new Uint8Array([1, 3, 3, 7]));
+  });
+
+  // 功能：回归验证 PPTX 形状填充和边框颜色可保存并重开；时间：2026-10-28；作者：lq。
+  it('保存形状填充和边框颜色', async () => {
+    const source = new Uint8Array(readFileSync('tests/fixtures/pptx/deck.pptx'));
+    const deck = await parsePptx(source, { fileName: 'deck.pptx' });
+    const shape = deck.slides.flatMap((slide) => slide.elements).find((element) => element.type === 'shape' || element.type === 'text');
+    if (!shape || (shape.type !== 'shape' && shape.type !== 'text')) throw new Error('fixture drawable missing');
+    shape.fill = { type: 'solid', color: '#123456' };
+    shape.line = { color: '#654321', widthPx: 2, dash: 'solid' };
+    const saved = await serializePptx(deck, source);
+    const reparsed = await parsePptx(saved, { fileName: 'styled.pptx' });
+    const updated = reparsed.slides.flatMap((slide) => slide.elements).find((element) => element.sourceId === shape.sourceId);
+    if (!updated || (updated.type !== 'shape' && updated.type !== 'text')) throw new Error('updated drawable missing');
+    expect(updated.fill).toEqual({ type: 'solid', color: '#123456' });
+    expect(updated.line?.color).toBe('#654321');
   });
 });

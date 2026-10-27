@@ -113,6 +113,7 @@ export function renderParagraphHtml(
 
 export function paragraphWrapperStyle(paragraph: DocParagraph): React.CSSProperties {
   const style = paragraph.style;
+  const borderCss = (border: NonNullable<ParagraphStyle['borders']>['top']) => border && border.style !== 'none' ? `${Math.max(0.5, border.widthPx)}px ${border.style} ${border.color}` : undefined;
   return {
     paddingTop: style.spaceBeforePx ?? 0,
     paddingBottom: style.spaceAfterPx ?? 0,
@@ -120,6 +121,10 @@ export function paragraphWrapperStyle(paragraph: DocParagraph): React.CSSPropert
     marginRight: style.indentRightPx ?? 0,
     textAlign: style.alignment ?? 'left',
     backgroundColor: style.backgroundColor,
+    borderTop: borderCss(style.borders?.top),
+    borderRight: borderCss(style.borders?.right),
+    borderBottom: borderCss(style.borders?.bottom),
+    borderLeft: borderCss(style.borders?.left),
   };
 }
 

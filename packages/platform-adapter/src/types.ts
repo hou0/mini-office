@@ -27,6 +27,8 @@ export interface PlatformAdapter {
   readonly kind: 'web' | 'tauri';
   openFile(extensions: string[]): Promise<OpenedFile | null>;
   openPath(path: string): Promise<OpenedFile | null>;
+  /** 功能：将旧版 Office 文件转换为 OOXML 后再进入统一编辑流程；时间：2026-10-27；作者：lq。 */
+  convertLegacy?(path: string): Promise<OpenedFile | null>;
   saveBytes(bytes: Uint8Array, target: SaveTarget, mime: string): Promise<SaveOutcome>;
   listFonts(): Promise<FontInfo[]>;
   saveSnapshot(snapshot: DocumentSnapshot): Promise<void>;

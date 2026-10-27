@@ -8,3 +8,6 @@ license.workspace = true
 office-core.workspace = true
 office-ooxml.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+zip.workspace = true

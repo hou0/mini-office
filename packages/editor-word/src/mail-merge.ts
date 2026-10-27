@@ -10,7 +10,7 @@ export interface MergeCondition { field: string; op: 'contains' | 'eq' | 'ne' | 
 export const MAX_MERGE_RECORDS = 2000;
 export const MAX_MERGE_BATCH = 200;
 
-/** 功能：读取 XLSX 或 UTF-8/GB18030 CSV，CSV 所有值按文本保留，不执行公式；时间：2026-10-24；作者：lq。 */
+/** 功能：读取 XLSX/XLS（OOXML 内容或 Excel HTML 导出）及 UTF-8/GB18030 CSV；时间：2026-10-27；作者：lq。 */
 export async function readMergeWorkbook(bytes: Uint8Array, name: string): Promise<WorkbookModel> {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new Error('数据文件不能超过 50 MB。');
   if (/\.csv$/i.test(name)) {
@@ -32,9 +32,25 @@ export async function readMergeWorkbook(bytes: Uint8Array, name: string): Promis
     sheet.dimension = { rows: rows.length, cols: rows.reduce((max, row) => Math.max(max, row.length), 0) };
     return workbook;
   }
-  if (!/\.xlsx$/i.test(name)) throw new Error('请选择 XLSX 或 CSV 文件，旧版 XLS 请先另存为 XLSX。');
-  const pkg = await loadOoxmlPackage(bytes);
-  try { return await parseWorkbookPackage(pkg, name); } finally { pkg.dispose(); }
+  if (!/\.(xlsx|xls|xlsm|xltx)$/i.test(name)) throw new Error('请选择 XLS、XLSX 或 CSV 文件。');
+  try {
+    // 功能：允许扩展名为 .xls 但实际为 OOXML 的文件继续导入，兼容部分系统的错误扩展名；时间：2026-10-27；作者：lq。
+    const pkg = await loadOoxmlPackage(bytes);
+    try { return await parseWorkbookPackage(pkg, name); } finally { pkg.dispose(); }
+  } catch {
+    // 功能：对 Excel 常见的“网页格式 .xls”导出提供离线导入；时间：2026-10-27；作者：lq。
+    const text = new TextDecoder('utf-8').decode(bytes);
+    if (!/<(?:html|table|tr|td)\b/i.test(text)) throw new Error('无法读取该 XLS 文件。请在 Excel 中另存为 XLSX 后再导入。');
+    const workbook = createBlankWorkbook();
+    const sheet = workbook.sheets[0];
+    sheet.name = name.replace(/\.(xls|xlsx|xlsm|xltx)$/i, '') || 'Sheet1';
+    const rows = [...text.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((row) =>
+      [...row[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((cell) => cell[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').trim()),
+    );
+    rows.forEach((row, r) => row.forEach((value, c) => { if (value !== '') sheet.cells[`${r}:${c}`] = { value }; }));
+    sheet.dimension = { rows: rows.length, cols: rows.reduce((max, row) => Math.max(max, row.length), 0) };
+    return workbook;
+  }
 }
 
 /** 功能：只提取实际有值区域，校验表头、合并单元格和公式结果；时间：2026-10-24；作者：lq。 */

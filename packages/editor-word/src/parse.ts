@@ -279,6 +279,9 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
   const shading = firstChild(pPr, 'w:shd');
   const fill = attrValue(shading, 'w:fill');
   if (fill && /^[0-9a-fA-F]{6}$/.test(fill)) style.backgroundColor = `#${fill.toUpperCase()}`;
+  // 功能：解析段落边框，恢复 Word 中常见的横线、签名线和分隔线；时间：2026-10-27；作者：lq。
+  const paragraphBorders = firstChild(pPr, 'w:pBdr');
+  if (paragraphBorders) style.borders = parseTableBorders(paragraphBorders);
   return style;
 }
 
@@ -848,7 +851,13 @@ async function parseParagraph(
     }
   }
 
-  const runBase = mergeRun(mergeRun(ctx.styles.docDefaults.run, styleBase.run), baseStyle?.run);
+  // 功能：继承段落属性中的文字格式（Word 将段落级加粗、字号等写入 w:pPr/w:rPr）；时间：2026-10-27；作者：lq。
+  // 旧逻辑只合并样式表和字符级 w:rPr，导致从原生 Word 打开的段落格式在编辑区丢失。
+  const paragraphRun = applyRunStyle({}, firstChild(pPr, 'w:rPr'), ctx);
+  const runBase = mergeRun(
+    mergeRun(mergeRun(ctx.styles.docDefaults.run, styleBase.run), baseStyle?.run),
+    paragraphRun,
+  );
   const state: ParseInlineState = { fieldStack: [] };
   let runs = await parseInlineChildren(element, runBase, ctx, state);
   const pageBreakAfter = runs.some((run) => run.field === '__PAGE_BREAK__');
@@ -988,6 +997,10 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
   if (columnWidths.length === 0) {
     const available = Math.max(320, ctx.pageWidthPx - 192);
     columnWidths = Array.from({ length: Math.max(1, colCount) }, () => available / Math.max(1, colCount));
+  } else if (columnWidths.length < colCount) {
+    // 功能：补齐缺少的 tblGrid 列宽，避免合并单元格后的后续列回退到固定 100px 而错位；时间：2026-10-27；作者：lq。
+    const average = columnWidths.reduce((sum, width) => sum + width, 0) / columnWidths.length;
+    columnWidths = [...columnWidths, ...Array.from({ length: colCount - columnWidths.length }, () => average || 80)];
   }
 
   const columnTops: Array<DocTableCell | undefined> = [];
@@ -1092,7 +1105,8 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
     { name: 'Legal', w: 12_240, h: 20_160 },
     { name: 'B5', w: 9_976, h: 14_170 },
   ];
-  const swapped = Math.min(widthTwips, heightTwips) === Math.min(widthTwips, heightTwips);
+  // 功能：正确区分横向与纵向纸张尺寸，避免所有自定义尺寸都被误标为同一类；时间：2026-10-27；作者：lq。
+  const swapped = widthTwips > heightTwips;
   const matched = sizeMap.find(
     (size) =>
       (Math.abs(size.w - widthTwips) < 80 && Math.abs(size.h - heightTwips) < 80) ||
@@ -1193,19 +1207,25 @@ export async function parseDocxPackage(
       (node): node is Element => node instanceof Element && node.tagName === 'w:sectPr',
     ) ??
     firstDescendant(doc, 'w:sectPr');
+  // 功能：兼容分节符位于正文段落中的页眉页脚引用，避免只读取末节导致首节页脚丢失；时间：2026-10-27；作者：lq。
+  const sectionForPart = (kind: 'header' | 'footer') => {
+    if (sectionProperties && firstChild(sectionProperties, `w:${kind}Reference`)) return sectionProperties;
+    const candidates = Array.from(body.getElementsByTagName('w:sectPr'));
+    return candidates.find((section) => firstChild(section, `w:${kind}Reference`)) ?? sectionProperties;
+  };
   const page = parsePageSetup(sectionProperties, provisional);
   provisional.pageWidthPx = page.widthPx;
 
   const blocks = await parseBlockContainer(body, provisional);
 
   const header = await parseHeaderFooter(
-    sectionProperties,
+    sectionForPart('header'),
     provisional,
     'header',
     page.margins.header,
   );
   const footer = await parseHeaderFooter(
-    sectionProperties,
+    sectionForPart('footer'),
     provisional,
     'footer',
     page.margins.footer,

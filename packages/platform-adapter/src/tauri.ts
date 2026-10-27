@@ -64,6 +64,16 @@ export class TauriPlatformAdapter implements PlatformAdapter {
     return this.openPath(path);
   }
 
+  /** 功能：调用 Rust 兼容桥转换 DOC/XLS/PPT，并读取生成的 OOXML 副本；时间：2026-10-27；作者：lq。 */
+  async convertLegacy(path: string): Promise<OpenedFile | null> {
+    try {
+      const converted = await tauriInvoke<string>('convert_legacy_document', { input: path });
+      return this.openPath(converted);
+    } catch (error) {
+      throw new OfficeError(ErrorCodes.PARSE_FAILED, `无法转换旧版文件：${baseName(path)}`, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async saveBytes(bytes: Uint8Array, target: SaveTarget, mime: string): Promise<SaveOutcome> {
     let path = target.path;
     if (!path || target.forcePicker) {
