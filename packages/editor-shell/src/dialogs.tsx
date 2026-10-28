@@ -808,13 +808,18 @@ function AboutContent() {
           <div className="mt-0.5 font-medium">PDF · 图片 ZIP</div>
         </div>
       </div>
-      {/* 功能：展示出品方公众号原始二维码，保留完整留白供微信扫码；时间：2026-10-24；作者：lq。 */}
-      <div className="flex items-center justify-between gap-4 rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-3">
-        <div className="min-w-0 space-y-1.5">
-          <div className="text-[13px] font-semibold">非人类程序员</div>
-          <div className="text-[12px] text-[var(--mo-text-muted)]">微信扫一扫，关注公众号</div>
+      {/* 功能：关于页并排展示公众号与反馈群二维码，控制尺寸以兼顾扫码识别和弹窗空间；时间：2026-10-28；作者：lq。 */}
+      <div className="grid grid-cols-2 gap-2 rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-2.5">
+        <div className="flex min-w-0 flex-col items-center gap-1.5 text-center">
+          <img src="/brand/non-human-programmer-wechat.jpg" alt="非人类程序员微信公众号二维码" width={116} height={116} draggable={false} className="size-[116px] bg-white object-contain" style={{ imageRendering: 'pixelated' }} />
+          <div className="text-[11px] font-semibold">关注公众号</div>
+          <div className="text-[10px] leading-4 text-[var(--mo-text-muted)]">获取更新与技巧</div>
         </div>
-        <img src="/brand/non-human-programmer-wechat.jpg" alt="非人类程序员微信公众号二维码" width={172} height={172} draggable={false} className="shrink-0 bg-white" style={{ imageRendering: 'pixelated' }} />
+        <div className="flex min-w-0 flex-col items-center gap-1.5 text-center">
+          <img src="/brand/community-feedback-group.png" alt="Mini Office 反馈交流共建群二维码" width={116} height={116} draggable={false} className="size-[116px] bg-white object-contain" style={{ imageRendering: 'pixelated' }} />
+          <div className="text-[11px] font-semibold">加入反馈群</div>
+          <div className="text-[10px] leading-4 text-[var(--mo-text-muted)]">交流共建，反馈问题</div>
+        </div>
       </div>
       <div className="flex items-center gap-2 text-[10px] text-[var(--mo-text-faint)]">
         <ShieldCheck size={12} /> 不收集文档内容 · 不上传文件 · 本地优先

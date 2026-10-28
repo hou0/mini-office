@@ -11,6 +11,15 @@ Microsoft Word（DOCX）、Excel（XLSX/CSV）与 PowerPoint（PPTX）三类文�
 它把“真实文件兼容”和“文档安全”放在功能数量之前：打开文件时先做能力扫描，
 可编辑性与保存策略按 L0–L3 分级，未知 OOXML 部件不会被静默删除。
 
+<!-- 功能：在项目描述文档顶部提供反馈交流共建群入口，便于扫码加入群聊；时间：2026-10-28；作者：lq。 -->
+<div align="center">
+  <a href="apps/desktop/public/brand/community-feedback-group.png">
+    <img src="apps/desktop/public/brand/community-feedback-group.png" alt="Mini Office 反馈交流共建群二维码" width="220" />
+  </a>
+  <br />
+  <sub>扫码加入 Mini Office 反馈交流共建群，欢迎反馈问题与共建建议</sub>
+</div>
+
 ![Mini Office 首页](docs/screenshots/home-light.png)
 
 ## 已实现能力
