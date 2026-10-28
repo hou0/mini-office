@@ -1156,6 +1156,39 @@ export function WordEditor({ session }: { session: WordSession }) {
     };
   }, []);
 
+  // 功能：将全部 Word 分页复制到独立打印根节点，绕开编辑区滚动容器导致系统只识别当前页；时间：2026-10-28；作者：lq。
+  const printWord = useCallback(async () => {
+    const source = pagesRef.current;
+    if (!source) return false;
+    const root = document.createElement('div');
+    root.dataset.wordPrintRoot = 'true';
+    const pages = source.cloneNode(true) as HTMLElement;
+    pages.removeAttribute('contenteditable');
+    pages.removeAttribute('data-word-editor');
+    root.appendChild(pages);
+    const style = document.createElement('style');
+    style.dataset.wordPrintStyle = 'true';
+    style.textContent = `@media print {
+      body * { visibility: hidden !important; }
+      body [data-word-editor] .mo-word-pages, body [data-word-editor] .mo-word-pages * { visibility: hidden !important; }
+      [data-word-print-root], [data-word-print-root] * { visibility: visible !important; }
+      [data-word-print-root] { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; }
+      [data-word-print-root] .mo-word-pages { display: block !important; width: 100% !important; padding: 0 !important; gap: 0 !important; }
+      [data-word-print-root] .mo-word-page-scale { position: relative !important; width: ${doc.page.widthPx}px !important; height: ${doc.page.heightPx}px !important; margin: 0 auto !important; break-after: page !important; page-break-after: always !important; }
+      [data-word-print-root] .mo-word-page-scale:last-child { break-after: auto !important; page-break-after: auto !important; }
+      [data-word-print-root] .mo-word-page { position: relative !important; left: auto !important; top: auto !important; transform: none !important; box-shadow: none !important; }
+      @page { size: ${doc.page.widthPx}px ${doc.page.heightPx}px; margin: 0; }
+    }`;
+    document.body.append(root, style);
+    const cleanup = () => { root.remove(); style.remove(); window.removeEventListener('afterprint', cleanup); };
+    window.addEventListener('afterprint', cleanup);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const ok = await printCurrentView();
+    if (!ok) cleanup();
+    setTimeout(cleanup, 30_000);
+    return ok;
+  }, [doc.page.heightPx, doc.page.widthPx]);
+
   useEffect(() => {
     const handleFind = () => setFindOpen((open) => !open);
     const handleExport = () => {
@@ -1164,7 +1197,7 @@ export function WordEditor({ session }: { session: WordSession }) {
       setExportOpen(true);
     };
     const handlePrint = async () => {
-      const ok = await printCurrentView();
+      const ok = await printWord();
       if (!ok) notify('error', '打印不可用', '当前平台不支持打印，请改用“导出 PDF”。');
     };
     window.addEventListener('mo:find', handleFind);
@@ -1175,7 +1208,7 @@ export function WordEditor({ session }: { session: WordSession }) {
       window.removeEventListener('mo:export-pdf', handleExport);
       window.removeEventListener('mo:print', handlePrint);
     };
-  }, [notify, session.displayName]);
+  }, [notify, printWord, session.displayName]);
 
   const handleScroll = useCallback(() => {
     if (scrollRafRef.current !== null) return;
@@ -2128,7 +2161,7 @@ export function WordEditor({ session }: { session: WordSession }) {
             setExportOpen(true);
           }}
           onPrint={() => void (async () => {
-            const ok = await printCurrentView();
+            const ok = await printWord();
             if (!ok) notify('error', '打印不可用', '当前平台不支持打印，请改用“导出 PDF”。');
           })()}
           onShowCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}

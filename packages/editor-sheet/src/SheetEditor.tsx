@@ -896,7 +896,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
       * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       body * { visibility: hidden !important; }
       [data-sheet-print], [data-sheet-print] * { visibility: visible !important; }
-      [data-sheet-print] { position: absolute !important; left: 0 !important; top: 0 !important; width: auto !important; }
+      [data-sheet-print] { position: absolute !important; left: 0 !important; top: 0 !important; width: auto !important; z-index: 0 !important; display: block !important; }
       [data-sheet-print] > div { page-break-after: always; break-after: page; }
       @page { size: A4 ${setup.orientation}; margin: ${setup.margins.top}in ${setup.margins.right}in ${setup.margins.bottom}in ${setup.margins.left}in; }
     }`;
