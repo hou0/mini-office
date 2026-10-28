@@ -1,4 +1,4 @@
-use office_core::OfficeError;
+use office_core::{OfficeError, MAX_INPUT_BYTES};
 use office_oxide::Document;
 use std::path::{Path, PathBuf};
 
@@ -44,6 +44,10 @@ pub fn convert_legacy(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Resu
     if LegacyKind::from_path(input).is_none() {
         return Err(OfficeError::Unsupported("只支持 DOC、XLS、PPT 旧版文件转换。".to_string()));
     }
+    let size = std::fs::metadata(input).map_err(OfficeError::Io)?.len();
+    if size > MAX_INPUT_BYTES {
+        return Err(OfficeError::Security("旧版 Office 文件超过 250 MB 安全上限。".to_string()));
+    }
     if !matches!(output.extension().and_then(|value| value.to_str()).map(|value| value.to_ascii_lowercase()).as_deref(), Some("docx" | "xlsx" | "pptx")) {
         return Err(OfficeError::Unsupported("输出文件必须是 DOCX、XLSX 或 PPTX。".to_string()));
     }
@@ -51,14 +55,35 @@ pub fn convert_legacy(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Resu
     document.save_as(output).map_err(|error| OfficeError::Storage(error.to_string()))
 }
 
+/// 功能：在内存与临时目录之间完成旧版 Office 转换，供拖拽和非文件路径入口复用；时间：2026-10-28；作者：lq。
+pub fn convert_legacy_bytes(bytes: &[u8], name: &str) -> Result<Vec<u8>, OfficeError> {
+    let kind = LegacyKind::from_path(name)
+        .ok_or_else(|| OfficeError::Unsupported("只支持 DOC、XLS、PPT 旧版文件转换。".to_string()))?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(OfficeError::Security("旧版 Office 文件超过 250 MB 安全上限。".to_string()));
+    }
+    let directory = tempfile::tempdir().map_err(OfficeError::Io)?;
+    let input = directory.path().join(name);
+    let output = directory.path().join(format!("converted.{}", kind.target_extension()));
+    std::fs::write(&input, bytes).map_err(OfficeError::Io)?;
+    convert_legacy(&input, &output)?;
+    std::fs::read(output).map_err(OfficeError::Io)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{default_output_path, LegacyKind};
+    use super::{convert_legacy_bytes, default_output_path, LegacyKind};
 
     #[test]
     fn detects_legacy_extensions_and_output_name() {
         assert_eq!(LegacyKind::from_path("报告.XLS"), Some(LegacyKind::Xls));
         assert_eq!(LegacyKind::from_path("演示.ppt"), Some(LegacyKind::Ppt));
         assert_eq!(default_output_path("合同.doc").unwrap().to_string_lossy(), "合同_兼容转换.docx");
+    }
+
+    // 功能：验证内存入口先校验格式并拒绝不支持的扩展名；时间：2026-10-28；作者：lq。
+    #[test]
+    fn rejects_unsupported_memory_input() {
+        assert!(convert_legacy_bytes(b"invalid", "sample.txt").is_err());
     }
 }

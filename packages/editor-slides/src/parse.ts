@@ -20,6 +20,7 @@ import {
   getAttr,
   getAttrLocal,
   loadOoxmlPackage,
+  localName,
   mimeForPath,
   parseXmlDom,
   readThemeColors,
@@ -65,14 +66,14 @@ interface ParseContext {
 function childrenNamed(parent: Element | Document | null | undefined, tagName: string): Element[] {
   if (!parent) return [];
   return Array.from(parent.childNodes).filter(
-    (node): node is Element => node instanceof Element && node.tagName === tagName,
+    (node): node is Element => node instanceof Element && localName(node) === tagName.slice(tagName.indexOf(':') + 1),
   );
 }
 
 function firstNamed(parent: Element | Document | null | undefined, tagName: string): Element | null {
   if (!parent) return null;
   return Array.from(parent.childNodes).find(
-    (node): node is Element => node instanceof Element && node.tagName === tagName,
+    (node): node is Element => node instanceof Element && localName(node) === tagName.slice(tagName.indexOf(':') + 1),
   ) ?? null;
 }
 
@@ -307,15 +308,15 @@ function parseParagraphs(
     const runs: SlideTextRun[] = [];
     for (const child of Array.from(p.childNodes)) {
       if (!(child instanceof Element)) continue;
-      if (child.tagName === 'a:r') {
+      if (localName(child) === 'r') {
         const rPr = firstNamed(child, 'a:rPr');
         runs.push({
           text: firstNamed(child, 'a:t')?.textContent ?? '',
           style: parseTextRunStyle(rPr, ctx, defaultRun),
         });
-      } else if (child.tagName === 'a:br') {
+      } else if (localName(child) === 'br') {
         runs.push({ text: '', style: defaultRun, lineBreak: true });
-      } else if (child.tagName === 'a:fld') {
+      } else if (localName(child) === 'fld') {
         runs.push({
           text: firstNamed(child, 'a:t')?.textContent ?? '',
           style: parseTextRunStyle(firstNamed(child, 'a:rPr'), ctx, defaultRun),
@@ -653,23 +654,23 @@ async function parseElement(
   placeholders: Map<string, PlaceholderStyle>,
   rels: Map<string, Relationship>,
 ): Promise<SlideElement[]> {
-  if (element.tagName === 'p:sp') {
+  if (localName(element) === 'sp') {
     const parsed = parseShape(element, ctx, placeholders, defaultPlaceholderRunStyle(undefined, ctx));
     return parsed.element ? [parsed.element] : [];
   }
-  if (element.tagName === 'p:pic') {
+  if (localName(element) === 'pic') {
     const picture = await parsePicture(element, ctx, rels);
     return picture ? [picture] : [];
   }
-  if (element.tagName === 'p:graphicFrame') {
+  if (localName(element) === 'graphicFrame') {
     const table = await parseTable(element, ctx);
     return table ? [table] : [];
   }
-  if (element.tagName === 'p:grpSp') {
+  if (localName(element) === 'grpSp') {
     const group = await parseGroup(element, ctx, rels);
     return group ? [group] : [];
   }
-  if (element.tagName === 'p:cxnSp') {
+  if (localName(element) === 'cxnSp') {
     const parsed = parseShape(element, ctx, placeholders, {});
     if (parsed.element && parsed.element.type === 'shape') {
       parsed.element.shape = 'line';
@@ -698,7 +699,7 @@ async function parseContainer(
   const placeholders = new Map<string, PlaceholderStyle>();
   for (const child of Array.from(spTree?.childNodes ?? [])) {
     if (!(child instanceof Element)) continue;
-    if (child.tagName === 'p:sp') {
+    if (localName(child) === 'sp') {
       const parsed = parseShape(child, ctx, placeholders, {});
       if (parsed.element) elements.push(parsed.element);
       if (parsed.placeholder) placeholders.set(parsed.placeholder.key, parsed.placeholder.style);

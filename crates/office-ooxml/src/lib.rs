@@ -9,7 +9,7 @@ use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
 pub mod package;
-pub use package::OoxmlPackage;
+pub use package::{preserve_missing_parts, OoxmlPackage};
 pub mod theme;
 pub use theme::{parse_theme, ThemeInfo};
 
@@ -85,7 +85,7 @@ pub fn relationship_target(xml: &str, suffix: &str) -> Option<String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(element)) | Ok(Event::Empty(element)) => {
-                if element.name().as_ref() != b"Relationship" {
+                if element.name().local_name().as_ref() != b"Relationship" {
                     continue;
                 }
                 let mut is_match = false;
@@ -117,7 +117,7 @@ pub fn relationship_records(xml: &str) -> Vec<RelationshipRecord> {
     let mut records = Vec::new();
     loop {
         match reader.read_event() {
-            Ok(Event::Start(element)) | Ok(Event::Empty(element)) if element.name().as_ref() == b"Relationship" => {
+            Ok(Event::Start(element)) | Ok(Event::Empty(element)) if element.name().local_name().as_ref() == b"Relationship" => {
                 let mut id = None;
                 let mut relationship_type = None;
                 let mut target = None;
@@ -458,9 +458,10 @@ mod tests {
         assert_eq!(validate_package(&bytes).unwrap(), OfficeKind::Docx);
     }
 
+    // 功能：验证带命名空间前缀的关系节点仍可解析；时间：2026-10-28；作者：lq。
     #[test]
     fn parses_all_relationship_records() {
-        let xml = r#"<Relationships xmlns="x"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>"#;
+        let xml = r#"<rel:Relationships xmlns:rel="x"><rel:Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/><rel:Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></rel:Relationships>"#;
         let records = relationship_records(xml);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].id, "rId1");

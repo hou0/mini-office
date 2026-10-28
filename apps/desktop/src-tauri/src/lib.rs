@@ -62,6 +62,7 @@ struct DocumentInspectionDto {
     major_font: Option<String>,
     minor_font: Option<String>,
     relationship_count: usize,
+    compatibility_score: u8,
 }
 
 fn allowed_output(path: &str) -> bool {
@@ -96,6 +97,13 @@ fn write_file(path: String, bytes: Vec<u8>) -> Result<SaveOutcome, String> {
     if !allowed_output(&path) {
         return Err("不允许写入该文件类型。".to_string());
     }
+    let bytes = if OfficeKind::from_extension(&path).is_some() && Path::new(&path).is_file() {
+        // 功能：保存前把原包中输出遗漏的部件补回，保护复杂对象和厂商扩展；时间：2026-10-28；作者：lq。
+        let source = std::fs::read(&path).map_err(|error| format!("无法读取原文件：{error}"))?;
+        office_ooxml::preserve_missing_parts(&source, &bytes).map_err(|error| format!("兼容部件合并失败：{error}"))?
+    } else {
+        bytes
+    };
     if OfficeKind::from_extension(&path).is_some() {
         office_ooxml::validate_package(&bytes)
             .map_err(|error| format!("保存前容器校验失败：{error}"))?;
@@ -119,6 +127,7 @@ fn inspect_document(path: String) -> Result<DocumentInspectionDto, String> {
         .and_then(|value| value.to_str())
         .unwrap_or("document");
     let inspection = office_ooxml::analyze(&bytes, name).map_err(|error| error.to_string())?;
+    let compatibility_score = inspection.capability.compatibility_score();
     // 功能：把主题和关系摘要暴露给兼容性报告，便于后续编辑器复用统一的主题继承结果；时间：2026-10-28；作者：lq。
     let theme_part = match inspection.kind {
         OfficeKind::Docx => "word/theme/theme1.xml",
@@ -146,6 +155,7 @@ fn inspect_document(path: String) -> Result<DocumentInspectionDto, String> {
         major_font: theme.major_font,
         minor_font: theme.minor_font,
         relationship_count,
+        compatibility_score,
     })
 }
 
@@ -159,6 +169,36 @@ fn convert_legacy_document(input: String) -> Result<String, String> {
         .ok_or_else(|| "无法根据源文件扩展名生成转换路径。".to_string())?;
     office_compat::convert_legacy(&input, &output).map_err(|error| error.to_string())?;
     Ok(output.to_string_lossy().into_owned())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConvertedDocumentDto {
+    name: String,
+    bytes: Vec<u8>,
+}
+
+/// 功能：转换拖拽到桌面的旧版 Office 字节，避免必须先保存为临时文件；时间：2026-10-28；作者：lq。
+#[tauri::command]
+fn convert_legacy_bytes(name: String, bytes: Vec<u8>) -> Result<ConvertedDocumentDto, String> {
+    let extension = Path::new(&name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let output_extension = match extension.as_str() {
+        "doc" => "docx",
+        "xls" => "xlsx",
+        "ppt" => "pptx",
+        _ => return Err("只支持 DOC、XLS、PPT 旧版文件转换。".to_string()),
+    };
+    let converted = office_compat::convert_legacy_bytes(&bytes, &name).map_err(|error| error.to_string())?;
+    let stem = Path::new(&name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("未命名文档");
+    let display_name = format!("{stem}.{output_extension}");
+    Ok(ConvertedDocumentDto { name: display_name, bytes: converted })
 }
 
 #[tauri::command]
@@ -282,6 +322,7 @@ pub fn run() {
             list_fonts,
             inspect_document,
             convert_legacy_document,
+            convert_legacy_bytes,
             platform_info,
             app_version,
             recent_list,

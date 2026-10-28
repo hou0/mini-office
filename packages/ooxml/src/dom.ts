@@ -24,6 +24,17 @@ export function rootElement(doc: Document): Element {
   return doc.documentElement;
 }
 
+// 功能：按 XML 本地名称匹配 OOXML 节点，兼容不同软件生成的命名空间前缀；时间：2026-10-28；作者：lq。
+function matchesTag(element: Element, tagName: string): boolean {
+  const expected = tagName.includes(':') ? tagName.slice(tagName.indexOf(':') + 1) : tagName;
+  return localName(element) === expected;
+}
+
+/** 功能：统一取得 XML 元素本地名称，供需要 switch 的解析器兼容任意命名空间前缀；时间：2026-10-28；作者：lq。 */
+export function localName(element: Element): string {
+  return element.localName || element.tagName.split(':').at(-1) || element.tagName;
+}
+
 export function childElements(
   parent: Element | Document | null | undefined,
   tagName?: string,
@@ -35,7 +46,7 @@ export function childElements(
     const item = source.item(index);
     if (item && item.nodeType === 1) {
       const element = item as Element;
-      if (!tagName || element.tagName === tagName) children.push(element);
+      if (!tagName || matchesTag(element, tagName)) children.push(element);
     }
   }
   return children;
@@ -49,7 +60,7 @@ export function firstChild(
   const source = parent.childNodes;
   for (let index = 0; index < source.length; index += 1) {
     const item = source.item(index);
-    if (item && item.nodeType === 1 && (item as Element).tagName === tagName) {
+    if (item && item.nodeType === 1 && matchesTag(item as Element, tagName)) {
       return item as Element;
     }
   }
@@ -61,7 +72,7 @@ export function descendants(
   tagName: string,
 ): Element[] {
   if (!parent) return [];
-  return Array.from(parent.getElementsByTagName(tagName));
+  return Array.from(parent.getElementsByTagName('*')).filter((element) => matchesTag(element, tagName));
 }
 
 export function firstDescendant(
@@ -69,7 +80,7 @@ export function firstDescendant(
   tagName: string,
 ): Element | null {
   if (!parent) return null;
-  return parent.getElementsByTagName(tagName)[0] ?? null;
+  return Array.from(parent.getElementsByTagName('*')).find((element) => matchesTag(element, tagName)) ?? null;
 }
 
 /** Attribute lookup by local name, tolerating different namespace prefixes. */
@@ -85,8 +96,8 @@ export function getAttr(element: Element | null | undefined, name: string): stri
   if (!element) return undefined;
   const value = element.getAttribute(name);
   if (value !== null) return value;
-  if (!name.includes(':')) return getAttrLocal(element, name);
-  return undefined;
+  // 功能：属性前缀不固定时仍读取 w:val、r:id 等 OOXML 属性；时间：2026-10-28；作者：lq。
+  return getAttrLocal(element, name.includes(':') ? name.slice(name.indexOf(':') + 1) : name);
 }
 
 export function hasAttr(element: Element | null | undefined, name: string): boolean {

@@ -14,12 +14,14 @@ import {
 import {
   firstChild,
   firstDescendant,
+  localName,
   getAttr,
   getAttrLocal,
   mixColors,
   normalizeHex,
   parseXmlDom,
   readThemeColors,
+  readThemeFonts,
   relationshipMap,
   type OoxmlPackage,
   type Relationship,
@@ -91,14 +93,14 @@ function parseSharedStrings(xml: string): string[] {
   const root = firstDescendant(doc, 'sst') ?? doc.documentElement;
   const result: string[] = [];
   for (const item of Array.from(root.childNodes)) {
-    if (!(item instanceof Element) || item.tagName !== 'si') continue;
+    if (!(item instanceof Element) || localName(item) !== 'si') continue;
     let text = '';
     for (const child of Array.from(item.childNodes)) {
       if (!(child instanceof Element)) continue;
-      if (child.tagName === 't') text += child.textContent ?? '';
-      else if (child.tagName === 'r') {
+      if (localName(child) === 't') text += child.textContent ?? '';
+      else if (localName(child) === 'r') {
         for (const runChild of Array.from(child.childNodes)) {
-          if (runChild instanceof Element && runChild.tagName === 't') text += runChild.textContent ?? '';
+          if (runChild instanceof Element && localName(runChild) === 't') text += runChild.textContent ?? '';
         }
       }
     }
@@ -129,7 +131,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
 
   const numFmts = new Map<number, string>(Object.entries(BUILTIN_NUMBER_FORMATS).map(([id, fmt]) => [Number(id), fmt]));
   for (const item of Array.from(firstChild(root, 'numFmts')?.childNodes ?? [])) {
-    if (!(item instanceof Element) || item.tagName !== 'numFmt') continue;
+    if (!(item instanceof Element) || localName(item) !== 'numFmt') continue;
     const id = Number(getAttr(item, 'numFmtId'));
     const code = getAttr(item, 'formatCode');
     if (Number.isFinite(id) && code) numFmts.set(id, code);
@@ -146,7 +148,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
   }
   const fonts: FontInfo[] = [];
   for (const fontElement of Array.from(firstChild(root, 'fonts')?.childNodes ?? [])) {
-    if (!(fontElement instanceof Element) || fontElement.tagName !== 'font') continue;
+    if (!(fontElement instanceof Element) || localName(fontElement) !== 'font') continue;
     const font: FontInfo = {};
     const name = getAttr(firstChild(fontElement, 'name'), 'val');
     if (name) font.fontFamily = name;
@@ -163,7 +165,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
 
   const fills: Array<{ color?: string }> = [];
   for (const fillElement of Array.from(firstChild(root, 'fills')?.childNodes ?? [])) {
-    if (!(fillElement instanceof Element) || fillElement.tagName !== 'fill') continue;
+    if (!(fillElement instanceof Element) || localName(fillElement) !== 'fill') continue;
     const pattern = firstChild(fillElement, 'patternFill');
     const type = getAttr(pattern, 'patternType');
     const foreground = firstChild(pattern, 'fgColor');
@@ -190,7 +192,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
   };
   const borders: CellBorders[] = [];
   for (const borderElement of Array.from(firstChild(root, 'borders')?.childNodes ?? [])) {
-    if (!(borderElement instanceof Element) || borderElement.tagName !== 'border') continue;
+    if (!(borderElement instanceof Element) || localName(borderElement) !== 'border') continue;
     const parsed: CellBorders = {};
     for (const side of ['left', 'right', 'top', 'bottom'] as const) {
       const sideElement = firstChild(borderElement, side);
@@ -205,7 +207,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
   }
 
   const xfs: Element[] = Array.from(firstChild(root, 'cellXfs')?.childNodes ?? []).filter(
-    (node): node is Element => node instanceof Element && node.tagName === 'xf',
+    (node): node is Element => node instanceof Element && localName(node) === 'xf',
   );
   if (xfs.length === 0) {
     styles.default = {
@@ -356,7 +358,7 @@ async function parseSheet(
 
   const cols = firstChild(worksheet, 'cols');
   for (const col of Array.from(cols?.childNodes ?? [])) {
-    if (!(col instanceof Element) || col.tagName !== 'col') continue;
+    if (!(col instanceof Element) || localName(col) !== 'col') continue;
     const min = Number(getAttr(col, 'min') ?? '1');
     const max = Number(getAttr(col, 'max') ?? String(min));
     const width = Number(getAttr(col, 'width') ?? '0');
@@ -372,13 +374,13 @@ async function parseSheet(
   const inlineSharedFormula = new Map<string, { formula: string; row: number; col: number }>();
   const cellsContainer = firstChild(worksheet, 'sheetData');
   const rowElements = Array.from(cellsContainer?.childNodes ?? []).filter(
-    (node): node is Element => node instanceof Element && node.tagName === 'row',
+    (node): node is Element => node instanceof Element && localName(node) === 'row',
   );
 
   // First pass: collect shared formula masters.
   for (const rowElement of rowElements) {
     for (const cellElement of Array.from(rowElement.childNodes)) {
-      if (!(cellElement instanceof Element) || cellElement.tagName !== 'c') continue;
+      if (!(cellElement instanceof Element) || localName(cellElement) !== 'c') continue;
       const formulaElement = firstChild(cellElement, 'f');
       if (!formulaElement) continue;
       if (getAttr(formulaElement, 't') !== 'shared') continue;
@@ -401,7 +403,7 @@ async function parseSheet(
     maxRow = Math.max(maxRow, rowNumber);
 
     for (const cellElement of Array.from(rowElement.childNodes)) {
-      if (!(cellElement instanceof Element) || cellElement.tagName !== 'c') continue;
+      if (!(cellElement instanceof Element) || localName(cellElement) !== 'c') continue;
       const reference = getAttr(cellElement, 'r');
       if (!reference) continue;
       const position = parseReference(reference);
@@ -462,7 +464,7 @@ async function parseSheet(
   }
 
   for (const mergeElement of Array.from(firstChild(worksheet, 'mergeCells')?.childNodes ?? [])) {
-    if (!(mergeElement instanceof Element) || mergeElement.tagName !== 'mergeCell') continue;
+    if (!(mergeElement instanceof Element) || localName(mergeElement) !== 'mergeCell') continue;
     const ref = getAttr(mergeElement, 'ref');
     if (!ref) continue;
     const [start, end] = ref.split(':');
@@ -540,6 +542,8 @@ export async function parseWorkbookPackage(
   fileName: string,
 ): Promise<WorkbookModel> {
   const theme = await readThemeColors(pkg, 'xl/theme/theme1.xml');
+  // 功能：让 XLSX 默认字体继承主题正文字体，减少跨平台打开时字体和列宽变化；时间：2026-10-28；作者：lq。
+  const themeFonts = await readThemeFonts(pkg, 'xl/theme/theme1.xml');
   const sharedStrings = pkg.has('xl/sharedStrings.xml')
     ? parseSharedStrings(await pkg.text('xl/sharedStrings.xml'))
     : [];
@@ -554,7 +558,7 @@ export async function parseWorkbookPackage(
   const date1904 = getAttr(workbookPr, 'date1904') === '1';
   const rels = await relationshipMap(pkg, 'xl/workbook.xml');
   const sheetElements = Array.from(firstChild(workbookRoot, 'sheets')?.childNodes ?? []).filter(
-    (node): node is Element => node instanceof Element && node.tagName === 'sheet',
+    (node): node is Element => node instanceof Element && localName(node) === 'sheet',
   );
 
   const descriptors: SheetDescriptor[] = [];
@@ -585,7 +589,7 @@ export async function parseWorkbookPackage(
 
   const definedNames: Record<string, string> = {};
   for (const definedName of Array.from(firstChild(workbookRoot, 'definedNames')?.childNodes ?? [])) {
-    if (!(definedName instanceof Element) || definedName.tagName !== 'definedName') continue;
+    if (!(definedName instanceof Element) || localName(definedName) !== 'definedName') continue;
     const name = getAttr(definedName, 'name');
     const value = definedName.textContent?.trim();
     if (name && value && !name.startsWith('_xlnm.')) definedNames[name] = value;
@@ -601,8 +605,10 @@ export async function parseWorkbookPackage(
     activeSheetId: activeSheet.id,
     styles: parsedStyles.styles,
     themeColors: theme,
-    themeFonts: { major: '', minor: '' },
-    defaultFont: parsedStyles.styles[parsedStyles.defaultStyleId]?.fontFamily ?? '等线',
+    themeFonts,
+    defaultFont: parsedStyles.styles[parsedStyles.defaultStyleId]?.fontFamily === '等线'
+      ? themeFonts.minor || '等线'
+      : parsedStyles.styles[parsedStyles.defaultStyleId]?.fontFamily ?? themeFonts.minor ?? '等线',
     defaultFontSizePt: parsedStyles.styles[parsedStyles.defaultStyleId]?.fontSizePt ?? 11,
     date1904,
     definedNames: Object.keys(definedNames).length ? definedNames : undefined,

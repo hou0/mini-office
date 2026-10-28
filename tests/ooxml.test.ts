@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { createBlankDoc, createBlankWorkbook, createSheet } from '@mini-office/document-model';
-import { analyzeCapabilities, loadOoxmlPackage, detectKind } from '@mini-office/ooxml';
+import { analyzeCapabilities, loadOoxmlPackage, detectKind, readThemeFonts } from '@mini-office/ooxml';
 import { serializeDocx } from '../packages/editor-word/src/serialize';
 import { parseDocxPackage } from '../packages/editor-word/src/parse';
 import { paginateBlocks } from '../packages/editor-word/src/pagination';
@@ -26,6 +26,18 @@ async function macroPackage(): Promise<Uint8Array> {
 }
 
 describe('OOXML package handling', () => {
+  // 功能：回归验证主题字体优先使用东亚字体；时间：2026-10-28；作者：lq。
+  it('prefers East Asian theme fonts for Office documents', async () => {
+    const zip = new JSZip();
+    zip.file('xl/theme/theme1.xml', '<a:theme xmlns:a="x"><a:themeElements><a:fontScheme><a:majorFont><a:latin typeface="Arial"/><a:ea typeface="等线"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface="微软雅黑"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>');
+    const pkg = await loadOoxmlPackage(await zip.generateAsync({ type: 'uint8array' }));
+    try {
+      expect(await readThemeFonts(pkg, 'xl/theme/theme1.xml')).toEqual({ major: '等线', minor: '微软雅黑' });
+    } finally {
+      pkg.dispose();
+    }
+  });
+
   it('serializes and reparses a blank DOCX', async () => {
     const doc = createBlankDoc();
     doc.blocks = [
@@ -44,6 +56,27 @@ describe('OOXML package handling', () => {
       const text = parsed.blocks.map((block) => (block.type === 'paragraph' ? block.runs.map((run) => run.text ?? '').join('') : '')).join('');
       expect(text).toContain('Mini Office 空白文档');
       expect(parsed.page.sizeName).toBe('A4');
+    } finally {
+      pkg.dispose();
+    }
+  });
+
+  // 功能：验证 DOCX 节点和属性更换命名空间前缀后仍能保留字号、粗体和对齐；时间：2026-10-28；作者：lq。
+  it('parses DOCX with nonstandard namespace prefixes', async () => {
+    const zip = new JSZip();
+    zip.file(
+      'word/document.xml',
+      '<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><x:body><x:p><x:pPr><x:jc x:val="center"/></x:pPr><x:r><x:rPr><x:b x:val="1"/><x:sz x:val="28"/></x:rPr><x:t>前缀兼容</x:t></x:r></x:p></x:body></x:document>',
+    );
+    const pkg = await loadOoxmlPackage(await zip.generateAsync({ type: 'uint8array' }));
+    try {
+      const parsed = await parseDocxPackage(pkg, { fileName: 'prefix.docx' });
+      const paragraph = parsed.blocks[0];
+      expect(paragraph.type).toBe('paragraph');
+      if (paragraph.type === 'paragraph') {
+        expect(paragraph.style.alignment).toBe('center');
+        expect(paragraph.runs[0]?.style).toMatchObject({ bold: true, fontSizePt: 14 });
+      }
     } finally {
       pkg.dispose();
     }

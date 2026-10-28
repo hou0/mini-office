@@ -68,7 +68,12 @@ export class TauriPlatformAdapter implements PlatformAdapter {
   async convertLegacy(path: string): Promise<OpenedFile | null> {
     try {
       const converted = await tauriInvoke<string>('convert_legacy_document', { input: path });
-      return this.openPath(converted);
+      const opened = await this.openPath(converted);
+      if (!opened) return null;
+      // 功能：转换旧版文件后保留用户原始显示名称，避免临时转换后缀污染标签和最近文件；时间：2026-10-28；作者：lq。
+      const originalExtension = path.split('.').pop()?.toLowerCase();
+      const convertedExtension = originalExtension === 'doc' ? 'docx' : originalExtension === 'xls' ? 'xlsx' : 'pptx';
+      return { ...opened, name: `${baseName(path).replace(/\.[^.]+$/, '')}.${convertedExtension}` };
     } catch (error) {
       throw new OfficeError(ErrorCodes.PARSE_FAILED, `无法转换旧版文件：${baseName(path)}`, error instanceof Error ? error.message : String(error));
     }
@@ -141,6 +146,15 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   async readDroppedFile(file: File): Promise<OpenedFile> {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (/\.(doc|xls|ppt)$/i.test(file.name)) {
+      try {
+        // 功能：拖拽旧版 Office 文件时直接走内存转换，不创建用户可见临时文件；时间：2026-10-28；作者：lq。
+        const converted = await tauriInvoke<{ name: string; bytes: ArrayBuffer | number[] }>('convert_legacy_bytes', { name: file.name, bytes: Array.from(bytes) });
+        return { name: converted.name, bytes: toUint8Array(converted.bytes) };
+      } catch (error) {
+        throw new OfficeError(ErrorCodes.PARSE_FAILED, `无法转换旧版文件：${file.name}`, error instanceof Error ? error.message : String(error));
+      }
+    }
     return { name: file.name, bytes };
   }
 }

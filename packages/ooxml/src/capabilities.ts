@@ -390,8 +390,11 @@ export async function readThemeFonts(
   if (!pkg.has(part)) return { major: '', minor: '' };
   const xml = parseXml(await pkg.text(part));
   const fontScheme = node(node(node(xml['a:theme']) ?? xml.theme)?.['a:themeElements'])?.['a:fontScheme'];
-  const major = node(node(fontScheme)?.['a:majorFont'])?.['a:latin'];
-  const minor = node(node(fontScheme)?.['a:minorFont'])?.['a:latin'];
+  // 功能：主题字体优先采用东亚字体，避免中文文档错误回退到 Arial 等西文字体；时间：2026-10-28；作者：lq。
+  const majorFont = node(node(fontScheme)?.['a:majorFont']);
+  const minorFont = node(node(fontScheme)?.['a:minorFont']);
+  const major = node(majorFont)?.['a:ea'] ?? node(majorFont)?.['a:latin'];
+  const minor = node(minorFont)?.['a:ea'] ?? node(minorFont)?.['a:latin'];
   return {
     major: attr(major, 'typeface') ?? '',
     minor: attr(minor, 'typeface') ?? '',

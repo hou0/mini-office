@@ -22,6 +22,7 @@ import {
   getAttr,
   getAttrLocal,
   loadOoxmlPackage,
+  localName,
   mimeForPath,
   numericAttr,
   parseXmlDom,
@@ -310,7 +311,7 @@ function parseStyleSheet(stylesXml: string, ctx: ParseContext): StyleSheet {
       docDefaults.para = applyParagraphStyle({}, pPrDefault, ctx);
     }
     for (const styleElement of Array.from(stylesRoot.childNodes)) {
-      if (!(styleElement instanceof Element) || styleElement.tagName !== 'w:style') continue;
+      if (!(styleElement instanceof Element) || localName(styleElement) !== 'style') continue;
       const id = attrValue(styleElement, 'w:styleId');
       if (!id) continue;
       const type = attrValue(styleElement, 'w:type') ?? 'paragraph';
@@ -365,12 +366,12 @@ function parseNumbering(numberingXml: string): Map<string, NumberingLevel[]> {
   const root = firstDescendant(doc, 'w:numbering') ?? doc.documentElement;
   const abstractLevels = new Map<string, NumberingLevel[]>();
   for (const abstractNum of Array.from(root.childNodes)) {
-    if (!(abstractNum instanceof Element) || abstractNum.tagName !== 'w:abstractNum') continue;
+    if (!(abstractNum instanceof Element) || localName(abstractNum) !== 'abstractNum') continue;
     const id = attrValue(abstractNum, 'w:abstractNumId');
     if (!id) continue;
     const levels: NumberingLevel[] = [];
     for (const lvl of Array.from(abstractNum.childNodes)) {
-      if (!(lvl instanceof Element) || lvl.tagName !== 'w:lvl') continue;
+      if (!(lvl instanceof Element) || localName(lvl) !== 'lvl') continue;
       const ilvl = numericAttr(lvl, 'w:ilvl') ?? levels.length;
       const pPr = firstChild(lvl, 'w:pPr');
       const ind = firstChild(pPr, 'w:ind');
@@ -394,7 +395,7 @@ function parseNumbering(numberingXml: string): Map<string, NumberingLevel[]> {
     abstractLevels.set(id, levels);
   }
   for (const num of Array.from(root.childNodes)) {
-    if (!(num instanceof Element) || num.tagName !== 'w:num') continue;
+    if (!(num instanceof Element) || localName(num) !== 'num') continue;
     const numId = attrValue(num, 'w:numId');
     const abstractId = attrValue(firstChild(num, 'w:abstractNumId'), 'w:val');
     if (!numId || !abstractId) continue;
@@ -673,8 +674,8 @@ async function parseRunElement(
 
   for (const child of Array.from(element.childNodes)) {
     if (!(child instanceof Element)) continue;
-    switch (child.tagName) {
-      case 'w:t': {
+    switch (localName(child)) {
+      case 't': {
         const text = child.textContent ?? '';
         if (text) {
           const run: DocRun = { text, style };
@@ -695,24 +696,24 @@ async function parseRunElement(
         }
         break;
       }
-      case 'w:tab':
+      case 'tab':
         runs.push({ text: '', style, tab: true });
         break;
-      case 'w:br': {
+      case 'br': {
         const type = attrValue(child, 'w:type');
         runs.push({ text: '', style, field: type === 'page' ? '__PAGE_BREAK__' : undefined, lineBreak: type !== 'page' });
         break;
       }
-      case 'w:cr':
+      case 'cr':
         runs.push({ text: '', style, lineBreak: true });
         break;
-      case 'w:noBreakHyphen':
+      case 'noBreakHyphen':
         runs.push({ text: '‑', style });
         break;
-      case 'w:softHyphen':
+      case 'softHyphen':
         runs.push({ text: '\u00AD', style });
         break;
-      case 'w:sym': {
+      case 'sym': {
         const charCode = attrValue(child, 'w:char');
         if (charCode) {
           const code = parseInt(charCode, 16);
@@ -720,15 +721,15 @@ async function parseRunElement(
         }
         break;
       }
-      case 'w:drawing': {
+      case 'drawing': {
         runs.push(...(await parseDrawing(child, ctx)));
         break;
       }
-      case 'w:pict': {
+      case 'pict': {
         runs.push(...(await parseVmlPicture(child, ctx)));
         break;
       }
-      case 'w:fldChar': {
+      case 'fldChar': {
         const type = attrValue(child, 'w:fldCharType');
         if (type === 'begin') state.fieldStack.push({ instr: '', phase: 'instr' });
         else if (type === 'separate' && topField()) topField()!.phase = 'result';
@@ -740,12 +741,12 @@ async function parseRunElement(
         }
         break;
       }
-      case 'w:instrText': {
+      case 'instrText': {
         const field = topField();
         if (field && field.phase === 'instr') field.instr += child.textContent ?? '';
         break;
       }
-      case 'w:delText':
+      case 'delText':
         break;
       default:
         break;
@@ -763,23 +764,23 @@ async function parseInlineChildren(
   const runs: DocRun[] = [];
   for (const child of Array.from(parent.childNodes)) {
     if (!(child instanceof Element)) continue;
-    switch (child.tagName) {
-      case 'w:r':
+    switch (localName(child)) {
+      case 'r':
         runs.push(...(await parseRunElement(child, base, ctx, state)));
         break;
-      case 'w:hyperlink':
-      case 'w:ins':
-      case 'w:smartTag':
-      case 'w:customXml':
-      case 'w:sdt': {
+      case 'hyperlink':
+      case 'ins':
+      case 'smartTag':
+      case 'customXml':
+      case 'sdt': {
         const container =
-          child.tagName === 'w:sdt' ? firstChild(child, 'w:sdtContent') ?? child : child;
-        if (child.tagName === 'w:ins') ctx.hasTrackedChanges = true;
-        if (child.tagName === 'w:sdt') ctx.hasContentControls = true;
+          localName(child) === 'sdt' ? firstChild(child, 'w:sdtContent') ?? child : child;
+        if (localName(child) === 'ins') ctx.hasTrackedChanges = true;
+        if (localName(child) === 'sdt') ctx.hasContentControls = true;
         runs.push(...(await parseInlineChildren(container, base, ctx, state)));
         break;
       }
-      case 'w:fldSimple': {
+      case 'fldSimple': {
         const instr = attrValue(child, 'w:instr') ?? '';
         // 功能：兼容简式 MERGEFIELD，保持第一个结果字符的样式；时间：2026-10-24；作者：lq。
         const name = parseMergeField(instr);
@@ -799,16 +800,16 @@ async function parseInlineChildren(
         }
         break;
       }
-      case 'w:del':
+      case 'del':
         ctx.hasTrackedChanges = true;
         break;
-      case 'w:bookmarkStart':
-      case 'w:bookmarkEnd':
-      case 'w:commentRangeStart':
-      case 'w:commentRangeEnd':
-      case 'w:proofErr':
+      case 'bookmarkStart':
+      case 'bookmarkEnd':
+      case 'commentRangeStart':
+      case 'commentRangeEnd':
+      case 'proofErr':
         break;
-      case 'w:br':
+      case 'br':
         runs.push({ text: '', style: base, lineBreak: getAttr(child, 'w:type') !== 'page' });
         break;
       default:
@@ -889,7 +890,7 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
   const tblPr = firstChild(element, 'w:tblPr');
   const grid = firstChild(element, 'w:tblGrid');
   let columnWidths = Array.from(grid?.childNodes ?? [])
-    .filter((node): node is Element => node instanceof Element && node.tagName === 'w:gridCol')
+    .filter((node): node is Element => node instanceof Element && localName(node) === 'gridCol')
     .map((col) => twipsToPx(numericAttr(col, 'w:w', 0) ?? 0))
     .filter((width) => width > 0);
 
@@ -930,13 +931,13 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
   let colCount = columnWidths.length;
 
   for (const rowElement of Array.from(element.childNodes)) {
-    if (!(rowElement instanceof Element) || rowElement.tagName !== 'w:tr') continue;
+    if (!(rowElement instanceof Element) || localName(rowElement) !== 'tr') continue;
     const trPr = firstChild(rowElement, 'w:trPr');
     const height = numericAttr(firstChild(trPr, 'w:trHeight'), 'w:val');
     const isHeader = toggleValue(firstChild(trPr, 'w:tblHeader'));
     const rawCells: RawCell[] = [];
     for (const cellElement of Array.from(rowElement.childNodes)) {
-      if (!(cellElement instanceof Element) || cellElement.tagName !== 'w:tc') continue;
+      if (!(cellElement instanceof Element) || localName(cellElement) !== 'tc') continue;
       const tcPr = firstChild(cellElement, 'w:tcPr');
       const gridSpan = numericAttr(firstChild(tcPr, 'w:gridSpan'), 'w:val') ?? 1;
       const vMergeElement = firstChild(tcPr, 'w:vMerge');
@@ -1050,8 +1051,8 @@ async function parseBlockContainer(element: Element, ctx: ParseContext): Promise
   const blocks: DocBlock[] = [];
   for (const child of Array.from(element.childNodes)) {
     if (!(child instanceof Element)) continue;
-    switch (child.tagName) {
-      case 'w:p': {
+    switch (localName(child)) {
+      case 'p': {
         const { paragraph, pageBreakAfter } = await parseParagraph(child, ctx);
         // 功能：纯分页标记不额外占用一行，避免长表格重开后插入空白页；时间：2026-10-24；作者：lq。
         const breakOnly = pageBreakAfter && !paragraph.sectionEnd && paragraph.runs.every((run) => !run.text && !run.image && !run.tab && !run.lineBreak);
@@ -1059,21 +1060,21 @@ async function parseBlockContainer(element: Element, ctx: ParseContext): Promise
         if (pageBreakAfter) blocks.push({ type: 'pageBreak', id: uid('break') });
         break;
       }
-      case 'w:tbl':
+      case 'tbl':
         blocks.push(await parseTable(child, ctx));
         break;
-      case 'w:sdt': {
+      case 'sdt': {
         ctx.hasContentControls = true;
         const content = firstChild(child, 'w:sdtContent');
         if (content) blocks.push(...(await parseBlockContainer(content, ctx)));
         break;
       }
-      case 'w:customXml': {
+      case 'customXml': {
         blocks.push(...(await parseBlockContainer(child, ctx)));
         break;
       }
-      case 'w:altChunk':
-      case 'w:sectPr':
+      case 'altChunk':
+      case 'sectPr':
         break;
       default:
         break;
@@ -1134,7 +1135,7 @@ async function parseHeaderFooter(
   if (!sectPr) return undefined;
   const references = Array.from(sectPr.childNodes).filter(
     (node): node is Element =>
-      node instanceof Element && node.tagName === `w:${kind}Reference`,
+      node instanceof Element && localName(node) === `${kind}Reference`,
   );
   if (references.length === 0) return undefined;
   const preferred =
@@ -1204,7 +1205,7 @@ export async function parseDocxPackage(
   const body = firstDescendant(doc, 'w:body') ?? doc.documentElement;
   const sectionProperties =
     Array.from(body.childNodes).find(
-      (node): node is Element => node instanceof Element && node.tagName === 'w:sectPr',
+      (node): node is Element => node instanceof Element && localName(node) === 'sectPr',
     ) ??
     firstDescendant(doc, 'w:sectPr');
   // 功能：兼容分节符位于正文段落中的页眉页脚引用，避免只读取末节导致首节页脚丢失；时间：2026-10-27；作者：lq。

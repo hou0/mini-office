@@ -161,6 +161,15 @@ impl CapabilityReport {
             .any(|warning| warning.severity == Severity::Blocking)
     }
 
+    /// 功能：根据已扫描能力计算轻量兼容性百分比，作为真实样本回归的统一指标；时间：2026-10-28；作者：lq。
+    pub fn compatibility_score(&self) -> u8 {
+        if self.features.is_empty() {
+            return self.level.saturating_mul(25);
+        }
+        let supported = self.features.iter().filter(|feature| feature.supported).count();
+        ((supported * 100) / self.features.len()).min(100) as u8
+    }
+
     pub fn finalize(mut self, readonly_kind: bool) -> Self {
         if self.blocking() {
             self.level = 1;
@@ -325,6 +334,15 @@ mod tests {
             Severity::Blocking,
         ));
         assert_eq!(blocking.finalize(false).level, 1);
+    }
+
+    // 功能：验证兼容性评分按已支持能力比例计算；时间：2026-10-28；作者：lq。
+    #[test]
+    fn compatibility_score_uses_supported_features() {
+        let mut report = CapabilityReport::new();
+        report.feature(CapabilityFeature::new("a", "A", true, Severity::Info));
+        report.feature(CapabilityFeature::new("b", "B", false, Severity::Warning));
+        assert_eq!(report.compatibility_score(), 50);
     }
 
     #[test]
