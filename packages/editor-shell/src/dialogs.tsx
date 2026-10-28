@@ -771,7 +771,7 @@ function AboutContent() {
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--mo-text-muted)]">
             <span>版本 {APP_VERSION} · 离线优先的轻量办公套件</span>
             <a
-              href={RELEASES_URL}
+              href={latestRelease?.url ?? RELEASES_URL}
               target="_blank"
               rel="noreferrer"
               // 功能：从关于页跳转到新版本发布页，桌面端交由系统浏览器打开；时间：2026-10-24；作者：lq。

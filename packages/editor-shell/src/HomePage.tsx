@@ -444,7 +444,7 @@ export function HomePage() {
             <span>离线优先 · 不上传文件</span>
             <span>DOCX / XLSX / PPTX</span>
             <a
-              href={RELEASES_URL}
+              href={latestRelease?.url ?? RELEASES_URL}
               target="_blank"
               rel="noreferrer"
               // 功能：提供新版本发布页入口；时间：2026-10-24；作者：lq。
