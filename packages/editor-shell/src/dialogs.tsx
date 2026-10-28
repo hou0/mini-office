@@ -46,6 +46,7 @@ import {
   type ThemeMode,
 } from '@mini-office/design-system';
 import { isTauriRuntime, openExternalUrl, supportsWindowVibrancy } from '@mini-office/platform-adapter';
+import { useLatestRelease } from './update-check';
 
 // 功能：统一关于页的新版本发布地址；时间：2026-10-24；作者：lq。
 const RELEASES_URL = 'https://github.com/lq0910/mini-office/releases';
@@ -756,6 +757,7 @@ function ShortcutsContent() {
 }
 
 function AboutContent() {
+  const latestRelease = useLatestRelease();
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 rounded-lg bg-[var(--mo-surface-2)] p-3">
@@ -780,7 +782,7 @@ function AboutContent() {
               }}
               className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[var(--mo-accent)] hover:bg-[var(--mo-surface-2)] hover:underline"
             >
-              新版本更新
+              {latestRelease ? `发现新版本 ${latestRelease.tagName}${latestRelease.prerelease ? '（预览版）' : ''}` : '新版本更新'}
               <ExternalLink size={11} />
             </a>
           </div>
