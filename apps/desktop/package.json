@@ -1,6 +1,6 @@
 {
   "name": "@mini-office/desktop",
-  "version": "0.1.5-preview.2",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,8 @@
     "@mini-office/editor-sheet": "workspace:*",
     "@mini-office/editor-slides": "workspace:*",
     "@mini-office/export-service": "workspace:*",
+    "@mini-office/plugin-api": "workspace:*",
+    "@mini-office/plugin-host": "workspace:*",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.0.0",

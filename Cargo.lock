@@ -2147,7 +2147,7 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "mini-office-desktop"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "office-compat",
@@ -2167,6 +2167,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
  "uuid",
 ]
 
@@ -2512,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "office-compat"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "office_oxide",
@@ -2521,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "office-core"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "hex",
@@ -2532,7 +2533,7 @@ dependencies = [
 
 [[package]]
 name = "office-doc"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "office-ooxml",
@@ -2542,7 +2543,7 @@ dependencies = [
 
 [[package]]
 name = "office-font"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "dirs 6.0.0",
  "office-core",
@@ -2552,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "office-ooxml"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "office-security",
@@ -2565,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "office-pdf"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "office-core",
@@ -2577,7 +2578,7 @@ dependencies = [
 
 [[package]]
 name = "office-platform"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "dirs 6.0.0",
  "office-core",
@@ -2586,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "office-security"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "quick-xml 0.37.5",
@@ -2598,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "office-sheet"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "office-ooxml",
@@ -2608,7 +2609,7 @@ dependencies = [
 
 [[package]]
 name = "office-slides"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "office-core",
  "office-ooxml",
@@ -2618,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "office-storage"
-version = "0.1.5-preview.2"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "hex",
@@ -3926,6 +3927,22 @@ dependencies = [
  "thiserror 2.0.21",
  "url",
  "windows",
+ "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "726b6da0dd5bd1344f84f4108a622c07d01923baacb5c803a605189672c5352f"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
  "zbus",
 ]
 
