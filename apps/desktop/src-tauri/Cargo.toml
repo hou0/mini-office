@@ -31,3 +31,7 @@ office-sheet.workspace = true
 office-slides.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+
+# 功能：Windows/Linux 双击文件或拖拽到图标可能启动第二个进程，用单实例插件转发文件参数；时间：2026-10-29；作者：lq。
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"

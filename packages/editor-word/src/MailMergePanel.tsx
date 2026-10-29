@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { getSourceBytes, useWorkspaceStore, type DocBlock, type DocModel, type WordSession, type WorkbookModel } from '@mini-office/document-model';
-import { getPlatformAdapter, printCurrentView } from '@mini-office/platform-adapter';
+import { getPlatformAdapter, printPages } from '@mini-office/platform-adapter';
 import { Button, Dialog, Field, Input, ProgressBar, Select } from '@mini-office/ui';
 import { stripExtension } from '@mini-office/shared';
 import { exportElementsToPdf } from '@mini-office/export-service';
@@ -54,7 +54,6 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
   const [previewWidth, setPreviewWidth] = useState(440);
   const previewRef = useRef<HTMLDivElement>(null);
   const cancel = useRef(false);
-  const printCleanup = useRef<(() => void) | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const workbooks = Object.values(sessions).filter((item) => item.kind === 'xlsx');
   const templateFields = useMemo(() => collectMergeFields(doc), [doc]);
@@ -93,7 +92,7 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
     setConditions([]); setSearch(''); setSort(''); setPreviewIndex(0); setTablePage(0); setAllowEmpty(false);
   }, [data]);
   useEffect(() => { setTablePage(0); setPreviewIndex(0); }, [search, conditions, sort, descending]);
-  useEffect(() => () => { cancel.current = true; printCleanup.current?.(); }, []);
+  useEffect(() => () => { cancel.current = true; }, []);
   useEffect(() => {
     mergeDrafts.set(session.id, { source, sheetId, headerRow, conditions, search, sort, descending, selected: [...selected], allowEmpty, namePattern, output });
     for (const id of mergeDrafts.keys()) if (!sessions[id]) mergeDrafts.delete(id);
@@ -119,7 +118,7 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setLoading(false); }
   };
-  const closeDialog = () => { if (busy) return; printCleanup.current?.(); printCleanup.current = null; setDialogOpen(false); };
+  const closeDialog = () => { if (busy) return; setDialogOpen(false); };
   const multipleSections = doc.blocks.some((block) => block.type === 'paragraph' && block.sectionEnd);
   const badNameFields = [...namePattern.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]).filter((field) => field !== '序号' && !data?.fields.includes(field));
   const invalidName = (output === 'docx-zip' || output === 'pdf-zip') && badNameFields.length > 0;
@@ -127,13 +126,11 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
   const generate = async () => {
     if (!canGenerate || busy) return;
     cancel.current = false; setBusy(true); setProgress(0); setError('');
-    printCleanup.current?.(); printCleanup.current = null;
     const container = document.createElement('div');
     container.style.cssText = 'position:fixed;left:-100000px;top:0;background:white;color:black;';
     document.body.appendChild(container);
     const mounts: ReturnType<typeof mountMergeReport>[] = [];
     const cleanup = () => { mounts.forEach((mount) => mount.dispose()); container.remove(); };
-    let keepForPrint = false;
     try {
       const records = [...chosen];
       const template = structuredClone(doc);
@@ -171,16 +168,22 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
       if (cancel.current) throw new Error('已取消生成，本次结果未保存。');
       setStatus('正在整理输出…');
       if (output === 'print') {
-        container.className = 'mo-merge-print-root';
-        allPages.at(-1)?.setAttribute('data-merge-last', 'true');
-        const style = document.createElement('style');
-        // 功能：只打印选中的报告，隐藏模板和交互界面，逐份独立分页；时间：2026-10-24；作者：lq。
-        style.textContent = `@media print { html, body { height:auto !important;overflow:visible !important; } body > :not(.mo-merge-print-root) { display:none !important; } body * { visibility:hidden !important; } .mo-word-pages { display:none !important; } .mo-merge-print-root, .mo-merge-print-root * { visibility:visible !important; } .mo-merge-print-root { position:absolute !important;left:0 !important;top:0 !important;width:100% !important; } .mo-merge-print-root .mo-merge-measure { display:none !important; } .mo-merge-print-root [data-merge-page] { break-after:page;page-break-after:always;transform:none !important; } .mo-merge-print-root [data-merge-last] { break-after:auto;page-break-after:auto; } .mo-merge-print-root .flex { display:block !important; } @page { size:${doc.page.widthPx}px ${doc.page.heightPx}px; margin:0; } }`;
-        container.appendChild(style);
-        keepForPrint = true;
-        printCleanup.current = cleanup;
-        if (!await printCurrentView()) throw new Error('当前平台不能打开打印，请选择合并 PDF 后打印。');
-        setStatus(`已准备 ${records.length} 份报告、${allPages.length} 页。打印面板中确认打印机和份数；关闭本窗口会清理临时打印页面。`);
+        // 功能：与 Word/Excel 共用打印容器，页数严格等于实测分页，避免绝对定位根节点被裁页；时间：2026-10-29；作者：lq。
+        const pages = allPages.map((page) => {
+          const clone = page.cloneNode(true) as HTMLElement;
+          clone.style.transform = 'none';
+          clone.style.width = `${doc.page.widthPx}px`;
+          clone.style.height = `${doc.page.heightPx}px`;
+          return clone;
+        });
+        const ok = await printPages({
+          pages,
+          widthPx: doc.page.widthPx,
+          heightPx: doc.page.heightPx,
+          title: baseName,
+        });
+        if (!ok) throw new Error('当前平台不能打开打印，请选择合并 PDF 后打印。');
+        setStatus(`已准备 ${records.length} 份报告、${allPages.length} 页。打印面板中确认打印机和份数。`);
       } else {
         let bytes: Uint8Array;
         let extension: string;
@@ -209,8 +212,7 @@ export function MailMergePanel({ open, session, doc, onClose, onInsertField, ren
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setError(message); setStatus('');
-      if (keepForPrint) { keepForPrint = false; printCleanup.current = null; }
-    } finally { if (!keepForPrint) cleanup(); setBusy(false); }
+    } finally { cleanup(); setBusy(false); }
   };
   if (!open) return null;
   return <>

@@ -133,7 +133,11 @@ export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string,
   return {
     fontFamily: fontStackFor(defaultFont) || DOC_FONT_STACK,
     fontSize: `${defaultFontSizePt}pt`,
-    lineHeight: style.lineHeightExactPx ? `${style.lineHeightExactPx}px` : style.lineHeight ?? 1.5,
+    // 功能：固定值与最小值行距都用 px 表达，CSS 无“至少”语义，取相同高度即可保证分页一致；时间：2026-10-29；作者：lq。
+    lineHeight:
+      style.lineHeightExactPx || style.lineHeightAtLeastPx
+        ? `${style.lineHeightExactPx ?? style.lineHeightAtLeastPx}px`
+        : style.lineHeight ?? 1.5,
     textIndent: style.firstLineIndentPx ? `${style.firstLineIndentPx}px` : undefined,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'break-word',

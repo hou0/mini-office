@@ -2,6 +2,8 @@
 :root {
   --mo-bg: #f6f8fc;
   --mo-surface: #ffffff;
+  /* 功能：浮层（下拉、弹窗、浮层面板）专用不透明底色，避免毛玻璃半透明时文档内容透出；时间：2026-10-29；作者：lq。 */
+  --mo-surface-raised: #ffffff;
   --mo-surface-2: #eef2f9;
   --mo-surface-3: #e4eaf4;
   --mo-canvas: #e9edf5;
@@ -43,6 +45,7 @@
 [data-theme='dark'] {
   --mo-bg: #1c2028;
   --mo-surface: #262c36;
+  --mo-surface-raised: #262c36;
   --mo-surface-2: #303641;
   --mo-surface-3: #3a414e;
   --mo-canvas: #161a20;

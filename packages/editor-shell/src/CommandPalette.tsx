@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  AppWindow,
   ArrowRight,
   Download,
   FilePlus2,
@@ -15,18 +16,23 @@ import {
   Play,
   Presentation,
   Printer,
+  Puzzle,
   Save,
   SaveAll,
   Search,
   Settings,
+  Sparkles,
   Sun,
   Table2,
   X,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@mini-office/document-model';
+import { collectMacroCommands, usePluginRegistry } from '@mini-office/plugin-host';
 import { Kbd } from '@mini-office/ui';
 import { MOD_KEY, type OfficeKind } from '@mini-office/shared';
 import { ACCENT_PRESETS, applyAppearance } from '@mini-office/design-system';
+import { canRunMacro, executePluginMacro } from './plugin-macro';
+import { collectShortcutBindings, formatShortcut } from './shortcuts';
 
 interface Command {
   id: string;
@@ -34,6 +40,8 @@ interface Command {
   section: string;
   icon: React.ReactNode;
   shortcut?: string;
+  /** 右侧补充说明，用于"快捷键冲突""不适用"这类需要解释的禁用原因。 */
+  note?: string;
   keywords?: string;
   disabled?: boolean;
   run: () => void;
@@ -61,6 +69,8 @@ export function CommandPalette({
   const settings = useWorkspaceStore((state) => state.settings);
   const recent = useWorkspaceStore((state) => state.recent);
   const openSnapshot = useWorkspaceStore((state) => state.openSnapshot);
+  // 订阅 installed 而不是调用 macroCommands()，这样安装/禁用插件后命令面板立即刷新。
+  const installedPlugins = usePluginRegistry((state) => state.installed);
 
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -176,6 +186,16 @@ export function CommandPalette({
         run: () => fire('mo:find'),
       },
       {
+        // 功能：样式库是整段排版的入口，放在编辑分组便于搜索到；时间：2026-10-29；作者：lq。
+        id: 'word-styles',
+        label: '样式库（预设样式与我的样式集）',
+        section: '编辑',
+        icon: <Sparkles size={15} />,
+        keywords: 'style 样式 标题 正文 排版',
+        disabled: activeSession?.kind !== 'docx',
+        run: () => fire('mo:styles'),
+      },
+      {
         id: 'present',
         label: '进入全屏演示',
         section: '编辑',
@@ -241,6 +261,23 @@ export function CommandPalette({
         run: () => openDialog({ type: 'settings' }),
       },
       {
+        id: 'plugins',
+        label: '管理插件',
+        section: '视图',
+        icon: <Puzzle size={15} />,
+        keywords: 'plugin 扩展 主题 安装',
+        run: () => openDialog({ type: 'plugins' }),
+      },
+      // 功能：命令面板直达默认应用设置；时间：2026-10-29；作者：lq。
+      {
+        id: 'default-app',
+        label: '设为默认应用',
+        section: '视图',
+        icon: <AppWindow size={15} />,
+        keywords: 'default 默认应用 文件关联 双击打开',
+        run: () => openDialog({ type: 'default-app' }),
+      },
+      {
         id: 'compatibility',
         label: '查看兼容性报告',
         section: '帮助',
@@ -265,11 +302,27 @@ export function CommandPalette({
       icon: item.kind === 'xlsx' ? <Table2 size={15} /> : item.kind === 'pptx' ? <Presentation size={15} /> : <FileText size={15} />,
       run: () => void openSnapshot(item.id),
     }));
-    return [...list, ...recentCommands];
+    // 插件宏：只列当前文档类型能跑的，避免在 Word 里出现 Excel 命令。
+    // 快捷键走统一的冲突检测，冲突项禁用并写明原因——展示一个按不动的快捷键比不展示更糟。
+    const pluginCommands: Command[] = collectShortcutBindings(collectMacroCommands(installedPlugins)).map((binding) => ({
+      id: `plugin-${binding.macro.key}`,
+      label: binding.macro.command.title,
+      section: `插件 · ${binding.macro.pluginName}`,
+      icon: <Sparkles size={15} />,
+      shortcut: binding.shortcut ? formatShortcut(binding.shortcut) : undefined,
+      note: binding.conflict ?? undefined,
+      keywords: `${binding.macro.command.keywords ?? ''} plugin 插件 宏 ${binding.macro.pluginName}`,
+      disabled: !!binding.conflict || !canRunMacro(activeSession, binding.macro),
+      run: () => {
+        executePluginMacro(binding.macro);
+      },
+    }));
+    return [...list, ...pluginCommands, ...recentCommands];
   }, [
     activeId,
     activeSession,
     createDocument,
+    installedPlugins,
     onHome,
     onRequestClose,
     openDialog,
@@ -392,7 +445,9 @@ export function CommandPalette({
                   >
                     <span className="flex h-5 w-5 shrink-0 items-center justify-center">{command.icon}</span>
                     <span className="min-w-0 flex-1 truncate">{command.label}</span>
-                    {command.shortcut ? (
+                    {command.note ? (
+                      <span className="shrink-0 text-[9px] text-[var(--mo-warning)]">{command.note}</span>
+                    ) : command.shortcut ? (
                       <span className="shrink-0 text-[10px] text-[var(--mo-text-faint)]">{command.shortcut}</span>
                     ) : (
                       <ArrowRight size={11} className="shrink-0 text-[var(--mo-text-faint)] opacity-0" />

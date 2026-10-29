@@ -5,6 +5,7 @@ import {
   type DocModel,
   type DocParagraph,
   type DocRun,
+  type DocStyleDefinition,
   type DocTable,
   type DocTableCell,
   type PageSetup,
@@ -27,6 +28,8 @@ import {
 } from '@mini-office/ooxml';
 import { extensionOf, uid } from '@mini-office/shared';
 import { documentSections } from './sections';
+// 功能：保存时把文档用到的样式定义写入 styles.xml，Word/WPS 才能显示样式名与标题层级；时间：2026-10-29；作者：lq。
+import { collectUsedStyleDefinitions, resolveStyleRun } from './styles';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -49,6 +52,8 @@ interface SerializeState {
   contentTypesChanged: boolean;
   addedImages: Map<string, string>;
   imageCounter: number;
+  /** 功能：图形对象 ID 必须全文档唯一，独立计数避免复用关系时产生重复 docPr id；时间：2026-10-29；作者：lq。 */
+  drawingCounter: number;
   hasNumbering: boolean;
   sectPrXml?: string;
 }
@@ -64,6 +69,19 @@ const IMAGE_MIME_EXT: Record<string, string> = {
   'image/tiff': 'tiff',
 };
 
+/**
+ * 功能：把 #rgb / ARGB 归一化为 ST_HexColor 要求的 6 位十六进制，非法值返回 undefined；
+ * Word 对 w:color、w:shd/@w:fill 的取值做严格校验，三位简写会让文档被判为非法；时间：2026-10-29；作者：lq。
+ */
+function hexColor(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const raw = value.replace('#', '').trim();
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) return raw.toUpperCase();
+  if (/^[0-9a-fA-F]{8}$/.test(raw)) return raw.slice(2).toUpperCase();
+  if (/^[0-9a-fA-F]{3}$/.test(raw)) return raw.split('').map((char) => char + char).join('').toUpperCase();
+  return undefined;
+}
+
 function attr(value: string | number | undefined, name: string): string {
   if (value === undefined || value === '') return '';
   return ` ${name}="${escapeXml(String(value))}"`;
@@ -75,6 +93,10 @@ function boolTag(tag: string, value: boolean | undefined, valueAttribute = true)
   return valueAttribute ? `<w:${tag}/>` : `<w:${tag}/>`;
 }
 
+/**
+ * 功能：按 ECMA-376 CT_RPr 的固定顺序输出字符属性，避免 Word 因元素顺序不符模式而拒绝打开；时间：2026-10-29；作者：lq。
+ * 顺序：rStyle → rFonts → b → i → caps → smallCaps → strike → color → spacing → sz/szCs → u → shd → vertAlign。
+ */
 function runProperties(style: RunStyle): string {
   const parts: string[] = [];
   if (style.fontFamily) {
@@ -84,47 +106,73 @@ function runProperties(style: RunStyle): string {
   }
   if (style.bold !== undefined) parts.push(`<w:b${style.bold ? '' : ' w:val="0"'}/>`);
   if (style.italic !== undefined) parts.push(`<w:i${style.italic ? '' : ' w:val="0"'}/>`);
-  if (style.underline !== undefined) {
-    parts.push(`<w:u w:val="${style.underline ? 'single' : 'none'}"/>`);
-  }
+  if (style.allCaps) parts.push('<w:caps/>');
+  if (style.smallCaps) parts.push('<w:smallCaps/>');
   if (style.strike !== undefined) parts.push(`<w:strike${style.strike ? '' : ' w:val="0"'}/>`);
-  if (style.color) parts.push(`<w:color w:val="${style.color.replace('#', '')}"/>`);
-  if (style.highlight) {
-    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${style.highlight.replace('#', '')}"/>`);
+  const color = hexColor(style.color);
+  if (color) parts.push(`<w:color w:val="${color}"/>`);
+  if (style.letterSpacingPx) {
+    parts.push(`<w:spacing w:val="${Math.round(style.letterSpacingPx * 15)}"/>`);
   }
   if (style.fontSizePt) {
     const halfPoints = Math.max(2, Math.round(style.fontSizePt * 2));
     parts.push(`<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/>`);
   }
+  if (style.underline !== undefined) {
+    parts.push(`<w:u w:val="${style.underline ? 'single' : 'none'}"/>`);
+  }
+  const highlight = hexColor(style.highlight);
+  if (highlight) {
+    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${highlight}"/>`);
+  }
   if (style.verticalAlign === 'super') parts.push('<w:vertAlign w:val="superscript"/>');
   if (style.verticalAlign === 'sub') parts.push('<w:vertAlign w:val="subscript"/>');
-  if (style.letterSpacingPx) {
-    parts.push(`<w:spacing w:val="${Math.round(style.letterSpacingPx * 15)}"/>`);
-  }
-  if (style.allCaps) parts.push('<w:caps/>');
-  if (style.smallCaps) parts.push('<w:smallCaps/>');
   return parts.length ? `<w:rPr>${parts.join('')}</w:rPr>` : '';
 }
 
+/**
+ * 功能：按 ECMA-376 CT_PPrBase 的固定顺序输出段落属性，避免 Word 因元素顺序不符模式而拒绝打开；时间：2026-10-29；作者：lq。
+ * 顺序：pStyle → keepNext → pageBreakBefore → numPr → pBdr → shd → spacing → ind → jc → outlineLvl。
+ */
 function paragraphProperties(
   paragraph: DocParagraph,
-  state: SerializeState,
+  state: SerializeState | undefined,
   includeNumbering = true,
 ): string {
   const style = paragraph.style;
   const parts: string[] = [];
   if (paragraph.styleId) parts.push(`<w:pStyle w:val="${escapeXml(paragraph.styleId)}"/>`);
-  if (includeNumbering && paragraph.list && state.hasNumbering && paragraph.list.numId) {
+  if (style.keepNext) parts.push('<w:keepNext/>');
+  if (style.pageBreakBefore) parts.push('<w:pageBreakBefore/>');
+  if (includeNumbering && paragraph.list && state?.hasNumbering && paragraph.list.numId) {
     parts.push(
       `<w:numPr><w:ilvl w:val="${paragraph.list.level}"/><w:numId w:val="${escapeXml(paragraph.list.numId)}"/></w:numPr>`,
     );
   }
-  if (style.keepNext) parts.push('<w:keepNext/>');
-  if (style.pageBreakBefore) parts.push('<w:pageBreakBefore/>');
-  if (style.alignment) {
-    const map: Record<string, string> = { left: 'left', center: 'center', right: 'right', justify: 'both' };
-    parts.push(`<w:jc w:val="${map[style.alignment] ?? 'left'}"/>`);
+  // 功能：保存段落边框，确保横线和签名线往返 DOCX 后仍存在；时间：2026-10-27；作者：lq。
+  if (style.borders) {
+    const content = ['top', 'left', 'bottom', 'right'].map((side) => borderXml(side, style.borders?.[side as keyof TableBorders])).join('');
+    if (content) parts.push(`<w:pBdr>${content}</w:pBdr>`);
   }
+  const background = hexColor(style.backgroundColor);
+  if (background) {
+    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${background}"/>`);
+  }
+  const spacingParts: string[] = [];
+  if (style.spaceBeforePx !== undefined) spacingParts.push(`w:before="${Math.round(style.spaceBeforePx * 15)}"`);
+  if (style.spaceAfterPx !== undefined) spacingParts.push(`w:after="${Math.round(style.spaceAfterPx * 15)}"`);
+  if (style.lineHeightExactPx !== undefined) {
+    spacingParts.push(`w:line="${Math.round(style.lineHeightExactPx * 15)}"`);
+    spacingParts.push('w:lineRule="exact"');
+  } else if (style.lineHeightAtLeastPx !== undefined) {
+    // 功能：最小值行距写回 atLeast，Word 打开后仍可继续调整；时间：2026-10-29；作者：lq。
+    spacingParts.push(`w:line="${Math.round(style.lineHeightAtLeastPx * 15)}"`);
+    spacingParts.push('w:lineRule="atLeast"');
+  } else if (style.lineHeight !== undefined) {
+    spacingParts.push(`w:line="${Math.round(style.lineHeight * 240)}"`);
+    spacingParts.push('w:lineRule="auto"');
+  }
+  if (spacingParts.length) parts.push(`<w:spacing ${spacingParts.join(' ')}/>`);
   const indentParts: string[] = [];
   if (style.indentLeftPx) indentParts.push(`w:left="${Math.round(style.indentLeftPx * 15)}"`);
   if (style.indentRightPx) indentParts.push(`w:right="${Math.round(style.indentRightPx * 15)}"`);
@@ -136,24 +184,9 @@ function paragraphProperties(
     }
   }
   if (indentParts.length) parts.push(`<w:ind ${indentParts.join(' ')}/>`);
-  const spacingParts: string[] = [];
-  if (style.spaceBeforePx !== undefined) spacingParts.push(`w:before="${Math.round(style.spaceBeforePx * 15)}"`);
-  if (style.spaceAfterPx !== undefined) spacingParts.push(`w:after="${Math.round(style.spaceAfterPx * 15)}"`);
-  if (style.lineHeightExactPx !== undefined) {
-    spacingParts.push(`w:line="${Math.round(style.lineHeightExactPx * 15)}"`);
-    spacingParts.push('w:lineRule="exact"');
-  } else if (style.lineHeight !== undefined) {
-    spacingParts.push(`w:line="${Math.round(style.lineHeight * 240)}"`);
-    spacingParts.push('w:lineRule="auto"');
-  }
-  if (spacingParts.length) parts.push(`<w:spacing ${spacingParts.join(' ')}/>`);
-  if (style.backgroundColor) {
-    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${style.backgroundColor.replace('#', '')}"/>`);
-  }
-  // 功能：保存段落边框，确保横线和签名线往返 DOCX 后仍存在；时间：2026-10-27；作者：lq。
-  if (style.borders) {
-    const content = ['top', 'left', 'bottom', 'right'].map((side) => borderXml(side, style.borders?.[side as keyof TableBorders])).join('');
-    if (content) parts.push(`<w:pBdr>${content}</w:pBdr>`);
+  if (style.alignment) {
+    const map: Record<string, string> = { left: 'left', center: 'center', right: 'right', justify: 'both' };
+    parts.push(`<w:jc w:val="${map[style.alignment] ?? 'left'}"/>`);
   }
   if (style.outlineLevel !== undefined) parts.push(`<w:outlineLvl w:val="${style.outlineLevel}"/>`);
   return parts.length ? `<w:pPr>${parts.join('')}</w:pPr>` : '';
@@ -163,7 +196,7 @@ function borderXml(tag: string, border: TableBorderSide | undefined): string {
   if (!border) return '';
   if (border.style === 'none' || border.widthPx === 0) return `<w:${tag} w:val="nil"/>`;
   const top = Math.max(2, Math.round(border.widthPx * 6));
-  const color = (border.color ?? '#000000').replace('#', '');
+  const color = hexColor(border.color) ?? '000000';
   return `<w:${tag} w:val="${border.style === 'double' ? 'double' : border.style}" w:sz="${top}" w:space="0" w:color="${color}"/>`;
 }
 
@@ -290,16 +323,18 @@ async function ensureImageRelationship(
   return relId;
 }
 
-function drawingXml(image: DocImage, relId: string, index: number): string {
+function drawingXml(image: DocImage, relId: string, drawingId: number): string {
   const widthEmu = Math.round(image.widthPx * 9525);
   const heightEmu = Math.round(image.heightPx * 9525);
-  const name = escapeXml(image.name ?? `图片 ${index + 1}`);
+  const name = escapeXml(image.name ?? `图片 ${drawingId}`);
   const descr = escapeXml(image.alt ?? image.name ?? '');
-  const content = `<wp:extent cx="${widthEmu}" cy="${heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="${index + 1}" name="${name}" descr="${descr}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A_NS}" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="${A_NS}"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="${PIC_NS}"><pic:nvPicPr><pic:cNvPr id="${index + 1}" name="${name}" descr="${descr}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
+  const geometry = `<wp:extent cx="${widthEmu}" cy="${heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>`;
+  const frame = `<wp:docPr id="${drawingId}" name="${name}" descr="${descr}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A_NS}" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="${A_NS}"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="${PIC_NS}"><pic:nvPicPr><pic:cNvPr id="${drawingId}" name="${name}" descr="${descr}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
   const wrap = image.wrap ?? 'inline';
+  // 功能：浮动图的环绕方式必须排在 wp:docPr 之前（CT_Anchor 顺序），否则 Word 会拒绝打开含浮动图的文档；时间：2026-10-29；作者：lq。
   const drawing = wrap === 'inline'
-    ? `<wp:inline distT="0" distB="0" distL="0" distR="0">${content}</wp:inline>`
-    : `<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="0" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>${content}${wrap === 'top-bottom' ? '<wp:wrapTopAndBottom/>' : `<wp:wrapSquare wrapText="${wrap === 'square-right' ? 'right' : 'left'}"/>`}</wp:anchor>`;
+    ? `<wp:inline distT="0" distB="0" distL="0" distR="0">${geometry}${frame}</wp:inline>`
+    : `<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="0" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>${geometry}${wrap === 'top-bottom' ? '<wp:wrapTopAndBottom/>' : `<wp:wrapSquare wrapText="${wrap === 'square-right' ? 'right' : 'left'}"/>`}${frame}</wp:anchor>`;
   return `<w:drawing>${drawing}</w:drawing>`;
 }
 
@@ -308,7 +343,8 @@ async function runXml(run: DocRun, state: SerializeState): Promise<string> {
     const relId = await ensureImageRelationship(state, run.image);
     if (!relId) return '';
     const properties = runProperties(run.style);
-    return `<w:r>${properties}${drawingXml(run.image, relId, state.imageCounter)}</w:r>`;
+    state.drawingCounter += 1;
+    return `<w:r>${properties}${drawingXml(run.image, relId, state.drawingCounter)}</w:r>`;
   }
   const properties = runProperties(run.style);
   let content = '';
@@ -360,16 +396,18 @@ async function cellXml(
   if (cell.colSpan > 1) props.push(`<w:gridSpan w:val="${cell.colSpan}"/>`);
   if (continuation) props.push('<w:vMerge/>');
   else if (cell.rowSpan > 1) props.push('<w:vMerge w:val="restart"/>');
-  if (cell.backgroundColor) {
-    props.push(`<w:shd w:val="clear" w:color="auto" w:fill="${cell.backgroundColor.replace('#', '')}"/>`);
+  // 功能：按 CT_TcPr 顺序输出（tcW → gridSpan → vMerge → tcBorders → shd → vAlign），避免 Word 判定部件非法；时间：2026-10-29；作者：lq。
+  if (cell.borders) {
+    const tcBorders = cellBordersXml(cell.borders);
+    if (tcBorders) props.push(tcBorders);
+  }
+  const background = hexColor(cell.backgroundColor);
+  if (background) {
+    props.push(`<w:shd w:val="clear" w:color="auto" w:fill="${background}"/>`);
   }
   if (cell.verticalAlign) {
     const map = { top: 'top', middle: 'center', bottom: 'bottom' } as const;
     props.push(`<w:vAlign w:val="${map[cell.verticalAlign]}"/>`);
-  }
-  if (cell.borders) {
-    const tcBorders = cellBordersXml(cell.borders);
-    if (tcBorders) props.push(tcBorders);
   }
   const content = continuation
     ? ''
@@ -389,10 +427,11 @@ async function tableXml(table: DocTable, state: SerializeState): Promise<string>
     const map = { left: 'left', center: 'center', right: 'right', justify: 'left' } as const;
     props.push(`<w:jc w:val="${map[table.alignment]}"/>`);
   }
-  // 功能：固定网格布局确保 Office 按用户设置的列宽打开表格；时间：2026-10-19；作者：lq。
-  props.push('<w:tblLayout w:type="fixed"/>');
   const borders = tableBordersXml(table.borders);
   if (borders) props.push(borders);
+  // 功能：固定网格布局确保 Office 按用户设置的列宽打开表格；时间：2026-10-19；作者：lq。
+  // 功能：tblLayout 必须位于 tblBorders 之后（CT_TblPr 顺序），否则 Word 会判定表格部件非法；时间：2026-10-29；作者：lq。
+  props.push('<w:tblLayout w:type="fixed"/>');
   const grid = table.columnWidthsPx
     .map((width) => `<w:gridCol w:w="${Math.round(width * 15)}"/>`)
     .join('');
@@ -453,6 +492,47 @@ async function blockXml(block: DocBlock, state: SerializeState): Promise<string>
   return '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="1" w:lineRule="exact"/></w:pPr><w:r><w:br w:type="page"/></w:r></w:p>';
 }
 
+/**
+ * 功能：ECMA-376 对 w:sectPr 子元素规定了固定顺序，插入时必须按序落位，否则 Word 会判定部件非法；时间：2026-10-29；作者：lq。
+ */
+const SECT_PR_ORDER = [
+  'headerReference',
+  'footerReference',
+  'footnotePr',
+  'endnotePr',
+  'type',
+  'pgSz',
+  'pgMar',
+  'paperSrc',
+  'pgBorders',
+  'lnNumType',
+  'pgNumType',
+  'cols',
+  'formProt',
+  'vAlign',
+  'noEndnote',
+  'titlePg',
+  'textDirection',
+  'bidi',
+  'rtlGutter',
+  'docGrid',
+  'printerSettings',
+  'sectPrChange',
+];
+
+/** 功能：把节点插入到模式允许的位置，重复元素（页眉页脚引用）排在同类之后；时间：2026-10-29；作者：lq。 */
+function insertInSequence(parent: Element, child: Element, order: string[]): void {
+  const target = order.indexOf(child.localName ?? '');
+  let reference: Element | null = null;
+  for (const existing of Array.from(parent.children)) {
+    if (order.indexOf(existing.localName ?? '') > target) {
+      reference = existing;
+      break;
+    }
+  }
+  parent.insertBefore(child, reference);
+}
+
 function buildSectPr(page: PageSetup, state: SerializeState): string {
   const width = Math.round(pxToTwips(page.widthPx));
   const height = Math.round(pxToTwips(page.heightPx));
@@ -471,7 +551,7 @@ function buildSectPr(page: PageSetup, state: SerializeState): string {
         size.setAttribute('w:h', String(height));
         if (page.orientation === 'landscape') size.setAttribute('w:orient', 'landscape');
         else size.removeAttribute('w:orient');
-        if (!size.parentNode) sectPr.insertBefore(size, sectPr.firstChild);
+        if (!size.parentNode) insertInSequence(sectPr, size, SECT_PR_ORDER);
         const margins = firstChild(sectPr, 'w:pgMar') ?? doc.createElementNS(W_NS, 'w:pgMar');
         margins.setAttribute('w:top', String(Math.round(pxToTwips(margin.top))));
         margins.setAttribute('w:right', String(Math.round(pxToTwips(margin.right))));
@@ -480,12 +560,12 @@ function buildSectPr(page: PageSetup, state: SerializeState): string {
         margins.setAttribute('w:header', String(Math.round(pxToTwips(margin.header))));
         margins.setAttribute('w:footer', String(Math.round(pxToTwips(margin.footer))));
         margins.setAttribute('w:gutter', String(Math.round(pxToTwips(margin.gutter ?? 0))));
-        if (!margins.parentNode) sectPr.appendChild(margins);
+        if (!margins.parentNode) insertInSequence(sectPr, margins, SECT_PR_ORDER);
         // 功能：写回起始页码并保留其他页码格式属性；时间：2026-10-24；作者：lq。
         if (page.pageNumberStart !== undefined) {
           const numbering = firstChild(sectPr, 'w:pgNumType') ?? doc.createElementNS(W_NS, 'w:pgNumType');
           numbering.setAttribute('w:start', String(page.pageNumberStart));
-          if (!numbering.parentNode) sectPr.appendChild(numbering);
+          if (!numbering.parentNode) insertInSequence(sectPr, numbering, SECT_PR_ORDER);
         }
         return new XMLSerializer().serializeToString(sectPr);
       }
@@ -512,6 +592,7 @@ async function writeHeaderFooters(model: DocModel, state: SerializeState, suffix
     let body = '';
     for (const block of value.blocks) body += await blockXml(block, partState);
     state.imageCounter = partState.imageCounter;
+    state.drawingCounter = partState.drawingCounter;
     const root = kind === 'header' ? 'hdr' : 'ftr';
     state.zip.file(part, `${xmlDeclaration()}<w:${root} xmlns:w="${W_NS}" xmlns:r="${R_NS}" xmlns:wp="${WP_NS}" xmlns:a="${A_NS}" xmlns:pic="${PIC_NS}">${body || '<w:p/>'}</w:${root}>`);
     if (partState.documentRels.length) state.zip.file(`word/_rels/${target}.rels`, documentRelsXml(partState.documentRels));
@@ -526,7 +607,7 @@ async function writeHeaderFooters(model: DocModel, state: SerializeState, suffix
     const reference = sectionDoc.createElementNS(W_NS, `w:${kind}Reference`);
     reference.setAttribute('w:type', 'default');
     reference.setAttributeNS(R_NS, 'r:id', rel.id);
-    section.insertBefore(reference, section.firstChild);
+    insertInSequence(section, reference, SECT_PR_ORDER);
     const ct = parseXmlDom(state.contentTypesXml ?? contentTypesXml(false, false, false));
     const types = ct.documentElement;
     if (!Array.from(types.children).some((element) => element.getAttribute('PartName') === `/${part}`)) {
@@ -549,6 +630,64 @@ function defaultStylesXml(doc: DocModel): string {
   const font = escapeXml(doc.defaultFont);
   const halfPoints = Math.max(2, Math.round(doc.defaultFontSizePt * 2));
   return `${xmlDeclaration()}<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:eastAsia="${font}" w:cs="${font}"/><w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/><w:lang w:val="en-US" w:eastAsia="zh-CN" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+}
+
+/**
+ * 功能：把一条样式定义序列化为 CT_Style，元素顺序严格按 ECMA-376 排列；时间：2026-10-29；作者：lq。
+ *
+ * 说明：
+ * 1. 内置样式写入 Word 认识的英文名（heading 1 / Title…），Word 会按内置样式处理，
+ *    标题层级、导航窗格与目录才能正常工作；
+ * 2. 只输出段落与字符属性，不写 numbering 引用——列表标记由正文文本承担，
+ *    避免与 Word 内置列表样式叠加出双重编号。
+ */
+function styleDefinitionXml(definition: DocStyleDefinition, doc: DocModel): string {
+  const parts: string[] = [];
+  parts.push(`<w:name w:val="${escapeXml(definition.builtinName ?? definition.name)}"/>`);
+  const basedOn = definition.basedOn ?? (definition.id === 'Normal' ? undefined : 'Normal');
+  if (basedOn && basedOn !== definition.id) parts.push(`<w:basedOn w:val="${escapeXml(basedOn)}"/>`);
+  if (definition.id !== 'Normal') parts.push('<w:next w:val="Normal"/>');
+  parts.push('<w:qFormat/>');
+  parts.push(
+    paragraphProperties(
+      { type: 'paragraph', id: `style-${definition.id}`, runs: [], style: definition.paragraph },
+      undefined,
+      false,
+    ),
+  );
+  parts.push(runProperties(resolveStyleRun(definition, doc)));
+  const custom = definition.origin === 'custom' ? ' w:customStyle="1"' : '';
+  return `<w:style w:type="paragraph"${custom} w:styleId="${escapeXml(definition.id)}">${parts.join('')}</w:style>`;
+}
+
+/**
+ * 功能：把文档用到的样式合并进 styles.xml，已存在的同 ID 样式保持原样；时间：2026-10-29；作者：lq。
+ * 采用「在 </w:styles> 前追加」而不是 DOM 重新序列化，避免丢失命名空间前缀与 mc:Ignorable 等扩展属性。
+ */
+export function mergeStyleDefinitions(
+  xml: string,
+  definitions: ReadonlyArray<DocStyleDefinition>,
+  doc: DocModel,
+): string {
+  if (definitions.length === 0) return xml;
+  const existing = new Set<string>();
+  try {
+    const dom = parseXmlDom(xml);
+    for (const node of Array.from(dom.getElementsByTagName('w:style'))) {
+      const id = getAttrLocal(node, 'styleId');
+      if (id) existing.add(id);
+    }
+  } catch {
+    return xml;
+  }
+  const additions = definitions
+    .filter((definition) => !existing.has(definition.id))
+    .map((definition) => styleDefinitionXml(definition, doc))
+    .join('');
+  if (!additions) return xml;
+  const index = xml.lastIndexOf('</w:styles>');
+  if (index === -1) return xml;
+  return `${xml.slice(0, index)}${additions}${xml.slice(index)}`;
 }
 
 function corePropertiesXml(doc: DocModel): string {
@@ -665,6 +804,7 @@ export async function serializeDocx(
     contentTypesChanged: !sourceExists,
     addedImages: new Map(),
     imageCounter: 0,
+    drawingCounter: 0,
     hasNumbering: sourceExists && zip.file('word/numbering.xml') !== null,
     sectPrXml: collectSectPrXml(documentXml),
   };
@@ -687,7 +827,7 @@ export async function serializeDocx(
       const section = firstDescendant(sectionDom, 'w:sectPr')!;
       const type = firstChild(section, 'w:type') ?? sectionDom.createElementNS(W_NS, 'w:type');
       type.setAttribute('w:val', 'nextPage');
-      if (!type.parentNode) section.insertBefore(type, firstChild(section, 'w:pgSz'));
+      if (!type.parentNode) insertInSequence(section, type, SECT_PR_ORDER);
       const sectionXml = new XMLSerializer().serializeToString(section);
       // 在正文段落内附加节属性；末块为表格时使用零高度节标记，避免额外空白页。
       if (blocks.at(-1)?.type === 'paragraph') {
@@ -705,7 +845,6 @@ export async function serializeDocx(
   if (!sourceExists) {
     zip.file('[Content_Types].xml', contentTypesXml(false, false, false));
     zip.file('_rels/.rels', packageRelsXml());
-    zip.file('word/styles.xml', defaultStylesXml(doc));
     zip.file('word/settings.xml', settingsXml());
     zip.file('docProps/core.xml', corePropertiesXml(doc));
     zip.file('docProps/app.xml', appPropertiesXml());
@@ -724,6 +863,16 @@ export async function serializeDocx(
       });
     }
     state.relsChanged = true;
+  }
+
+  // 功能：把文档实际用到的样式写入 styles.xml（新文档先建默认表，旧文档在原表上追加）；时间：2026-10-29；作者：lq。
+  const currentStylesXml = sourceExists ? await zip.file('word/styles.xml')?.async('text') : undefined;
+  // 源包没有 styles.xml 时保持原状：凭空补一个未在 [Content_Types].xml 与 rels 中声明的部件风险更高。
+  if (!sourceExists || currentStylesXml) {
+    zip.file(
+      'word/styles.xml',
+      mergeStyleDefinitions(currentStylesXml ?? defaultStylesXml(doc), collectUsedStyleDefinitions(doc), doc),
+    );
   }
 
   // 功能：成品不再连接外部合并数据源，打开时刷新分页域；时间：2026-10-24；作者：lq。

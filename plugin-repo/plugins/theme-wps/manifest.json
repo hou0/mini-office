@@ -1,0 +1,49 @@
+{
+  "id": "mini-office.theme-wps",
+  "name": "WPS 风格外观",
+  "version": "1.0.0",
+  "publisher": "mini-office",
+  "description": "贴近 WPS Office 的界面密度与冷灰色调：小圆角、默认密度、浅灰分区。只改变界面外壳，不影响文档排版与打印。",
+  "license": "MIT",
+  "tier": "declarative",
+  "engines": {
+    "miniOffice": ">=0.1.5 <0.5.0",
+    "api": "^1.0.0"
+  },
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "wps",
+        "label": "WPS 风格",
+        "description": "冷灰分区 + 小圆角 + 默认密度",
+        "defaultAccent": "#2B6CB0",
+        "tokens": {
+          "--mo-bg": "#F4F6F9",
+          "--mo-surface": "#FFFFFF",
+          "--mo-surface-2": "#EEF1F6",
+          "--mo-surface-3": "#E2E7EF",
+          "--mo-canvas": "#E8EBF0",
+          "--mo-text-primary": "#1A1A1A",
+          "--mo-text-muted": "#5C6470",
+          "--mo-text-faint": "#8A929E",
+          "--mo-line": "#DFE3EA",
+          "--mo-line-strong": "#C4CBD6",
+          "--mo-radius-md": "4px",
+          "--mo-radius-lg": "6px",
+          "--mo-radius-xl": "8px",
+          "--mo-shadow-panel": "0 1px 2px rgba(16, 24, 40, 0.05)",
+          "--mo-shadow-pop": "0 8px 24px rgba(16, 24, 40, 0.14)",
+          "--mo-shadow-page": "0 1px 3px rgba(16, 24, 40, 0.1)",
+          "--mo-font-ui": "\"Microsoft YaHei\", \"PingFang SC\", system-ui, sans-serif"
+        },
+        "chrome": {
+          "toolbar": "modern",
+          "controlShape": "rounded",
+          "density": "default",
+          "titlebar": "flat"
+        }
+      }
+    ]
+  }
+}

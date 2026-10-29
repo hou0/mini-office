@@ -77,6 +77,12 @@ importers:
       '@mini-office/platform-adapter':
         specifier: workspace:*
         version: link:../../packages/platform-adapter
+      '@mini-office/plugin-api':
+        specifier: workspace:*
+        version: link:../../packages/plugin-api
+      '@mini-office/plugin-host':
+        specifier: workspace:*
+        version: link:../../packages/plugin-host
       '@mini-office/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -189,6 +195,12 @@ importers:
       '@mini-office/platform-adapter':
         specifier: workspace:*
         version: link:../platform-adapter
+      '@mini-office/plugin-api':
+        specifier: workspace:*
+        version: link:../plugin-api
+      '@mini-office/plugin-host':
+        specifier: workspace:*
+        version: link:../plugin-host
       '@mini-office/shared':
         specifier: workspace:*
         version: link:../shared
@@ -309,6 +321,26 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: ^2.0.0
         version: 2.7.2
+
+  packages/plugin-api: {}
+
+  packages/plugin-host:
+    dependencies:
+      '@mini-office/document-model':
+        specifier: workspace:*
+        version: link:../document-model
+      '@mini-office/plugin-api':
+        specifier: workspace:*
+        version: link:../plugin-api
+      '@mini-office/shared':
+        specifier: workspace:*
+        version: link:../shared
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.2
+      zustand:
+        specifier: ^4.5.5
+        version: 4.5.7(@types/react@18.3.31)(react@18.3.1)
 
   packages/shared: {}
 
@@ -740,6 +772,11 @@ packages:
     cpu: [x64]
     os: [linux]
     libc: [musl]
+
+  '@rollup/rollup-openbsd-x64@4.64.9':
+    resolution: {integrity: sha512-4dnxKQ8GHARyjqAU87q5UWhywZTpIbR2VWhtACdC37GD1SGszmvb3TaBFVA4n+fnDHSKMut4ZJ63hVFwgnxVtg==}
+    cpu: [x64]
+    os: [openbsd]
 
   '@rollup/rollup-openharmony-arm64@4.64.9':
     resolution: {integrity: sha512-1qdQj6IrNoR0xFvrCQHmhBXe9HMbBGNTFi+3n4jKMt2rTx4k0aeAdraZU4WDOMfL9tAwS8/TRSuquvNuPQ+Gpw==}
@@ -2097,6 +2134,9 @@ snapshots:
   '@rollup/rollup-linux-x64-musl@4.64.9':
     optional: true
 
+  '@rollup/rollup-openbsd-x64@4.64.9':
+    optional: true
+
   '@rollup/rollup-openharmony-arm64@4.64.9':
     optional: true
 
@@ -2854,6 +2894,7 @@ snapshots:
       '@rollup/rollup-linux-s390x-gnu': 4.64.9
       '@rollup/rollup-linux-x64-gnu': 4.64.9
       '@rollup/rollup-linux-x64-musl': 4.64.9
+      '@rollup/rollup-openbsd-x64': 4.64.9
       '@rollup/rollup-openharmony-arm64': 4.64.9
       '@rollup/rollup-win32-arm64-msvc': 4.64.9
       '@rollup/rollup-win32-ia32-msvc': 4.64.9

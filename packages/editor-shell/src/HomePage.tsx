@@ -17,6 +17,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { useWorkspaceStore } from '@mini-office/document-model';
+import { collectTemplates, readPluginFile, usePluginRegistry } from '@mini-office/plugin-host';
 import { Button, Dialog, IconButton, Input } from '@mini-office/ui';
 import { APP_VERSION, OFFICE_META, formatBytes, formatDateTime, type OfficeKind } from '@mini-office/shared';
 import { isTauriRuntime, openExternalUrl } from '@mini-office/platform-adapter';
@@ -48,6 +49,10 @@ export function HomePage() {
   const updateData = useWorkspaceStore((state) => state.updateData);
   const notify = useWorkspaceStore((state) => state.notify);
   const openDialog = useWorkspaceStore((state) => state.openDialog);
+  const openBytes = useWorkspaceStore((state) => state.openBytes);
+  // 订阅 installed，安装/禁用插件后模板区立即刷新。
+  const installedPlugins = usePluginRegistry((state) => state.installed);
+  const pluginTemplates = useMemo(() => collectTemplates(installedPlugins), [installedPlugins]);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   // 功能：管理批量清空确认和处理中状态，防止误删与重复提交；时间：2026-10-24；作者：lq。
@@ -111,6 +116,26 @@ export function HomePage() {
     setBusy(true);
     try {
       await openFileDialog();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 从插件包里取出模板字节，按普通文件打开——模板永远不会被覆盖，用户保存时走另存为。 */
+  const createFromPluginTemplate = async (pluginId: string, file: string, label: string, kind: OfficeKind) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const bytes = await readPluginFile(pluginId, file);
+      if (!bytes) {
+        notify('error', '模板文件缺失', '插件可能未完整安装，请重新安装该插件。');
+        return;
+      }
+      const name = `${label}.${kind}`;
+      await openBytes({ name, bytes, restored: { dirty: true } });
+      notify('success', `已从模板新建「${label}」`, '模板创建为未保存副本，不会覆盖插件文件。');
+    } catch (error) {
+      notify('error', '打开模板失败', error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -242,7 +267,9 @@ export function HomePage() {
           <div className="rounded-xl border border-[var(--mo-line)] bg-[var(--mo-surface)] p-4 shadow-panel">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-semibold">从模板开始</h2>
-              <span className="text-[10px] text-[var(--mo-text-faint)]">内置模板</span>
+              <span className="text-[10px] text-[var(--mo-text-faint)]">
+                {pluginTemplates.length > 0 ? `内置 + ${pluginTemplates.length} 个插件模板` : '内置模板'}
+              </span>
             </div>
             <div className="space-y-2">
               <TemplateRow
@@ -259,6 +286,22 @@ export function HomePage() {
                 description="含 SUM 公式、日期与金额格式"
                 onClick={() => void createExpense()}
               />
+              {pluginTemplates.map(({ key, pluginId, pluginName, template }) => {
+                const Icon = KIND_ICONS[template.kind];
+                const tint = KIND_TINTS[template.kind];
+                return (
+                  <TemplateRow
+                    key={key}
+                    icon={<Icon size={15} />}
+                    tint={tint.color}
+                    title={template.label}
+                    description={template.description ?? `来自插件 ${pluginName}`}
+                    onClick={() =>
+                      void createFromPluginTemplate(pluginId, template.file, template.label, template.kind)
+                    }
+                  />
+                );
+              })}
             </div>
             <div className="mt-3 rounded-lg bg-[var(--mo-surface-2)] px-3 py-2 text-[10px] leading-4 text-[var(--mo-text-muted)]">
               模板创建为未保存副本，保存时会提示选择位置，不会覆盖任何模板文件。

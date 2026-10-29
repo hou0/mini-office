@@ -1,5 +1,5 @@
 // 功能：渲染可选择、可编辑、可拖动的 PPT 对象，同时复用演示和导出视图；时间：2026-10-24；作者：lq。
-import { memo, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { memo, useEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import type {
   SlideDeck,
   SlideElement,
@@ -153,22 +153,52 @@ function paragraphsNode(
 function TextBody({
   element,
   editable = false,
+  editing = false,
   onTextChange,
+  onStartEditing,
+  onEndEditing,
 }: {
   element: SlideTextElement | SlideShapeElement;
   editable?: boolean;
+  editing?: boolean;
   onTextChange?: (elementId: string, value: string) => void;
+  onStartEditing?: (elementId: string) => void;
+  onEndEditing?: (elementId: string) => void;
 }) {
+  // 功能：进入文本编辑时聚焦并把光标放到末尾；时间：2026-10-28；作者：lq。
+  const bodyRef = useRef<HTMLDivElement>(null);
   const paragraphs = element.type === 'text' ? element.paragraphs : element.paragraphs ?? [];
   const vertical = element.verticalAlign;
   const margins = element.type === 'text' ? element.margins : undefined;
+  useEffect(() => {
+    if (editing) {
+      bodyRef.current?.focus();
+      const selection = window.getSelection();
+      const range = document.createRange();
+      if (bodyRef.current && selection) {
+        range.selectNodeContents(bodyRef.current);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }, [editing]);
+  // 功能：双击进入文本编辑，单击保持对象拖拽选中；时间：2026-10-28；作者：lq。
   return (
     <div
-      contentEditable={editable}
+      ref={bodyRef}
+      contentEditable={editable && editing}
       suppressContentEditableWarning
+      onDoubleClick={editable && onStartEditing ? (event) => {
+        event.stopPropagation();
+        onStartEditing(element.id);
+      } : undefined}
       onBlur={
         editable && onTextChange
-          ? (event) => onTextChange(element.id, event.currentTarget.innerText)
+          ? (event) => {
+            onTextChange(element.id, event.currentTarget.innerText);
+            onEndEditing?.(element.id);
+          }
           : undefined
       }
       style={{
@@ -214,9 +244,12 @@ function selectedStyle(selected?: boolean): CSSProperties {
 interface ElementViewProps {
   element: SlideElement;
   editable?: boolean;
+  editingId?: string | null;
   selected?: boolean;
   onSelect?: (id: string) => void;
   onTextChange?: (elementId: string, value: string) => void;
+  onStartEditing?: (id: string) => void;
+  onEndEditing?: (id: string) => void;
   onMove?: (elementId: string, dx: number, dy: number) => void;
 }
 
@@ -247,7 +280,7 @@ function interactionProps({ element, editable, selected, onSelect, onMove }: Omi
   };
 }
 
-function ShapeView({ element, editable, selected, onSelect, onTextChange, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideShapeElement }) {
+function ShapeView({ element, editable, editingId, selected, onSelect, onTextChange, onStartEditing, onEndEditing, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideShapeElement }) {
   if (element.shape === 'line' || element.shape === 'straightConnector1') {
     const color = element.line?.color ?? '#1D2939';
     const widthPx = Math.max(1, element.line?.widthPx ?? 1);
@@ -278,12 +311,12 @@ function ShapeView({ element, editable, selected, onSelect, onTextChange, onMove
         ...selectedStyle(selected),
       })}
     >
-      {element.paragraphs?.length ? <TextBody element={element} editable={editable} onTextChange={onTextChange} /> : null}
+      {element.paragraphs?.length ? <TextBody element={element} editable={editable} editing={editingId === element.id} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} /> : null}
     </div>
   );
 }
 
-function TextView({ element, editable, selected, onSelect, onTextChange, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideTextElement }) {
+function TextView({ element, editable, editingId, selected, onSelect, onTextChange, onStartEditing, onEndEditing, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideTextElement }) {
   return (
     <div
       {...interactionProps({ element, editable, selected, onSelect, onMove })}
@@ -295,7 +328,7 @@ function TextView({ element, editable, selected, onSelect, onTextChange, onMove 
         ...selectedStyle(selected),
       })}
     >
-      <TextBody element={element} editable={editable} onTextChange={onTextChange} />
+      <TextBody element={element} editable={editable} editing={editingId === element.id} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} />
     </div>
   );
 }
@@ -392,28 +425,28 @@ function TableView({ element, editable, selected, onSelect, onMove }: Omit<Eleme
   );
 }
 
-function GroupView({ element, editable, selected, onSelect, onTextChange, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideGroupElement }) {
+function GroupView({ element, editable, editingId, selected, onSelect, onTextChange, onStartEditing, onEndEditing, onMove }: Omit<ElementViewProps, 'element'> & { element: SlideGroupElement }) {
   return (
     <div {...interactionProps({ element, editable, selected, onSelect, onMove })} style={elementFrame(element, selectedStyle(selected))}>
       {element.children.map((child) => (
-        <ElementView key={child.id} element={child} editable={editable} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />
+        <ElementView key={child.id} element={child} editable={editable} editingId={editingId} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />
       ))}
     </div>
   );
 }
 
-export function ElementView({ element, editable = false, selected = false, onSelect, onTextChange, onMove }: ElementViewProps) {
+export function ElementView({ element, editable = false, editingId, selected = false, onSelect, onTextChange, onStartEditing, onEndEditing, onMove }: ElementViewProps) {
   switch (element.type) {
     case 'text':
-      return <TextView element={element} editable={editable} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />;
+      return <TextView element={element} editable={editable} editingId={editingId} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />;
     case 'shape':
-      return <ShapeView element={element} editable={editable} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />;
+      return <ShapeView element={element} editable={editable} editingId={editingId} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />;
     case 'image':
       return <ImageView element={element} editable={editable} selected={selected} onSelect={onSelect} onMove={onMove} />;
     case 'table':
       return <TableView element={element} editable={editable} selected={selected} onSelect={onSelect} onMove={onMove} />;
     case 'group':
-      return <GroupView element={element} editable={editable} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />;
+      return <GroupView element={element} editable={editable} editingId={editingId} selected={selected} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />;
     default:
       return null;
   }
@@ -427,8 +460,11 @@ export const SlideSurface = memo(function SlideSurface({
   className,
   editable = false,
   selectedId,
+  editingId,
   onSelect,
   onTextChange,
+  onStartEditing,
+  onEndEditing,
   onMove,
 }: {
   deck: SlideDeck;
@@ -438,8 +474,11 @@ export const SlideSurface = memo(function SlideSurface({
   className?: string;
   editable?: boolean;
   selectedId?: string | null;
+  editingId?: string | null;
   onSelect?: (id: string) => void;
   onTextChange?: (elementId: string, value: string) => void;
+  onStartEditing?: (id: string) => void;
+  onEndEditing?: (id: string) => void;
   onMove?: (elementId: string, dx: number, dy: number) => void;
 }) {
   return (
@@ -456,7 +495,7 @@ export const SlideSurface = memo(function SlideSurface({
       }}
     >
       {slide.elements.map((element) => (
-        <ElementView key={element.id} element={element} editable={editable} selected={selectedId === element.id} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />
+        <ElementView key={element.id} element={element} editable={editable} editingId={editingId} selected={selectedId === element.id} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />
       ))}
     </div>
   );
@@ -469,8 +508,11 @@ export function SlideRenderer({
   className,
   editable = false,
   selectedId,
+  editingId,
   onSelect,
   onTextChange,
+  onStartEditing,
+  onEndEditing,
   onMove,
 }: {
   deck: SlideDeck;
@@ -479,8 +521,11 @@ export function SlideRenderer({
   className?: string;
   editable?: boolean;
   selectedId?: string | null;
+  editingId?: string | null;
   onSelect?: (id: string) => void;
   onTextChange?: (elementId: string, value: string) => void;
+  onStartEditing?: (id: string) => void;
+  onEndEditing?: (id: string) => void;
   onMove?: (elementId: string, dx: number, dy: number) => void;
 }) {
   return (
@@ -504,7 +549,7 @@ export function SlideRenderer({
           top: 0,
         }}
       >
-        <SlideSurface deck={deck} slide={slide} editable={editable} selectedId={selectedId} onSelect={onSelect} onTextChange={onTextChange} onMove={onMove} />
+        <SlideSurface deck={deck} slide={slide} editable={editable} selectedId={selectedId} editingId={editingId} onSelect={onSelect} onTextChange={onTextChange} onStartEditing={onStartEditing} onEndEditing={onEndEditing} onMove={onMove} />
       </div>
     </div>
   );

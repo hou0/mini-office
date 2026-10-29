@@ -14,6 +14,7 @@ import {
   collectParagraphs,
   computeDocStats,
   makeParagraph,
+  mapParagraphs,
   paragraphImages,
   splitRunsAtOffset,
   tableCellPlacements,
@@ -39,8 +40,34 @@ import {
   renderParagraphHtml,
 } from './html';
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
-import { pageMetrics, paginateDocument, type PageSlice } from './pagination';
+import { pageMetrics, paginateDocument, type PageSlice, type TableLayout } from './pagination';
 import { WordToolbar } from './WordToolbar';
+// 功能：接入段落对话框与格式刷所需的排版工具；时间：2026-10-29；作者：lq。
+import { ParagraphDialog } from './ParagraphDialog';
+import {
+  applyRunStyleToRuns,
+  mergeParagraphStyle,
+  pickParagraphStyle,
+} from './typography';
+// 功能：接入样式库（预设样式、批量套用、样式集）；时间：2026-10-29；作者：lq。
+import {
+  addStyleSet,
+  applyStyleToParagraph,
+  BUILTIN_STYLES,
+  clearParagraphFormatting,
+  createStyleFromParagraph,
+  detectStyleId,
+  documentStyles as documentStyleList,
+  effectiveStyles,
+  findStyle,
+  importStyleSet,
+  readStyleSets,
+  removeStyleSet,
+  resolveStyleRun,
+  type WordStyleSet,
+} from './styles';
+import { NewStyleDialog, type NewStyleBase } from './NewStyleDialog';
+import { SaveStyleSetDialog } from './StyleSetDialog';
 // 功能：复用 Word 原版平台缩放快捷键，比例与文档视图同步；时间：2026-10-24；作者：lq。
 import { normalizeWordZoom, useWordZoomShortcuts } from './zoom-shortcuts';
 // 功能：接入页眉页脚草稿设置；时间：2026-10-24；作者：lq。
@@ -51,7 +78,7 @@ import { MailMergePanel } from './MailMergePanel';
 import { TableTools } from './TableTools';
 import { editTable, findTable, formatTable, intersects, tableSelectionRect, type TableAction, type TableSelection } from './table-editing';
 import { useWorkspaceStore, type WordSession } from '@mini-office/document-model';
-import { printCurrentView } from '@mini-office/platform-adapter';
+import { clearPrintRoots, printPages, renderPrintPreview } from '@mini-office/platform-adapter';
 import type {
   DocBlock,
   DocImage,
@@ -84,11 +111,14 @@ import {
   formatBytes,
   stripExtension,
   uid,
+  // 功能：快捷键提示按平台显示 ⌘ / Ctrl；时间：2026-10-29；作者：lq。
+  MOD_KEY,
 } from '@mini-office/shared';
 import {
   ChevronDown,
   ChevronUp,
   FileWarning,
+  Pilcrow,
   Replace,
   Search,
   X,
@@ -96,6 +126,18 @@ import {
 
 // 功能：提供常用办公纸张尺寸，页面布局修改即时重新分页；时间：2026-10-24；作者：lq。
 const PAGE_SIZE_OPTIONS = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'B5'] as const;
+
+/** 功能：从行内样式里取正数像素值，取不到时回退；用于读取每页所在节的实际纸张；时间：2026-10-29；作者：lq。 */
+function positiveOr(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseFloat(value ?? '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** 功能：把节内页面设置切换到指定方向（互换宽高），方向一致时原样返回；时间：2026-10-29；作者：lq。 */
+function withOrientation(page: DocModel['page'], orientation: 'portrait' | 'landscape'): DocModel['page'] {
+  if (page.orientation === orientation) return page;
+  return { ...page, orientation, widthPx: page.heightPx, heightPx: page.widthPx };
+}
 
 interface HistoryState {
   past: DocModel[];
@@ -689,6 +731,7 @@ function PropertiesPanel({
   pageCount,
   onPageChange,
   onParagraphChange,
+  onOpenParagraphDialog,
   onShowCompatibility,
   onClose,
 }: {
@@ -698,6 +741,7 @@ function PropertiesPanel({
   pageCount: number;
   onPageChange: (page: DocModel['page']) => void;
   onParagraphChange: (patch: Partial<ParagraphStyle>) => void;
+  onOpenParagraphDialog: () => void;
   onShowCompatibility: () => void;
   onClose: () => void;
 }) {
@@ -773,77 +817,22 @@ function PropertiesPanel({
           </div>
         </section>
 
+        {/* 功能：段落格式属于局部文本样式，属性面板只保留入口，具体设置在工具栏“段落”中完成；时间：2026-10-29；作者：lq。 */}
         <section className="space-y-2 border-t border-[var(--mo-line)] pt-3">
-          <h3 className="text-[11px] font-semibold text-[var(--mo-text-muted)]">段落</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="段前 (pt)">
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                value={Math.round((activeStyle.spaceBeforePx ?? 0) * 0.75)}
-                onChange={(event) => onParagraphChange({ spaceBeforePx: (Number(event.target.value) / 0.75) || 0 })}
-                disabled={!activeParagraph}
-              />
-            </Field>
-            <Field label="段后 (pt)">
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                value={Math.round((activeStyle.spaceAfterPx ?? 0) * 0.75)}
-                onChange={(event) => onParagraphChange({ spaceAfterPx: (Number(event.target.value) / 0.75) || 0 })}
-                disabled={!activeParagraph}
-              />
-            </Field>
-          </div>
-          <Field label="行距">
-            <Select
-              value={
-                activeStyle.lineHeightExactPx
-                  ? 'exact'
-                  : String(activeStyle.lineHeight ?? 1.5)
-              }
-              onChange={(event) => {
-                const value = event.target.value;
-                if (value === 'exact') {
-                  onParagraphChange({ lineHeightExactPx: 24, lineHeight: undefined });
-                } else {
-                  onParagraphChange({ lineHeight: Number(value), lineHeightExactPx: undefined });
-                }
-              }}
-              disabled={!activeParagraph}
-            >
-              <option value="1">单倍行距</option>
-              <option value="1.15">1.15 倍</option>
-              <option value="1.5">1.5 倍</option>
-              <option value="2">2 倍</option>
-              <option value="exact">固定值</option>
-            </Select>
-          </Field>
-          <Field label="首行缩进 (字符)">
-            <Input
-              type="number"
-              step={0.5}
-              min={-10}
-              value={Number(((activeStyle.firstLineIndentPx ?? 0) / (doc.defaultFontSizePt * 1.333)).toFixed(1))}
-              onChange={(event) =>
-                onParagraphChange({
-                  firstLineIndentPx: Number(event.target.value) * doc.defaultFontSizePt * 1.333,
-                })
-              }
-              disabled={!activeParagraph}
-            />
-          </Field>
-          <label className="flex items-center justify-between text-[11px]">
-            <span>段前分页</span>
-            <Switch
-              checked={!!activeStyle.pageBreakBefore}
-              onChange={(checked) => onParagraphChange({ pageBreakBefore: checked })}
-              label="段前分页"
-              disabled={!activeParagraph}
-            />
-          </label>
+          <h3 className="text-[11px] font-semibold text-[var(--mo-text-muted)]">段落格式</h3>
+          <p className="text-[10px] leading-4 text-[var(--mo-text-muted)]">
+            段落格式只作用于当前选区，因此在工具栏“段落”里设置：缩进、行距（含固定值）、段前段后间距与段前分页。
+          </p>
+          <button
+            type="button"
+            onClick={onOpenParagraphDialog}
+            disabled={!activeParagraph}
+            className="flex w-full items-center gap-2 rounded-md border border-[var(--mo-line)] px-2 py-2 text-left text-[11px] text-[var(--mo-text-primary)] hover:bg-[var(--mo-surface-2)] disabled:opacity-40"
+          >
+            <Pilcrow size={13} className="text-[var(--mo-text-muted)]" />
+            <span className="flex-1">打开段落设置…</span>
+            <span className="text-[var(--mo-text-faint)]">{MOD_KEY}⌥M</span>
+          </button>
         </section>
 
         <section className="space-y-1.5 border-t border-[var(--mo-line)] pt-3">
@@ -921,6 +910,12 @@ export function WordEditor({ session }: { session: WordSession }) {
 
   const [layoutRevision, setLayoutRevision] = useState(0);
   const [pages, setPages] = useState<PageSlice[]>([{ index: 0, blocks: doc.blocks }]);
+  // 功能：前置打印预览状态，与 Excel 保持一致的分页列表体验；时间：2026-10-29；作者：lq。
+  const printPreviewRef = useRef<HTMLDivElement>(null);
+  const printPreviewCleanupRef = useRef<(() => void) | null>(null);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [printPreviewCount, setPrintPreviewCount] = useState(0);
+  const [previewScaleMode, setPreviewScaleMode] = useState<'fit' | 'actual'>('fit');
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeParagraphId, setActiveParagraphId] = useState<string>();
@@ -935,6 +930,15 @@ export function WordEditor({ session }: { session: WordSession }) {
   const savedSelectionRef = useRef<{ paragraphId: string; start: number; end: number } | null>(null);
   const savedRangeRef = useRef<Range | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  // 功能：格式刷与段落对话框状态，供工具栏与属性面板共用；时间：2026-10-29；作者：lq。
+  const [formatPainter, setFormatPainter] = useState<{ run: RunStyle; paragraph: ParagraphStyle; sticky: boolean } | null>(null);
+  const [paragraphDialogOpen, setParagraphDialogOpen] = useState(false);
+  // 功能：样式库面板与样式集状态，样式集从本机读取一次；时间：2026-10-29；作者：lq。
+  const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  const [showMoreStyles, setShowMoreStyles] = useState(false);
+  const [newStyleOpen, setNewStyleOpen] = useState(false);
+  const [styleSetDialogOpen, setStyleSetDialogOpen] = useState(false);
+  const [styleSets, setStyleSets] = useState<WordStyleSet[]>(() => readStyleSets());
   const [findQuery, setFindQuery] = useState('');
   const [replacement, setReplacement] = useState('');
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -1088,6 +1092,13 @@ export function WordEditor({ session }: { session: WordSession }) {
     ? findParagraph(doc, activeParagraphId)
     : undefined;
 
+  // 功能：样式库数据源——内置预设 + 文档内样式（文档定义优先覆盖同名预设）；时间：2026-10-29；作者：lq。
+  const styleList = useMemo(() => effectiveStyles(doc), [doc.styles]);
+  const presetStyles = useMemo(() => styleList.slice(0, BUILTIN_STYLES.length), [styleList]);
+  const extraStyles = useMemo(() => documentStyleList(doc), [doc.styles]);
+  const currentStyleId = activeParagraph ? detectStyleId(activeParagraph, styleList, doc) : undefined;
+  const currentStyleName = findStyle(styleList, currentStyleId)?.name ?? '自定义格式';
+
   const metrics = useMemo(() => pageMetrics(doc.page), [doc.page]);
   const effectiveZoom = exporting ? 1 : zoom;
 
@@ -1097,11 +1108,25 @@ export function WordEditor({ session }: { session: WordSession }) {
     const container = measureRef.current;
     if (!container) return;
     const heights = new Map<string, number>();
+    const tables = new Map<string, TableLayout>();
     container.querySelectorAll<HTMLElement>('[data-measure-id]').forEach((element) => {
       const id = element.getAttribute('data-measure-id');
       if (id) heights.set(id, element.getBoundingClientRect().height);
+      if (!id) return;
+      // 功能：读取表格每行实测高度，用于长表格跨页切分并重复表头；时间：2026-10-29；作者：lq。
+      const grid = element.querySelector<HTMLElement>('[data-table-id]');
+      const block = blockMap.get(id);
+      if (!grid || !block || block.type !== 'table') return;
+      const rowHeights = getComputedStyle(grid).gridTemplateRows
+        .split(' ')
+        .map((value) => parseFloat(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      if (rowHeights.length !== block.rows.length) return;
+      let headerRows = 0;
+      while (block.rows[headerRows]?.isHeader) headerRows += 1;
+      tables.set(id, { rowHeights, headerRows });
     });
-    setPages(paginateDocument(docRef.current, heights));
+    setPages(paginateDocument(docRef.current, heights, tables));
   }, [
     layoutRevision,
     metrics.contentHeight,
@@ -1156,38 +1181,114 @@ export function WordEditor({ session }: { session: WordSession }) {
     };
   }, []);
 
-  // 功能：将全部 Word 分页复制到独立打印根节点，绕开编辑区滚动容器导致系统只识别当前页；时间：2026-10-28；作者：lq。
-  const printWord = useCallback(async () => {
+  // 功能：把屏幕页面克隆成 1:1 打印页，前置预览与系统打印共用同一份页面，页数必然一致；时间：2026-10-29；作者：lq。
+  const buildWordPrintPages = useCallback((): { pages: HTMLElement[]; sizes: Array<{ widthPx: number; heightPx: number }> } => {
     const source = pagesRef.current;
-    if (!source) return false;
-    const root = document.createElement('div');
-    root.dataset.wordPrintRoot = 'true';
-    const pages = source.cloneNode(true) as HTMLElement;
-    pages.removeAttribute('contenteditable');
-    pages.removeAttribute('data-word-editor');
-    root.appendChild(pages);
-    const style = document.createElement('style');
-    style.dataset.wordPrintStyle = 'true';
-    style.textContent = `@media print {
-      body * { visibility: hidden !important; }
-      body [data-word-editor] .mo-word-pages, body [data-word-editor] .mo-word-pages * { visibility: hidden !important; }
-      [data-word-print-root], [data-word-print-root] * { visibility: visible !important; }
-      [data-word-print-root] { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; }
-      [data-word-print-root] .mo-word-pages { display: block !important; width: 100% !important; padding: 0 !important; gap: 0 !important; }
-      [data-word-print-root] .mo-word-page-scale { position: relative !important; width: ${doc.page.widthPx}px !important; height: ${doc.page.heightPx}px !important; margin: 0 auto !important; break-after: page !important; page-break-after: always !important; }
-      [data-word-print-root] .mo-word-page-scale:last-child { break-after: auto !important; page-break-after: auto !important; }
-      [data-word-print-root] .mo-word-page { position: relative !important; left: auto !important; top: auto !important; transform: none !important; box-shadow: none !important; }
-      @page { size: ${doc.page.widthPx}px ${doc.page.heightPx}px; margin: 0; }
-    }`;
-    document.body.append(root, style);
-    const cleanup = () => { root.remove(); style.remove(); window.removeEventListener('afterprint', cleanup); };
-    window.addEventListener('afterprint', cleanup);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    const ok = await printCurrentView();
-    if (!ok) cleanup();
-    setTimeout(cleanup, 30_000);
-    return ok;
+    if (!source) return { pages: [], sizes: [] };
+    const wrappers = Array.from(source.querySelectorAll<HTMLElement>('[data-word-page-wrapper]'));
+    const sizes: Array<{ widthPx: number; heightPx: number }> = [];
+    const pages = wrappers.map((wrapper) => {
+      const clone = wrapper.cloneNode(true) as HTMLElement;
+      clone.removeAttribute('contenteditable');
+      const paper = clone.querySelector<HTMLElement>('.mo-word-page');
+      // 功能：每页按自己所在节的纸张取尺寸，多节混合方向时不会被强行拉成同一张纸；时间：2026-10-29；作者：lq。
+      const width = positiveOr(paper?.style.width, doc.page.widthPx);
+      const height = positiveOr(paper?.style.height, doc.page.heightPx);
+      sizes.push({ widthPx: width, heightPx: height });
+      clone.style.width = `${width}px`;
+      clone.style.height = `${height}px`;
+      if (paper) {
+        // 功能：打印/预览时复位屏幕缩放，保证 1:1 落在纸张上；时间：2026-10-29；作者：lq。
+        paper.style.transform = 'none';
+        paper.style.width = `${width}px`;
+        paper.style.height = `${height}px`;
+        paper.style.boxShadow = 'none';
+        paper.style.margin = '0';
+      }
+      clone.querySelectorAll<HTMLElement>('[contenteditable]').forEach((element) => element.removeAttribute('contenteditable'));
+      return clone;
+    });
+    return { pages, sizes };
   }, [doc.page.heightPx, doc.page.widthPx]);
+
+  const printWord = useCallback(async () => {
+    const { pages, sizes } = buildWordPrintPages();
+    if (pages.length === 0) return false;
+    // 功能：清理上次打印残留的样式，避免本次打印被旧的 @media print 规则干扰；时间：2026-10-29；作者：lq。
+    clearPrintRoots();
+    return printPages({
+      pages,
+      pageSizes: sizes,
+      widthPx: doc.page.widthPx,
+      heightPx: doc.page.heightPx,
+      title: session.displayName,
+    });
+  }, [buildWordPrintPages, doc.page.heightPx, doc.page.widthPx, session.displayName]);
+
+  const openPrintPreview = useCallback(() => {
+    printPreviewCleanupRef.current?.();
+    setPrintPreviewOpen(true);
+  }, []);
+
+  const closePrintPreview = useCallback(() => {
+    setPrintPreviewOpen(false);
+    printPreviewCleanupRef.current?.();
+    printPreviewCleanupRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!printPreviewOpen || !printPreviewRef.current) return;
+    const { pages, sizes } = buildWordPrintPages();
+    // 功能：预览与打印走同一条构建路径，所见即所得；时间：2026-10-29；作者：lq。
+    const cleanup = renderPrintPreview({
+      host: printPreviewRef.current,
+      pages,
+      pageSizes: sizes,
+      widthPx: doc.page.widthPx,
+      heightPx: doc.page.heightPx,
+      scale: previewScaleMode === 'actual' ? 1 : undefined,
+    });
+    setPrintPreviewCount(pages.length);
+    printPreviewCleanupRef.current = cleanup;
+    return () => {
+      cleanup();
+      printPreviewCleanupRef.current = null;
+    };
+  }, [printPreviewOpen, previewScaleMode, buildWordPrintPages, doc.page.widthPx, doc.page.heightPx, pages]);
+
+  const confirmPrintPreview = useCallback(async () => {
+    closePrintPreview();
+    const ok = await printWord();
+    if (!ok) notify('error', '打印不可用', '当前平台不支持打印，请改用“导出 PDF”。');
+  }, [closePrintPreview, notify, printWord]);
+
+  // 功能：统计文档实际用到的纸张方向，判断是否属于「多节混合方向」；时间：2026-10-29；作者：lq。
+  const pageOrientations = useMemo(() => {
+    const set = new Set<'portrait' | 'landscape'>();
+    for (const slice of pages) set.add((slice.section?.page ?? doc.page).orientation);
+    return set;
+  }, [pages, doc.page]);
+  const mixedOrientation = pageOrientations.size > 1;
+  const documentOrientation: 'portrait' | 'landscape' | null =
+    pageOrientations.size === 1 ? ([...pageOrientations][0] ?? 'portrait') : null;
+
+  // 功能：把方向应用到整篇文档（含所有分节），对应 Word「页面设置 → 应用于：整篇文档」；时间：2026-10-29；作者：lq。
+  const applyDocumentOrientation = useCallback(
+    (orientation: 'portrait' | 'landscape') => {
+      if (readonly) return;
+      const current = latestDoc();
+      const blocks = current.blocks.map((block) =>
+        block.type === 'paragraph' && block.sectionEnd
+          ? { ...block, sectionEnd: { ...block.sectionEnd, page: withOrientation(block.sectionEnd.page, orientation) } }
+          : block,
+      );
+      const changedSections = blocks.some((block, index) => block !== current.blocks[index]);
+      const page = withOrientation(current.page, orientation);
+      if (!changedSections && page === current.page) return;
+      commit({ ...current, page, blocks }, { reflow: true, key: 'page-orientation' });
+    },
+    [commit, latestDoc, readonly],
+  );
 
   useEffect(() => {
     const handleFind = () => setFindOpen((open) => !open);
@@ -1196,19 +1297,20 @@ export function WordEditor({ session }: { session: WordSession }) {
       setExportRange('');
       setExportOpen(true);
     };
-    const handlePrint = async () => {
-      const ok = await printWord();
-      if (!ok) notify('error', '打印不可用', '当前平台不支持打印，请改用“导出 PDF”。');
-    };
+    const handlePrint = () => openPrintPreview();
+    // 功能：命令面板 / 菜单「样式库」直接打开浮层；时间：2026-10-29；作者：lq。
+    const handleStyles = () => setStylePickerOpen(true);
     window.addEventListener('mo:find', handleFind);
     window.addEventListener('mo:export-pdf', handleExport);
     window.addEventListener('mo:print', handlePrint);
+    window.addEventListener('mo:styles', handleStyles);
     return () => {
       window.removeEventListener('mo:find', handleFind);
       window.removeEventListener('mo:export-pdf', handleExport);
       window.removeEventListener('mo:print', handlePrint);
+      window.removeEventListener('mo:styles', handleStyles);
     };
-  }, [notify, printWord, session.displayName]);
+  }, [openPrintPreview, session.displayName]);
 
   const handleScroll = useCallback(() => {
     if (scrollRafRef.current !== null) return;
@@ -1457,7 +1559,12 @@ export function WordEditor({ session }: { session: WordSession }) {
       const offset = getCaretOffset(element);
       const fallback = baseRunStyle(paragraph, current);
       const [before, after] = splitRunsAtOffset(paragraph.runs, offset, fallback);
-      const nextParagraph = makeParagraph(after, { style: { ...paragraph.style } });
+      // 功能：回车分段时继承样式关联，保证新段落仍属于同一标题层级；时间：2026-10-29；作者：lq。
+      const nextParagraph = makeParagraph(after, {
+        style: { ...paragraph.style },
+        styleId: paragraph.styleId,
+        list: paragraph.list ? { ...paragraph.list } : undefined,
+      });
       const updated = updateParagraph(current, paragraphId, (existing) => ({
         ...existing,
         runs: before,
@@ -1497,6 +1604,15 @@ export function WordEditor({ session }: { session: WordSession }) {
     [commit, latestDoc],
   );
 
+  const insertPageBreak = useCallback(() => {
+    if (readonly) return;
+    const current = latestDoc();
+    const index = topLevelBlockIndex(current, activeParagraphId);
+    const blocks = [...current.blocks];
+    blocks.splice(Math.max(0, index) + 1, 0, { type: 'pageBreak', id: uid('break') });
+    commit({ ...current, blocks }, { reflow: true });
+  }, [activeParagraphId, commit, latestDoc, readonly]);
+
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>, paragraphId: string, element: HTMLDivElement) => {
       if (readonly) return;
@@ -1518,6 +1634,20 @@ export function WordEditor({ session }: { session: WordSession }) {
         );
         return;
       }
+      // 功能：Ctrl/Cmd+Enter 插入分页符、Shift+Enter 插入段内换行，与 Word/WPS 键位保持一致；时间：2026-10-29；作者：lq。
+      if (event.key === 'Enter' && mod) {
+        event.preventDefault();
+        event.stopPropagation();
+        insertPageBreak();
+        return;
+      }
+      if (event.key === 'Enter' && event.shiftKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!execCommand('insertLineBreak')) execCommand('insertHTML', '<br>');
+        triggerSelectionInput();
+        return;
+      }
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         splitParagraph(paragraphId, element);
@@ -1534,7 +1664,7 @@ export function WordEditor({ session }: { session: WordSession }) {
         execCommand('insertText', '    ');
       }
     },
-    [applyInlineCommand, execCommand, mergePrevious, readonly, redo, splitParagraph, undo],
+    [applyInlineCommand, execCommand, insertPageBreak, mergePrevious, readonly, redo, splitParagraph, triggerSelectionInput, undo],
   );
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -1566,6 +1696,22 @@ export function WordEditor({ session }: { session: WordSession }) {
   const handleDocumentKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     const root = pagesRef.current;
     if (!root) return;
+    // 功能：Esc 退出格式刷，避免误把后续选择都套上同一格式；时间：2026-10-29；作者：lq。
+    if (event.key === 'Escape' && formatPainter) {
+      event.preventDefault();
+      setFormatPainter(null);
+      notify('info', '已退出格式刷');
+      return;
+    }
+    // 功能：⌘/Ctrl+⌥+M 打开段落对话框，与 Word for Mac 一致；时间：2026-10-29；作者：lq。
+    if ((event.metaKey || event.ctrlKey) && event.altKey && event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      event.stopPropagation();
+      setParagraphDialogOpen(true);
+      return;
+    }
+    // 功能：⌘/Ctrl+⌥+1~4 套用标题 1~4，⌘/Ctrl+⇧+N 回到正文，与 Word 键位一致；时间：2026-10-29；作者：lq。
+    // 说明：这两个组合键在 onKeyDownCapture 中处理（见 handleStyleShortcuts），避免与正文键入逻辑互相干扰。
     // 功能：Tab 在表格单元格间导航，末格 Tab 自动追加一行；时间：2026-10-19；作者：lq。
     if (!readonly && event.key === 'Tab') {
       const node = window.getSelection()?.anchorNode;
@@ -1617,7 +1763,7 @@ export function WordEditor({ session }: { session: WordSession }) {
     const node = window.getSelection()?.anchorNode;
     const paragraph = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLDivElement>('[data-paragraph-id]');
     if (paragraph && root.contains(paragraph)) handleKeyDown(event, paragraph.dataset.paragraphId!, paragraph);
-  }, [captureSelection, commit, handleKeyDown, latestDoc, readonly, replaceCrossSelection]);
+  }, [captureSelection, commit, formatPainter, handleKeyDown, latestDoc, notify, readonly, replaceCrossSelection]);
 
   /** 功能：beforeinput 覆盖键入、触屏删除及跨段替换，阻止浏览器合并分页容器；时间：2026-10-18；作者：lq。 */
   useEffect(() => {
@@ -1668,6 +1814,279 @@ export function WordEditor({ session }: { session: WordSession }) {
     [commit, latestDoc, notify, readonly, selectedParagraphIds],
   );
 
+  /** 功能：套用样式后按原偏移恢复选区，避免 DOM 重绘导致跨段选区丢失；时间：2026-10-29；作者：lq。 */
+  const restoreSliceSelection = useCallback(
+    (slices: Array<{ paragraphId: string; start: number; end: number }>) => {
+      if (slices.length === 0) return;
+      requestAnimationFrame(() => {
+        const container = pagesRef.current;
+        if (!container) return;
+        const first = findParagraphElement(container, slices[0].paragraphId);
+        const last = findParagraphElement(container, slices[slices.length - 1].paragraphId);
+        if (!first || !last) return;
+        first.focus({ preventScroll: true });
+        if (slices.length === 1) {
+          selectRangeByOffset(first, slices[0].start, slices[0].end);
+          return;
+        }
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.setEnd(last, last.childNodes.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        savedSelectionRef.current = {
+          paragraphId: slices[0].paragraphId,
+          start: slices[0].start,
+          end: slices[0].start,
+        };
+      });
+    },
+    [],
+  );
+
+  /**
+   * 功能：把选中段落批量套用为指定样式；时间：2026-10-29；作者：lq。
+   *
+   * 与 WPS 的差异：WPS 每次套用都会丢掉选区，无法连续比较多个样式；这里在提交后按原偏移
+   * 恢复选区，面板也保持打开，可以连点几个样式直到满意。整次套用只写一条撤销记录。
+   */
+  const applyNamedStyle = useCallback(
+    (styleId: string) => {
+      if (readonly) return;
+      const style = findStyle(styleList, styleId);
+      if (!style) return;
+      restoreSelection();
+      const ids = selectedParagraphIds();
+      if (ids.length === 0) {
+        notify('info', '请先选择段落', '把光标放到要套用样式的段落中，或拖选多个段落。');
+        return;
+      }
+      const container = pagesRef.current;
+      const selection = window.getSelection();
+      const slices =
+        container && selection?.rangeCount
+          ? selectedParagraphSlices(container, selection.getRangeAt(0))
+          : [];
+      const current = latestDoc();
+      let next = current;
+      let counter = 0;
+      for (const id of ids) {
+        counter += 1;
+        const marker = style.list ? (style.list.ordered ? `${counter}.` : '•') : undefined;
+        next = updateParagraph(next, id, (paragraph) =>
+          applyStyleToParagraph(paragraph, style, { doc: current, marker }),
+        );
+      }
+      commit(next, { reflow: true, key: 'apply-style' });
+      setActiveStyle(resolveStyleRun(style, current));
+      setSyncToken((value) => value + 1);
+      restoreSliceSelection(slices);
+    },
+    [
+      commit,
+      latestDoc,
+      notify,
+      readonly,
+      restoreSelection,
+      restoreSliceSelection,
+      selectedParagraphIds,
+      styleList,
+    ],
+  );
+
+  /** 功能：样式快捷键——⌘/Ctrl+⌥+1~4 套用标题、⌘/Ctrl+⇧+N 回到正文，键位与 Word 一致；时间：2026-10-29；作者：lq。 */
+  const handleStyleShortcuts = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (readonly) return;
+      const mod = event.metaKey || event.ctrlKey;
+      if (!mod) return;
+      if (event.altKey && /^[1-4]$/.test(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        applyNamedStyle(`Heading${event.key}`);
+        return;
+      }
+      if (event.shiftKey && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        event.stopPropagation();
+        applyNamedStyle('Normal');
+      }
+    },
+    [applyNamedStyle, readonly],
+  );
+
+  /** 功能：清除选中段落的全部排版格式，回到文档默认字体；时间：2026-10-29；作者：lq。 */
+  const clearFormatting = useCallback(() => {
+    if (readonly) return;
+    restoreSelection();
+    const ids = selectedParagraphIds();
+    if (ids.length === 0) {
+      notify('info', '没有选中的段落', '请将光标放在要清除格式的段落中。');
+      return;
+    }
+    const container = pagesRef.current;
+    const selection = window.getSelection();
+    const slices =
+      container && selection?.rangeCount ? selectedParagraphSlices(container, selection.getRangeAt(0)) : [];
+    const current = latestDoc();
+    let next = current;
+    for (const id of ids) {
+      next = updateParagraph(next, id, (paragraph) => clearParagraphFormatting(paragraph, current));
+    }
+    commit(next, { reflow: true, key: 'clear-format' });
+    setActiveStyle({ fontFamily: current.defaultFont, fontSizePt: current.defaultFontSizePt });
+    setSyncToken((value) => value + 1);
+    restoreSliceSelection(slices);
+  }, [commit, latestDoc, notify, readonly, restoreSelection, restoreSliceSelection, selectedParagraphIds]);
+
+  /** 功能：以当前段落格式创建自定义样式，并立即套用到选中段落；时间：2026-10-29；作者：lq。 */
+  const createStyle = useCallback(
+    (name: string, base: NewStyleBase) => {
+      if (readonly) return;
+      restoreSelection();
+      const current = latestDoc();
+      const ids = selectedParagraphIds();
+      const target = (ids[0] ? findParagraph(current, ids[0]) : undefined) ?? activeParagraph;
+      if (!target) {
+        notify('info', '请先选择段落', '把光标放到要作为样式蓝本的段落中。');
+        return;
+      }
+      const source: DocParagraph =
+        base === 'current'
+          ? target
+          : { ...target, style: {}, runs: [{ text: '', style: {} }], list: undefined };
+      const definition = createStyleFromParagraph(name, source, current);
+      const withStyle: DocModel = { ...current, styles: [...(current.styles ?? []), definition] };
+      const targets = ids.length > 0 ? ids : [target.id];
+      const next = targets.reduce(
+        (acc, id) =>
+          updateParagraph(acc, id, (paragraph) =>
+            applyStyleToParagraph(paragraph, definition, { doc: current }),
+          ),
+        withStyle,
+      );
+      commit(next, { reflow: true });
+      setSyncToken((value) => value + 1);
+      notify('success', `已创建样式「${definition.name}」`, '样式已保存在本文档，可在样式库的「本文档样式」中重复使用。');
+    },
+    [activeParagraph, commit, latestDoc, notify, readonly, restoreSelection, selectedParagraphIds],
+  );
+
+  /** 功能：删除本文档样式；引用该样式的段落保留现有格式，仅解除关联；时间：2026-10-29；作者：lq。 */
+  const deleteStyle = useCallback(
+    (styleId: string) => {
+      if (readonly) return;
+      const current = latestDoc();
+      const styles = (current.styles ?? []).filter((style) => style.id !== styleId);
+      const blocks = mapParagraphs(current.blocks, (paragraph) =>
+        paragraph.styleId === styleId ? { ...paragraph, styleId: undefined } : paragraph,
+      );
+      commit({ ...current, styles, blocks }, { reflow: true });
+      notify('info', '已删除样式', '使用该样式的段落会保留当前格式，只是不再关联样式。');
+    },
+    [commit, latestDoc, notify, readonly],
+  );
+
+  /** 功能：把本文档的自定义样式保存为可复用的样式集；时间：2026-10-29；作者：lq。 */
+  const openSaveStyleSet = useCallback(() => {
+    if (extraStyles.length === 0) {
+      notify('info', '还没有自定义样式', '先用「新建样式」创建样式，或从样式集导入，再保存为样式集。');
+      return;
+    }
+    setStylePickerOpen(false);
+    setStyleSetDialogOpen(true);
+  }, [extraStyles.length, notify]);
+
+  const saveStyleSet = useCallback(
+    (name: string) => {
+      setStyleSets(addStyleSet(name, extraStyles));
+      notify('success', '样式集已保存', `「${name}」包含 ${extraStyles.length} 个样式，可在任意文档的样式库中套用。`);
+    },
+    [extraStyles, notify],
+  );
+
+  /** 功能：把样式集导入当前文档（不覆盖已有样式，冲突时重新分配 ID）；时间：2026-10-29；作者：lq。 */
+  const applyStyleSetToDoc = useCallback(
+    (set: WordStyleSet) => {
+      if (readonly) return;
+      const current = latestDoc();
+      commit({ ...current, styles: importStyleSet(set, current.styles) });
+      notify('success', `已导入「${set.name}」`, `${set.styles.length} 个样式已加入本文档样式库。`);
+    },
+    [commit, latestDoc, notify, readonly],
+  );
+
+  const deleteStyleSet = useCallback((id: string) => {
+    setStyleSets(removeStyleSet(id));
+  }, []);
+
+  /**
+   * 功能：格式刷——先复制光标处的字体与段落格式，再套用到目标选区；时间：2026-10-29；作者：lq。
+   * 单击为单次套用，双击（sticky）可连续套用，再次点击或按 Esc 退出，行为与 Word / WPS 一致。
+   */
+  const startFormatPainter = useCallback(
+    (sticky: boolean) => {
+      if (readonly) return;
+      if (formatPainter && !sticky) {
+        setFormatPainter(null);
+        notify('info', '已退出格式刷');
+        return;
+      }
+      captureSelection();
+      const current = latestDoc();
+      const saved = savedSelectionRef.current;
+      const id = saved?.paragraphId ?? activeParagraphId;
+      const paragraph = id ? findParagraph(current, id) : undefined;
+      const run = paragraph
+        ? {
+            ...baseRunStyle(paragraph, current),
+            ...styleAtOffset(paragraph, saved && saved.paragraphId === paragraph.id ? saved.start : 0),
+          }
+        : { ...activeStyle };
+      setFormatPainter({ run, paragraph: pickParagraphStyle(paragraph?.style), sticky });
+      notify(
+        'info',
+        sticky ? '格式刷已锁定' : '已复制格式',
+        sticky ? '连续拖选可多次套用，按 Esc 或再次点击格式刷退出。' : '在目标文字上拖选即可套用格式。',
+      );
+    },
+    [activeParagraphId, activeStyle, captureSelection, formatPainter, latestDoc, notify, readonly],
+  );
+
+  const applyFormatPainter = useCallback(() => {
+    const painter = formatPainter;
+    const root = pagesRef.current;
+    if (!painter || readonly || !root) return false;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return false;
+    const range = selection.getRangeAt(0);
+    if (range.collapsed || !root.contains(range.startContainer) || !root.contains(range.endContainer)) return false;
+    const slices = selectedParagraphSlices(root, range);
+    if (slices.length === 0) return false;
+    let next = latestDoc();
+    for (const slice of slices) {
+      next = updateParagraph(next, slice.paragraphId, (paragraph) => ({
+        ...paragraph,
+        style: mergeParagraphStyle(paragraph.style, painter.paragraph),
+        runs: applyRunStyleToRuns(paragraph.runs, slice.start, slice.end, painter.run, baseRunStyle(paragraph, next)),
+      }));
+    }
+    commit(next, { reflow: true, key: 'format-painter' });
+    setActiveStyle({ ...painter.run });
+    // 功能：模型改动后强制刷新受控段落 DOM，再恢复选区以便连续套用；时间：2026-10-29；作者：lq。
+    setSyncToken((value) => value + 1);
+    const first = slices[0];
+    requestAnimationFrame(() => {
+      const element = findParagraphElement(pagesRef.current, first.paragraphId);
+      if (!element) return;
+      element.focus({ preventScroll: true });
+      selectRangeByOffset(element, first.start, first.end);
+    });
+    if (!painter.sticky) setFormatPainter(null);
+    return true;
+  }, [commit, formatPainter, latestDoc, readonly]);
+
   const updatePage = useCallback(
     (page: DocModel['page']) => {
       const current = latestDoc();
@@ -1675,7 +2094,6 @@ export function WordEditor({ session }: { session: WordSession }) {
     },
     [commit, latestDoc],
   );
-
   const updateImage = useCallback((imageId: string, patch: Partial<DocImage>) => {
     if (readonly || !imageId) return;
     const current = latestDoc();
@@ -1806,15 +2224,6 @@ export function WordEditor({ session }: { session: WordSession }) {
     commit({ ...current, blocks }, { reflow: true });
     setTableMenu(null);
   }, [activeParagraphId, commit, latestDoc, metrics.contentWidth, readonly]);
-
-  const insertPageBreak = useCallback(() => {
-    if (readonly) return;
-    const current = latestDoc();
-    const index = topLevelBlockIndex(current, activeParagraphId);
-    const blocks = [...current.blocks];
-    blocks.splice(Math.max(0, index) + 1, 0, { type: 'pageBreak', id: uid('break') });
-    commit({ ...current, blocks }, { reflow: true });
-  }, [activeParagraphId, commit, latestDoc, readonly]);
 
   const handleImageFile = useCallback(
     (file: File) => {
@@ -2160,13 +2569,39 @@ export function WordEditor({ session }: { session: WordSession }) {
             setExportRange('');
             setExportOpen(true);
           }}
-          onPrint={() => void (async () => {
-            const ok = await printWord();
-            if (!ok) notify('error', '打印不可用', '当前平台不支持打印，请改用“导出 PDF”。');
-          })()}
+          onPrint={() => openPrintPreview()}
           onShowCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
           onAddBullets={() => applyList(false)}
           onAddNumbering={() => applyList(true)}
+          onFormatPainter={startFormatPainter}
+          formatPainterActive={!!formatPainter}
+          onOpenParagraphDialog={() => setParagraphDialogOpen(true)}
+          stylePicker={{
+            presets: presetStyles,
+            documentStyles: extraStyles,
+            currentStyleId,
+            currentStyleName,
+            showMore: showMoreStyles,
+            defaultFont: doc.defaultFont,
+            defaultFontSizePt: doc.defaultFontSizePt,
+            readonly,
+            styleSets,
+            open: stylePickerOpen,
+            onOpenChange: setStylePickerOpen,
+            onApply: applyNamedStyle,
+            onClearFormatting: clearFormatting,
+            onNewStyle: () => {
+              // 功能：新建/保存对话框需要独占焦点，先收起样式库浮层；时间：2026-10-29；作者：lq。
+              setStylePickerOpen(false);
+              setNewStyleOpen(true);
+            },
+            onToggleMore: () => setShowMoreStyles((value) => !value),
+            onDeleteStyle: deleteStyle,
+            onSaveStyleSet: openSaveStyleSet,
+            onApplyStyleSet: applyStyleSetToDoc,
+            onDeleteStyleSet: deleteStyleSet,
+            onBeforeInteraction: captureSelection,
+          }}
           onBeforeInteraction={captureSelection}
         />
         ) : null}
@@ -2203,6 +2638,12 @@ export function WordEditor({ session }: { session: WordSession }) {
               }
             }}
             onKeyDown={handleDocumentKeyDown}
+            // 功能：样式快捷键在捕获阶段处理，优先于正文键入与浏览器默认行为；时间：2026-10-29；作者：lq。
+            onKeyDownCapture={handleStyleShortcuts}
+            // 功能：格式刷激活时，拖选结束即套用复制的格式；时间：2026-10-29；作者：lq。
+            onPointerUp={() => {
+              if (formatPainter) applyFormatPainter();
+            }}
             onInput={(event) => {
               // 功能：共享编辑区的原生 input 事件按当前段落写回模型；时间：2026-10-18；作者：lq。
               if (event.target !== event.currentTarget) return;
@@ -2306,6 +2747,7 @@ export function WordEditor({ session }: { session: WordSession }) {
           pageCount={pages.length}
           onPageChange={updatePage}
           onParagraphChange={applyParagraphFormat}
+          onOpenParagraphDialog={() => setParagraphDialogOpen(true)}
           onShowCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
           onClose={() => updateSettings({ showProperties: false })}
         />
@@ -2342,6 +2784,126 @@ export function WordEditor({ session }: { session: WordSession }) {
 
       {/* 功能：应用设置作为单次可撤销编辑，取消时不修改正文；时间：2026-10-24；作者：lq。 */}
       {headerFooterRegion && !readonly ? <HeaderFooterDialog doc={doc} pageCount={pages.length} initialRegion={headerFooterRegion} onClose={() => setHeaderFooterRegion(null)} onApply={(patch) => { commit({ ...latestDoc(), ...patch }, { reflow: true }); setHeaderFooterRegion(null); }} /> : null}
+      {/* 功能：段落对话框统一提交缩进、间距与行距，只产生一条撤销记录；时间：2026-10-29；作者：lq。 */}
+      {!readonly ? (
+        <ParagraphDialog
+          open={paragraphDialogOpen}
+          style={activeParagraph?.style}
+          fontSizePt={activeStyle.fontSizePt ?? doc.defaultFontSizePt}
+          selectionHint={
+            activeParagraph
+              ? `将应用于当前选中的段落；行距与缩进按 ${activeStyle.fontSizePt ?? doc.defaultFontSizePt} 磅字号换算字符宽度。`
+              : '请先把光标放到要调整的段落中。'
+          }
+          onClose={() => setParagraphDialogOpen(false)}
+          onApply={(patch) => applyParagraphFormat(patch)}
+        />
+      ) : null}
+      {/* 功能：新建样式与保存样式集，都以当前段落格式为蓝本；时间：2026-10-29；作者：lq。 */}
+      {!readonly ? (
+        <NewStyleDialog
+          open={newStyleOpen}
+          paragraph={activeParagraph}
+          doc={doc}
+          existingNames={styleList.map((style) => style.name)}
+          defaultName={`样式 ${(doc.styles?.length ?? 0) + 1}`}
+          onClose={() => setNewStyleOpen(false)}
+          onCreate={createStyle}
+        />
+      ) : null}
+      {!readonly ? (
+        <SaveStyleSetDialog
+          open={styleSetDialogOpen}
+          defaultName={doc.meta.title ? `${doc.meta.title} 样式集` : '我的样式集'}
+          styleCount={extraStyles.length}
+          existingNames={styleSets.map((set) => set.name)}
+          onClose={() => setStyleSetDialogOpen(false)}
+          onSave={saveStyleSet}
+        />
+      ) : null}
+      {/* 功能：打印前先给出与应用内分页一致的前置预览，避免系统预览缩略图看不清版式；时间：2026-10-29；作者：lq。 */}
+      <Dialog
+        open={printPreviewOpen}
+        onClose={closePrintPreview}
+        title="打印预览"
+        description={`预览全部分页（共 ${printPreviewCount} 页），确认后调用系统打印。`}
+        width="xl"
+        footer={
+          <>
+            <Button onClick={closePrintPreview}>取消</Button>
+            <Button variant="primary" onClick={() => void confirmPrintPreview()}>
+              打印
+            </Button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-[180px_1fr] gap-4 text-[12px]">
+          <div className="space-y-3 rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-3">
+            <Field label="纸张">
+              {mixedOrientation
+                ? '多节混合'
+                : `${doc.page.sizeName} · ${documentOrientation === 'landscape' ? '横向' : '纵向'}`}
+            </Field>
+            <Field label="尺寸">
+              {mixedOrientation
+                ? '按节保留'
+                : `${Math.round(pxToMm(doc.page.widthPx))} × ${Math.round(pxToMm(doc.page.heightPx))} mm`}
+            </Field>
+            <Field label="总页数">{printPreviewCount} 页</Field>
+            {/* 功能：方向切换作用于整篇文档（含所有分节），与 Word「页面设置 → 应用于整篇文档」一致；时间：2026-10-29；作者：lq。 */}
+            <div className="space-y-1.5">
+              <div className="text-[11px] text-[var(--mo-text-muted)]">方向</div>
+              {mixedOrientation ? (
+                <div className="space-y-1.5">
+                  <div className="rounded border border-[var(--mo-line)] bg-[var(--mo-surface)] px-2 py-1 text-[11px] leading-4 text-[var(--mo-text-muted)]">
+                    本文档含多个节，方向按节保留
+                  </div>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" disabled={readonly} onClick={() => applyDocumentOrientation('portrait')}>
+                      全部纵向
+                    </Button>
+                    <Button size="sm" disabled={readonly} onClick={() => applyDocumentOrientation('landscape')}>
+                      全部横向
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <SegmentedControl
+                  value={documentOrientation ?? 'portrait'}
+                  onChange={applyDocumentOrientation}
+                  options={[
+                    { value: 'portrait', label: '纵向' },
+                    { value: 'landscape', label: '横向' },
+                  ]}
+                  className="w-full"
+                />
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <div className="text-[11px] text-[var(--mo-text-muted)]">预览比例</div>
+              <SegmentedControl
+                value={previewScaleMode}
+                onChange={setPreviewScaleMode}
+                options={[
+                  { value: 'fit', label: '适应页宽' },
+                  { value: 'actual', label: '实际大小' },
+                ]}
+              />
+            </div>
+            <p className="leading-5 text-[var(--mo-text-muted)]">
+              {mixedOrientation
+                ? '每页按所属节的纸张输出，页码标签会标出该页方向。'
+                : '分页位置与“导出 PDF”、系统打印完全一致。纸张与页边距可在右侧属性面板中调整。'}
+            </p>
+          </div>
+          <div
+            ref={printPreviewRef}
+            className="relative min-h-[300px] max-h-[460px] overflow-auto rounded-md border border-[var(--mo-line)] bg-[#667085]"
+            aria-label="文档打印预览"
+          />
+        </div>
+      </Dialog>
+
       <Dialog
         open={exportOpen}
         onClose={() => {
@@ -2403,40 +2965,13 @@ export function WordEditor({ session }: { session: WordSession }) {
         </div>
       </Dialog>
 
+      {/* 功能：打印样式统一由打印模块注入，避免与页面级 @media print 规则互相覆盖；时间：2026-10-29；作者：lq。 */}
       <style>{`
-        /* 功能：导出打印隐藏表格选区与交互柄；时间：2026-10-19；作者：lq。 */
         @media print {
           /* 功能：强制打印引擎保留段落高亮、表格底纹和文字背景色；时间：2026-10-25；作者：lq。 */
           *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-table-resize] { display: none !important; }
           [data-cell-id] { box-shadow: none !important; }
-          body * { visibility: hidden !important; }
-          .mo-word-pages, .mo-word-pages * { visibility: visible !important; }
-          .mo-word-pages {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            display: block !important;
-            width: 100% !important;
-            padding: 0 !important;
-            gap: 0 !important;
-          }
-          .mo-word-page-scale { width: auto !important; height: auto !important; }
-          .mo-word-page {
-            position: relative !important;
-            left: auto !important;
-            top: auto !important;
-            transform: none !important;
-            box-shadow: none !important;
-            margin: 0 auto !important;
-            page-break-after: always;
-            break-after: page;
-          }
-          /* 功能：仅最后一张纸取消分页，避免每页都是包装层末元素而失去分页；时间：2026-10-24；作者：lq。 */
-          .mo-word-page-scale:last-child .mo-word-page { page-break-after: auto; break-after: auto; }
-          .mo-word-scroll { overflow: visible !important; }
-          /* 功能：打印纸张跟随文档尺寸，保持页眉页脚位置；时间：2026-10-24；作者：lq。 */
-          @page { size: ${doc.page.widthPx}px ${doc.page.heightPx}px; margin: 0; }
         }
       `}</style>
     </div>
@@ -2466,8 +3001,11 @@ function WordPageView({
   onEditHeaderFooter: (region: 'header' | 'footer') => void;
 }) {
   const pageNumber = (page.sectionPage ?? index) + (doc.page.pageNumberStart ?? 1);
+  const fragments = page.fragments;
+  const locked = page.locked;
+  // 功能：表格跨页片段是分页切片而不是原表，跳过原表映射；续页只读，首片仍可编辑原表；时间：2026-10-29；作者：lq。
   const blocks = page.blocks
-    .map((block) => blockMap.get(block.id) ?? block)
+    .map((block) => (fragments?.includes(block.id) ? block : blockMap.get(block.id) ?? block))
     .filter((block) => block.type !== 'pageBreak');
   const margins = doc.page.margins;
   const contentWidth = Math.max(120, doc.page.widthPx - margins.left - margins.right);
@@ -2544,8 +3082,8 @@ function WordPageView({
                 doc={doc}
                 pageNumber={pageNumber}
                 totalPages={total}
-                readonly={readonly}
-                handlers={handlers}
+                readonly={readonly || locked?.includes(block.id) === true}
+                handlers={locked?.includes(block.id) ? undefined : handlers}
               />
             ) : null,
           )}

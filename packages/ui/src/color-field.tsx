@@ -144,7 +144,7 @@ export function ColorField({
               ref={panelRef}
               role="dialog"
               aria-label={label ?? '选择颜色'}
-              className="mo-pop-in fixed z-[100] rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface)] p-2 shadow-pop"
+              className="mo-pop-in fixed z-[100] rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-raised)] p-2 shadow-pop"
               style={{ left: position.left, top: position.top, width: PANEL_WIDTH }}
             >
               <div className="grid grid-cols-8 gap-1">

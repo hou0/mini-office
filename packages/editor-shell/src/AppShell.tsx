@@ -13,6 +13,10 @@ import {
   TitleBar,
 } from './chrome';
 import { CommandPalette } from './CommandPalette';
+import { MenuBar } from './MenuBar';
+import { dispatchPluginShortcut } from './plugin-macro';
+import { checkForUpdates, useUpdateStore } from './update-check';
+import { useChromeVariant } from './chrome-variant';
 import { WorkspaceDialogs } from './dialogs';
 import { HomePage } from './HomePage';
 import { watchDesktopClose, finishDesktopClose } from '@mini-office/platform-adapter';
@@ -44,6 +48,8 @@ export function AppShell() {
   const notify = useWorkspaceStore((state) => state.notify);
 
   const [showHome, setShowHome] = useState(!activeId);
+  // 功能：主题插件可切换外壳变体，经典风格需在标题栏下多渲染一行菜单栏；时间：2026-10-29；作者：lq。
+  const chrome = useChromeVariant();
   const [closeRequestId, setCloseRequestId] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -143,6 +149,26 @@ export function AppShell() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [sessions]);
 
+  // 功能：启动后异步检查新版本，命中时弹一次提示；时间：2026-10-29；作者：lq。
+  // 检查本身不阻塞首屏，网络失败也不打扰用户——小红点不亮，关于页仍可手动重试。
+  const latestRelease = useUpdateStore((state) => state.latest);
+  const dismissedTag = useUpdateStore((state) => state.dismissedTag);
+  const promptedUpdate = useRef<string | null>(null);
+
+  useEffect(() => {
+    void checkForUpdates();
+  }, []);
+
+  useEffect(() => {
+    if (!latestRelease) return;
+    if (dismissedTag === latestRelease.tagName) return;
+    if (promptedUpdate.current === latestRelease.tagName) return;
+    // 已有弹窗时先让用户处理完，避免叠窗；关闭后本 effect 会再次触发。
+    if (dialog) return;
+    promptedUpdate.current = latestRelease.tagName;
+    openDialog({ type: 'update' });
+  }, [dialog, dismissedTag, latestRelease, openDialog]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
@@ -223,12 +249,16 @@ export function AppShell() {
           useWorkspaceStore.getState().activateTab(id);
           setShowHome(false);
         }
+        return;
       }
+      // 插件宏快捷键放在最后：内置命令都在上方提前 return，因此内置始终优先。
+      if (!event.defaultPrevented) dispatchPluginShortcut(event, activeSession);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [
     activeId,
+    activeSession,
     activeSession?.kind,
     closeRequestId,
     closeDialog,
@@ -330,6 +360,7 @@ export function AppShell() {
         onHome={() => setShowHome(true)}
         onOpenPalette={() => setCommandPalette(true)}
       />
+      {chrome.toolbar === 'classic-two-row' ? <MenuBar onHome={() => setShowHome(true)} /> : null}
       {tabOrder.length > 0 ? (
         <TabBar
           onRequestClose={requestClose}

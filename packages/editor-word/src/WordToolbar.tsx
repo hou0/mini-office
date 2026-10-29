@@ -30,12 +30,16 @@ import {
   Baseline,
   PanelTop,
   Mails,
+  Paintbrush,
+  Pilcrow,
 } from 'lucide-react';
 import { ColorField, Dropdown, IconButton, Kbd, Select, Tooltip } from '@mini-office/ui';
 import type { MenuItem } from '@mini-office/ui';
 import { TablePicker } from './TablePicker';
-
-const FONT_SIZES = [9, 10.5, 11, 12, 14, 16, 18, 22, 24, 28, 36, 48];
+import { FontSizePicker } from './FontSizePicker';
+import { LineSpacingPicker } from './LineSpacingPicker';
+import { charWidthPx } from './typography';
+import { StylePicker, type StylePickerProps } from './StylePicker';
 
 export interface WordToolbarProps {
   doc: DocModel;
@@ -72,6 +76,13 @@ export interface WordToolbarProps {
   onShowCompatibility: () => void;
   onAddNumbering: () => void;
   onAddBullets: () => void;
+  /** 功能：格式刷入口，sticky 为双击后的连续套用模式；时间：2026-10-29；作者：lq。 */
+  onFormatPainter: (sticky: boolean) => void;
+  formatPainterActive: boolean;
+  /** 功能：打开段落对话框，精确设置缩进与行距；时间：2026-10-29；作者：lq。 */
+  onOpenParagraphDialog: () => void;
+  /** 功能：样式库入口的完整配置，由编辑器组装，工具栏只负责摆放位置；时间：2026-10-29；作者：lq。 */
+  stylePicker?: StylePickerProps;
   onBeforeInteraction?: () => void;
 }
 
@@ -139,6 +150,9 @@ export function WordToolbar(props: WordToolbarProps) {
         </IconButton>
       </Tooltip>
       <Divider />
+      {/* 功能：样式库紧跟撤销重做，作为「整段排版」的第一入口；时间：2026-10-29；作者：lq。 */}
+      {props.stylePicker ? <StylePicker {...props.stylePicker} /> : null}
+      <Divider />
       <Select
         aria-label="字体"
         className="h-7 w-[132px] shrink-0 border-transparent bg-transparent text-[12px] hover:bg-[var(--mo-surface-2)]"
@@ -155,24 +169,11 @@ export function WordToolbar(props: WordToolbarProps) {
           </option>
         ))}
       </Select>
-      <Select
-        aria-label="字号"
-        className="h-7 w-[64px] shrink-0 border-transparent bg-transparent text-[12px] hover:bg-[var(--mo-surface-2)]"
-        value={String(activeStyle.fontSizePt ?? props.doc.defaultFontSizePt)}
+      <FontSizePicker
+        value={activeStyle.fontSizePt ?? props.doc.defaultFontSizePt}
         disabled={readonly}
-        onChange={(event) => {
-          const value = Number(event.target.value);
-          if (value) props.onFontFormat({ fontSizePt: value });
-        }}
-      >
-        {[...new Set([...(activeStyle.fontSizePt ? [activeStyle.fontSizePt] : []), ...FONT_SIZES])]
-          .sort((a, b) => a - b)
-          .map((size) => (
-            <option key={size} value={size}>
-              {size}
-            </option>
-          ))}
-      </Select>
+        onChange={(pt) => props.onFontFormat({ fontSizePt: pt })}
+      />
       <Divider />
       <Tooltip label={`加粗 ${KbdLabel('B')}`}>
         <IconButton
@@ -229,6 +230,18 @@ export function WordToolbar(props: WordToolbarProps) {
         value={activeStyle.highlight}
         onChange={(color) => props.onColorFormat({ highlight: color }, 'highlight')}
       />
+      {/* 功能：格式刷紧跟字体格式区，单击复制一次、双击锁定连续套用；时间：2026-10-29；作者：lq。 */}
+      <Tooltip label="格式刷：单击复制格式并套用一次，双击可连续套用，Esc 取消">
+        <IconButton
+          label="格式刷"
+          active={props.formatPainterActive}
+          disabled={readonly}
+          onClick={() => props.onFormatPainter(false)}
+          onDoubleClick={() => props.onFormatPainter(true)}
+        >
+          <Paintbrush size={15} />
+        </IconButton>
+      </Tooltip>
       <Divider />
       <IconButton
         label="左对齐"
@@ -262,30 +275,64 @@ export function WordToolbar(props: WordToolbarProps) {
       >
         <AlignJustify size={15} />
       </IconButton>
-      <Select
-        aria-label="行距"
-        className="h-7 w-[78px] shrink-0 border-transparent bg-transparent text-[12px] hover:bg-[var(--mo-surface-2)]"
-        value={
-          paragraphStyle.lineHeightExactPx
-            ? `${paragraphStyle.lineHeightExactPx}px`
-            : String(paragraphStyle.lineHeight ?? 1.5)
-        }
+      <LineSpacingPicker
+        style={paragraphStyle}
         disabled={readonly}
-        onChange={(event) => {
-          const value = event.target.value;
-          if (value.endsWith('px')) {
-            props.onParagraphFormat({ lineHeight: undefined, lineHeightExactPx: parseFloat(value) });
-          } else {
-            props.onParagraphFormat({ lineHeight: Number(value), lineHeightExactPx: undefined });
-          }
-        }}
-      >
-        <option value="1">单倍行距</option>
-        <option value="1.15">1.15 倍</option>
-        <option value="1.5">1.5 倍</option>
-        <option value="2">2 倍</option>
-        <option value="24px">固定 18pt</option>
-      </Select>
+        onChange={props.onParagraphFormat}
+        onOpenOptions={props.onOpenParagraphDialog}
+      />
+      {/* 功能：段落分组统一入口——常用缩进档位与段落对话框合并为一个菜单，避免两个段落标记图标并排；时间：2026-10-29；作者：lq。 */}
+      <Dropdown
+        minWidth={212}
+        items={[
+          { type: 'label', label: '缩进' },
+          {
+            id: 'indent-none',
+            label: '无缩进',
+            checked: !paragraphStyle.firstLineIndentPx,
+            onSelect: () => props.onParagraphFormat({ firstLineIndentPx: 0 }),
+          },
+          {
+            id: 'indent-2',
+            label: '首行缩进 2 字符',
+            checked: (paragraphStyle.firstLineIndentPx ?? 0) > 0,
+            onSelect: () =>
+              props.onParagraphFormat({
+                firstLineIndentPx: charWidthPx(activeStyle.fontSizePt ?? props.doc.defaultFontSizePt) * 2,
+              }),
+          },
+          {
+            id: 'indent-hanging-2',
+            label: '悬挂缩进 2 字符',
+            checked: (paragraphStyle.firstLineIndentPx ?? 0) < 0,
+            onSelect: () =>
+              props.onParagraphFormat({
+                firstLineIndentPx: -charWidthPx(activeStyle.fontSizePt ?? props.doc.defaultFontSizePt) * 2,
+              }),
+          },
+          { type: 'separator' },
+          {
+            id: 'paragraph-more',
+            label: '段落设置…',
+            shortcut: `${MOD_KEY}⌥M`,
+            onSelect: props.onOpenParagraphDialog,
+          },
+        ]}
+        trigger={({ toggle }) => (
+          <Tooltip label="段落：缩进、间距与行距">
+            <button
+              type="button"
+              aria-label="段落"
+              disabled={readonly}
+              onClick={toggle}
+              className="flex h-7 shrink-0 items-center gap-1 rounded px-2 text-[11px] text-[var(--mo-text-primary)] hover:bg-[var(--mo-surface-2)] disabled:opacity-40"
+            >
+              <Pilcrow size={13} />
+              段落
+            </button>
+          </Tooltip>
+        )}
+      />
       <IconButton
         label="增加缩进"
         disabled={readonly}

@@ -1,4 +1,5 @@
 import type { DocImage, DocParagraph, DocRun, RunStyle } from '@mini-office/document-model';
+import { FONT_CHOICES, fontStackFor } from '@mini-office/design-system';
 
 const NAMED_COLORS: Record<string, string> = {
   black: '#000000',
@@ -53,11 +54,28 @@ export function parseFontSizePt(value: string | undefined | null): number | unde
   return number;
 }
 
+/**
+ * 功能：把渲染用的字体栈首项还原为模型中的字体名；时间：2026-10-29；作者：lq。
+ *
+ * 背景：段落渲染时会把「宋体」展开成 `"Songti SC", "SimSun", …`，若直接把这个族名写回模型，
+ * 用户输入一个字后字体就会变成 "Songti SC"，工具栏字体框也会变空。这里按 FONT_CHOICES
+ * 反查一次，保证样式套用与输入后字体名保持稳定。
+ */
+const FAMILY_TO_CHOICE: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  for (const choice of FONT_CHOICES) {
+    if (choice === '默认') continue;
+    const first = fontStackFor(choice).split(',')[0]?.trim().replace(/^['"]|['"]$/g, '');
+    if (first) map.set(first.toLowerCase(), choice);
+  }
+  return map;
+})();
+
 function firstFontFamily(value: string): string | undefined {
   const first = value.split(',')[0]?.trim().replace(/^['"]|['"]$/g, '');
   if (!first) return undefined;
   if (/^(serif|sans-serif|monospace|system-ui|inherit|initial|unset)$/i.test(first)) return undefined;
-  return first;
+  return FAMILY_TO_CHOICE.get(first.toLowerCase()) ?? first;
 }
 
 function styleIsEqual(a: RunStyle, b: RunStyle): boolean {

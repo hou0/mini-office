@@ -69,6 +69,8 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   const [printing, setPrinting] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 功能：记录当前正在编辑文本的对象，支持双击进入和失焦退出；时间：2026-10-28；作者：lq。
+  const [editingId, setEditingId] = useState<string | null>(null);
   const cancelRef = useRef(false);
   const historyRef = useRef<{ past: SlideDeck[]; future: SlideDeck[] }>({ past: [], future: [] });
 
@@ -178,6 +180,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
       slides: current.slides.map((item, itemIndex) => itemIndex !== index ? item : { ...item, elements: updateElementTree(item.elements, selectedId, () => null) }),
     }));
     setSelectedId(null);
+    setEditingId(null);
   }, [index, selectedId, updateDeck]);
 
   const addText = useCallback(() => {
@@ -199,6 +202,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
       }),
     }));
     setSelectedId(id);
+    setEditingId(null);
   }, [index, updateDeck]);
 
   const duplicateSlide = useCallback(() => {
@@ -286,7 +290,15 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (target.isContentEditable && editingId) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          target.blur();
+          setEditingId(null);
+        }
+        return;
+      }
       const mod = event.metaKey || event.ctrlKey;
       if (!presenting && mod && event.key.toLowerCase() === 'z') {
         event.preventDefault();
@@ -330,7 +342,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deck.slides.length, deleteSelected, goTo, moveSelected, next, presenting, prev, redo, resizeSelected, selectedId, stopPresentation, undo]);
+  }, [deck.slides.length, deleteSelected, editingId, goTo, moveSelected, next, presenting, prev, redo, resizeSelected, selectedId, stopPresentation, undo]);
 
   useEffect(() => {
     const onPresent = () => void startPresentation();
@@ -359,8 +371,8 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   }, [presenting]);
 
   const stage = useMemo(
-    () => <SlideRenderer deck={deck} slide={slide} scale={scale} editable={!presenting && !session.readonly} selectedId={selectedId} onSelect={setSelectedId} onTextChange={changeText} onMove={moveElement} />,
-    [changeText, deck, moveElement, presenting, scale, selectedId, session.readonly, slide],
+    () => <SlideRenderer deck={deck} slide={slide} scale={scale} editable={!presenting && !session.readonly} selectedId={selectedId} editingId={editingId} onSelect={(id) => { setSelectedId(id); setEditingId(null); }} onStartEditing={(id) => { setSelectedId(id); setEditingId(id); }} onEndEditing={() => setEditingId(null)} onTextChange={changeText} onMove={moveElement} />,
+    [changeText, deck, editingId, moveElement, presenting, scale, selectedId, session.readonly, slide],
   );
 
   const printSlides = useCallback(async () => {

@@ -1,0 +1,13 @@
+{
+  "name": "mini-office-plugins",
+  "private": true,
+  "type": "module",
+  "description": "Mini Office 官方插件仓库：主题、模板与扩展能力",
+  "scripts": {
+    "build": "node scripts/build-index.mjs",
+    "build:local": "node scripts/build-index.mjs --owner lq0910 --repo mini-office-plugins"
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1"
+  }
+}

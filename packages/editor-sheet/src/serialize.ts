@@ -351,9 +351,11 @@ function sheetXml(
   const pageMarginsXml = `<pageMargins left="${pageMargins.left}" right="${pageMargins.right}" top="${pageMargins.top}" bottom="${pageMargins.bottom}" header="${pageMargins.header}" footer="${pageMargins.footer}"/>`;
   const printOptionsXml = `<printOptions${pageSetup?.printGridLines === false ? ' gridLines="0"' : ''}${pageSetup?.printHeadings ? ' headings="1"' : ''}/>`;
 
+  // 功能：严格按 CT_Worksheet 子元素顺序拼装（sheetData → autoFilter → mergeCells → printOptions → pageMargins → pageSetup → drawing），
+  // 否则 Excel 会因模式校验失败判定文件损坏，而 WPS 仍可打开；时间：2026-10-29；作者：lq。
   return `${xmlDeclaration()}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="${dimension}"/>${sheetViews}<sheetFormatPr defaultRowHeight="15"/>${
     colsXml.length ? `<cols>${colsXml.join('')}</cols>` : ''
-  }<sheetData>${rowXml.join('')}</sheetData>${mergeXml}${filter}${pageMarginsXml}${pageSetupXml}${printOptionsXml}${sheet.images?.length ? '<drawing r:id="rIdMiniOfficeDrawing"/>' : ''}</worksheet>`;
+  }<sheetData>${rowXml.join('')}</sheetData>${filter}${mergeXml}${printOptionsXml}${pageMarginsXml}${pageSetupXml}${sheet.images?.length ? '<drawing r:id="rIdMiniOfficeDrawing"/>' : ''}</worksheet>`;
 }
 
 interface RelationshipInfo {

@@ -1,8 +1,8 @@
 # Mini Office
 
-<!-- 功能：同步当前版本、功能范围与发布限制；时间：2026-10-24；作者：lq。 -->
+<!-- 功能：同步当前版本、功能范围与发布限制；时间：2026-10-29；作者：lq。 -->
 
-当前源码版本：**0.1.4** · [版本说明](docs/releases/v0.1.4.md)
+当前源码版本：**0.1.5** · [版本说明](docs/releases/v0.1.5.md)
 
 > 轻量、离线优先的跨平台办公套件。只保留真正需要的 Office 功能。
 
@@ -26,13 +26,14 @@ Microsoft Word（DOCX）、Excel（XLSX/CSV）与 PowerPoint（PPTX）三类文�
 
 | 模块 | 能力 |
 |---|---|
-| 统一桌面壳 | 多文件标签页、最近文件、命令面板（⌘/Ctrl+K）、混合 Office 标签、拖拽打开、窗口拖动/双击最大化、主题（浅色/深色/跟随系统）、5 套主题色 + 自定义取色、macOS 原生毛玻璃开关、自动恢复、关闭前保存确认、后台任务状态、Portal 浮层与悬停提示 |
-| Word | DOCX 解析与分页渲染、A4/自定义页面、页边距、页眉页脚、页码域、字体/字号/颜色/加粗/斜体/下划线/删除线、对齐/缩进/行距、表格（含合并单元格）、图片、分页符、查找替换、属性面板、打印、PDF 导出、DOCX 保存（复制原件未修改部件） |
-| Excel | XLSX/CSV 打开、虚拟滚动网格、单元格编辑、公式栏点选/拖选引用、行列增删/宽高调整、单元格格式弹窗与边框预设、图片插入/拖动/缩放/删除、合并、冻结窗格、工作表原位改名与标签颜色、自定义单字段排序、多列筛选、查找替换、复制粘贴、撤销重做、填充柄、A4 横向打印、PDF 导出、XLSX/CSV 保存 |
+| 统一桌面壳 | 多文件标签页、最近文件、命令面板（⌘/Ctrl+K）、混合 Office 标签、拖拽打开、窗口拖动/双击最大化、主题（浅色/深色/跟随系统）、5 套主题色 + 自定义取色、macOS 原生毛玻璃开关、自动恢复、关闭前保存确认、后台任务状态、Portal 浮层与悬停提示、版本更新提示（启动弹窗 + 标题栏小红点 + 6 小时节流） |
+| Word | DOCX 解析与分页渲染、A4/自定义页面、页边距、页眉页脚、页码域、样式库（16 个预设 + 本文档样式 + 跨文档样式集，写回 `styles.xml`）、字体/字号（含中文字号）/颜色/加粗/斜体/下划线/删除线、对齐/缩进/行距与段落对话框、格式刷、表格（含合并单元格与跨页重复表头）、图片、分页符、查找替换、属性面板、打印（含全部分页预览）、PDF 导出、DOCX 保存（复制原件未修改部件） |
+| Excel | XLSX/CSV 打开、虚拟滚动网格、单元格编辑、公式栏点选/拖选引用、行列增删/宽高调整、单元格格式弹窗与边框预设、图片插入/拖动/缩放/删除、合并、冻结窗格、工作表原位改名与标签颜色、自定义单字段排序、多列筛选、查找替换、复制粘贴、撤销重做、填充柄、按真实行列分页打印（含全部分页预览与方向/缩放切换）、PDF 导出、XLSX/CSV 保存 |
 | Excel 公式 | 相对/绝对引用、区域、跨表引用、循环引用检测、错误值传播、增量式记忆化重算；`SUM`、`AVERAGE`、`COUNT`、`COUNTA`、`MAX`、`MIN`、`ROUND`、`SUMIF(S)`、`COUNTIF(S)`、`AVERAGEIF(S)`、`IF`、`IFS`、`IFERROR`、`AND`、`OR`、`VLOOKUP`、`XLOOKUP`、`INDEX`、`MATCH`、`LEFT/RIGHT/MID/LEN`、`CONCAT`、`TRIM`、`TODAY/NOW/DATE/YEAR/MONTH/DAY` 等 60+ 函数 |
 | PowerPoint | PPTX 母版/版式继承、主题色、形状、文本框/形状文字编辑、图片/表格/组合、对象移动与键盘缩放、备注、页面增删复制、左侧缩略图、16:9/4:3、系统级全屏演示（浏览器 Fullscreen API / Tauri 原生全屏；方向键/空格/Home/End/Esc/N）、PDF 与图片 ZIP 导出、L2 安全另存 |
-| 兼容与安全 | OOXML 包扫描、宏/数字签名/外部链接/压缩炸弹检查、L0–L3 能力报告、只读/另存副本策略、保存前验证、原子写入、原件时间戳备份、原生打印 |
+| 兼容与安全 | OOXML 包扫描、宏/数字签名/外部链接/压缩炸弹检查、L0–L3 能力报告、只读/另存副本策略、保存前验证、原子写入、原件时间戳备份、原生打印、默认应用与文件关联（七组扩展名、冷启动参数入队、Windows/Linux 单实例转发） |
 | 中文字体 | 系统字体枚举（Web Canvas 探测 / Rust `ttf-parser` + 字体目录扫描）、缺失字体提示与替代字体栈、跨平台字体矩阵说明 |
+| 插件扩展 | 声明式插件（`.moext` 包）本地安装与 GitHub 仓库索引拉取、清单/令牌/对比度/路径穿越校验、SHA-256 完整性校验、主题插件（Token + Chrome 双层）、功能插件（JSON 宏命令 + 文档模板）、启用禁用与卸载。详见[插件架构](docs/plugin-architecture.md)、[插件宏参考](docs/plugin-macros.md)与[发布指南](docs/plugin-publishing.md) |
 
 Word 支持[表格结构编辑](docs/word-table-editing.md)、[页眉页脚与页码设置](docs/word-header-footer.md)，以及[邮件合并与批量报告](docs/word-mail-merge.md)：导入 Excel/CSV、插入模板字段、筛选勾选、逐份预览、批量打印及 DOCX/PDF 输出。
 
@@ -91,7 +92,7 @@ pnpm --filter @mini-office/desktop exec tauri build --debug --bundles app
 
 验证范围与记录：
 
-- 当前源码的检查结果见 [0.1.4 版本说明](docs/releases/v0.1.4.md)；测试覆盖公式、格式、筛选、图片、工作表操作、OOXML 往返与发布准备逻辑。
+- 当前源码的检查结果见 [0.1.5 版本说明](docs/releases/v0.1.5.md)；测试覆盖公式、格式、筛选、图片、工作表操作、OOXML 往返、插件系统、Word 样式与排版、打印分页、默认应用与发布准备逻辑。
 - 已有 DOCX/XLSX/PPTX 样例、PDF/图片 ZIP 导出及浏览器交互验证记录见 [测试说明](docs/testing.md)。
 - 自动检查与 Web 构建不能代替桌面安装、Microsoft Office 回读、物理打印和 Windows/Linux 实机验收。
 - macOS 原生毛玻璃、打印面板与文件关联仍需在目标设备验证。
@@ -151,7 +152,7 @@ mini-office/
 
 ## 文档索引
 
-- [0.1.4 版本说明](docs/releases/v0.1.4.md)
+- [0.1.5 版本说明](docs/releases/v0.1.5.md)
 - [macOS / Windows 发布打包说明](docs/macos-release-workflow.md)
 - [产品与技术设计（原始 PRD）](docs/prd.md)
 - [架构说明](docs/architecture.md)
@@ -164,6 +165,10 @@ mini-office/
 - [ADR 0002：安全保存策略](docs/adr/0002-safe-save-strategy.md)
 - [ADR 0003：公式引擎](docs/adr/0003-formula-engine.md)
 - [ADR 0004：PDF 导出策略](docs/adr/0004-pdf-strategy.md)
+- [ADR 0005：插件扩展系统](docs/adr/0005-plugin-extension-system.md)
+- [插件架构](docs/plugin-architecture.md)
+- [插件宏参考](docs/plugin-macros.md)
+- [插件发布指南](docs/plugin-publishing.md)
 
 ## 安全保存与兼容分级
 
@@ -181,7 +186,7 @@ mini-office/
         → 兼容性检查 → 临时文件写入 → 容器校验 → 原子替换 → 原件备份
 ```
 
-## 已知限制（0.1.4）
+## 已知限制（0.1.5）
 
 - PPTX 支持文本框/形状文字、表格文字、对象移动、页面增删复制、演讲者备注和新建演示；编辑文件首次保存为副本。母版装饰、图表、动画和媒体保留原部件，复杂效果需在 PowerPoint 中复核。
 - DOCX 修订、批注、内容控件和嵌入对象不提供专用编辑。修订显示插入内容、内容控件按文本读取，批注不显示批注面板、嵌入对象不渲染；原始部件保留，含这些特性的文档保存时强制另存副本，仍需在 Word 中复核锚点与版式。

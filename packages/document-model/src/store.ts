@@ -88,7 +88,17 @@ export interface AppNotification {
   createdAt: number;
 }
 
-export type DialogType = 'settings' | 'export' | 'compatibility' | 'about' | 'shortcuts';
+export type DialogType =
+  | 'settings'
+  | 'export'
+  | 'compatibility'
+  | 'about'
+  | 'shortcuts'
+  | 'plugins'
+  // 功能：新增默认应用设置弹窗，首次启动提示与设置页共用；时间：2026-10-29；作者：lq。
+  | 'default-app'
+  // 功能：发现新版本后的启动提示弹窗；时间：2026-10-29；作者：lq。
+  | 'update';
 
 export interface DialogState {
   type: DialogType;
@@ -113,6 +123,8 @@ export interface WorkspaceState {
   initialize(): Promise<void>;
   /** 功能：后台及文档打开共用同一次字体扫描；时间：2026-10-24；作者：lq。 */
   loadFonts(): Promise<FontInfo[]>;
+  /** 功能：重新扫描系统字体，安装新字体后无需重启应用；时间：2026-10-29；作者：lq。 */
+  refreshFonts(): Promise<FontInfo[]>;
   setBusy(message: string | null): void;
   openFileDialog(): Promise<string | null>;
   openBytes(input: OpenBytesInput): Promise<string | null>;
@@ -363,6 +375,23 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
       return fontsLoading;
     },
 
+    /**
+     * 功能：强制重新扫描系统字体，解决“用户新装字体仍提示缺失”的反馈；时间：2026-10-29；作者：lq。
+     * 桌面端走原生刷新命令，Web 端退化为重新枚举一次。
+     */
+    async refreshFonts() {
+      fontsLoading = undefined;
+      const adapter = getPlatformAdapter();
+      try {
+        const fonts = adapter.refreshFonts ? await adapter.refreshFonts() : await adapter.listFonts();
+        set({ fonts: fonts ?? [] });
+        fontsLoading = Promise.resolve(fonts ?? []);
+        return fonts ?? [];
+      } catch {
+        return get().loadFonts();
+      }
+    },
+
     setBusy(message) {
       set({ busy: message });
     },
@@ -446,7 +475,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
           name: displayName,
           bytes: input.bytes,
           path: input.path,
-          knownFonts: fonts.map((font) => font.family),
+          // 功能：把字体族的中英文别名一并纳入已知字体，避免已安装字体被误报缺失；时间：2026-10-29；作者：lq。
+          knownFonts: fonts.flatMap((font) => [font.family, ...(font.aliases ?? [])]),
         };
         const result: FormatOpenResult = await handler.open(openInput);
         const readonly = result.readonly === true || result.capability.level <= 1;

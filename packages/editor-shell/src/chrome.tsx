@@ -2,6 +2,8 @@ import { BrandIcon } from '@mini-office/ui';
 import { useEffect, type ReactNode } from 'react';
 import {
   AlertTriangle,
+  AppWindow,
+  Download,
   Home,
   FileText,
   FolderOpen,
@@ -35,6 +37,7 @@ import {
   supportsWindowVibrancy,
   toggleWindowMaximize,
 } from '@mini-office/platform-adapter';
+import { useUpdateStore } from './update-check';
 
 const KIND_ICONS: Record<OfficeKind, typeof FileText> = {
   docx: FileText,
@@ -59,6 +62,9 @@ export function TitleBar({
   const updateSettings = useWorkspaceStore((state) => state.updateSettings);
   const openDialog = useWorkspaceStore((state) => state.openDialog);
   const activeId = useWorkspaceStore((state) => state.activeId);
+  // 功能：有新版本时在「更多」入口亮小红点；时间：2026-10-29；作者：lq。
+  const updateAvailable = useUpdateStore((state) => state.latest !== null);
+  const latestTag = useUpdateStore((state) => state.latest?.tagName ?? null);
 
   const currentTheme = resolveTheme(settings.theme);
   const canVibrancy = supportsWindowVibrancy();
@@ -181,12 +187,31 @@ export function TitleBar({
         align="right"
         minWidth={190}
         items={[
+          // 功能：有新版本时置顶一条入口，与小红点呼应；时间：2026-10-29；作者：lq。
+          ...(updateAvailable
+            ? ([
+                {
+                  id: 'update-available',
+                  label: `发现新版本 ${latestTag}`,
+                  icon: <Download size={14} />,
+                  onSelect: () => openDialog({ type: 'update' }),
+                },
+                { type: 'separator' },
+              ] satisfies MenuItem[])
+            : []),
           {
             id: 'settings',
             label: '设置',
             icon: <Settings size={14} />,
             shortcut: `${MOD_KEY},`,
             onSelect: () => openDialog({ type: 'settings' }),
+          },
+          // 功能：菜单直达默认应用设置，桌面端可从系统层接管文档双击打开；时间：2026-10-29；作者：lq。
+          {
+            id: 'default-app',
+            label: '设为默认应用…',
+            icon: <AppWindow size={14} />,
+            onSelect: () => openDialog({ type: 'default-app' }),
           },
           {
             id: 'theme-system',
@@ -233,8 +258,16 @@ export function TitleBar({
           },
         ]}
         trigger={({ toggle }) => (
-          <IconButton label="更多" onClick={toggle}>
-            <MoreHorizontal size={16} />
+          <IconButton label={updateAvailable ? '更多（有新版本）' : '更多'} onClick={toggle}>
+            <span className="relative flex items-center justify-center">
+              <MoreHorizontal size={16} />
+              {updateAvailable ? (
+                <span
+                  data-update-dot
+                  className="absolute -right-1.5 -top-1 h-2 w-2 rounded-full bg-[var(--mo-danger)] ring-2 ring-[var(--mo-surface)]"
+                />
+              ) : null}
+            </span>
           </IconButton>
         )}
       />

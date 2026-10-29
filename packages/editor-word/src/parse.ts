@@ -4,6 +4,7 @@ import {
   type DocModel,
   type DocParagraph,
   type DocRun,
+  type DocStyleDefinition,
   type DocTable,
   type DocTableCell,
   type DocTableRow,
@@ -78,6 +79,8 @@ interface ResolvedStyle {
 interface RawStyle {
   id: string;
   type: string;
+  /** 功能：样式显示名（w:name），供样式库展示与识别；时间：2026-10-29；作者：lq。 */
+  name?: string;
   basedOn?: string;
   isDefault?: boolean;
   run: RunStyle;
@@ -90,6 +93,9 @@ interface StyleSheet {
   docDefaults: { run: RunStyle; para: ParagraphStyle };
   styles: Map<string, ResolvedStyle>;
   defaultParagraph?: ResolvedStyle;
+  /** 功能：styleId → 显示名 / 类型，用于把文档里实际用到的样式还原到样式库；时间：2026-10-29；作者：lq。 */
+  names: Map<string, string>;
+  types: Map<string, string>;
 }
 
 interface ParseContext {
@@ -266,6 +272,7 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
     if (after !== undefined) style.spaceAfterPx = twipsToPx(after);
     if (line) {
       if (rule === 'auto') style.lineHeight = line / 240;
+      else if (rule === 'atLeast') style.lineHeightAtLeastPx = twipsToPx(line);
       else style.lineHeightExactPx = twipsToPx(line);
     }
   }
@@ -298,6 +305,8 @@ function parseProjectedParagraphNumbering(pPr: Element | null): { numId?: string
 function parseStyleSheet(stylesXml: string, ctx: ParseContext): StyleSheet {
   const docDefaults: { run: RunStyle; para: ParagraphStyle } = { run: {}, para: {} };
   const rawStyles = new Map<string, RawStyle>();
+  const names = new Map<string, string>();
+  const types = new Map<string, string>();
   let defaultParagraphId: string | undefined;
 
   if (stylesXml) {
@@ -320,7 +329,10 @@ function parseStyleSheet(stylesXml: string, ctx: ParseContext): StyleSheet {
       const run = applyRunStyle({}, firstChild(styleElement, 'w:rPr'), ctx);
       const para = applyParagraphStyle({}, firstChild(styleElement, 'w:pPr'), ctx);
       const num = parseProjectedParagraphNumbering(firstChild(styleElement, 'w:pPr'));
-      rawStyles.set(id, { id, type, basedOn, isDefault, run, para, ...num });
+      const styleName = attrValue(firstChild(styleElement, 'w:name'), 'w:val');
+      if (styleName) names.set(id, styleName);
+      types.set(id, type);
+      rawStyles.set(id, { id, type, name: styleName, basedOn, isDefault, run, para, ...num });
       if (type === 'paragraph' && isDefault) defaultParagraphId = id;
     }
   }
@@ -356,7 +368,50 @@ function parseStyleSheet(stylesXml: string, ctx: ParseContext): StyleSheet {
   const defaultParagraph = defaultParagraphId
     ? resolved.get(defaultParagraphId)
     : resolved.get('Normal');
-  return { docDefaults, styles: resolved, defaultParagraph };
+  return { docDefaults, styles: resolved, defaultParagraph, names, types };
+}
+
+/**
+ * 功能：把文档中实际使用到的段落样式还原为样式库定义，让导入文档的样式可直接复用；时间：2026-10-29；作者：lq。
+ * 只收段落样式且最多 40 个，避免带一大堆无用样式进内存与存储。
+ */
+function collectDocumentStyles(
+  blocks: DocBlock[],
+  header: HeaderFooter | undefined,
+  footer: HeaderFooter | undefined,
+  sheet: StyleSheet,
+): DocStyleDefinition[] {
+  const used = new Set<string>();
+  const visit = (items: DocBlock[]) => {
+    for (const block of items) {
+      if (block.type === 'paragraph') {
+        if (block.styleId) used.add(block.styleId);
+      } else if (block.type === 'table') {
+        for (const row of block.rows) for (const cell of row.cells) visit(cell.blocks);
+      }
+    }
+  };
+  visit(blocks);
+  if (header) visit(header.blocks);
+  if (footer) visit(footer.blocks);
+
+  const result: DocStyleDefinition[] = [];
+  for (const id of used) {
+    if (result.length >= 40) break;
+    if (id === 'Normal') continue;
+    if (sheet.types.get(id) !== 'paragraph') continue;
+    const resolved = sheet.styles.get(id);
+    if (!resolved) continue;
+    const name = sheet.names.get(id) ?? id;
+    result.push({
+      id,
+      name,
+      paragraph: { ...resolved.para },
+      run: { ...resolved.run },
+      origin: 'imported',
+    });
+  }
+  return result;
 }
 
 function parseNumbering(numberingXml: string): Map<string, NumberingLevel[]> {
@@ -1176,6 +1231,8 @@ export async function parseDocxPackage(
     styles: {
       docDefaults: { run: {}, para: {} },
       styles: new Map(),
+      names: new Map(),
+      types: new Map(),
     },
     numbering: parseNumbering(numberingXml),
     counters: new Map(),
@@ -1252,6 +1309,8 @@ export async function parseDocxPackage(
   if (footer) visitBlocks(footer.blocks);
 
   const meta = await parseDocMeta(pkg);
+  // 功能：把导入文档的段落样式带进模型，样式库可直接套用与识别；时间：2026-10-29；作者：lq。
+  const documentStyles = collectDocumentStyles(blocks, header, footer, provisional.styles);
 
   return {
     version: 1,
@@ -1269,6 +1328,7 @@ export async function parseDocxPackage(
     hasComments: pkg.has('word/comments.xml'),
     hasContentControls: provisional.hasContentControls,
     stats: { words, characters },
+    ...(documentStyles.length > 0 ? { styles: documentStyles } : {}),
   };
 }
 

@@ -11,9 +11,13 @@ export interface DialogProps {
   icon?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  width?: 'sm' | 'md' | 'lg' | 'xl';
+  width?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   closeOnBackdrop?: boolean;
   className?: string;
+  /** 覆盖内容区样式；配合 bodyScroll=false 可让内容区自行管理滚动。 */
+  bodyClassName?: string;
+  /** 是否由弹窗内容区统一滚动，默认 true。 */
+  bodyScroll?: boolean;
 }
 
 const WIDTHS = {
@@ -21,6 +25,7 @@ const WIDTHS = {
   md: 'max-w-[500px]',
   lg: 'max-w-[660px]',
   xl: 'max-w-[820px]',
+  '2xl': 'max-w-[940px]',
 };
 
 export function Dialog({
@@ -34,6 +39,8 @@ export function Dialog({
   width = 'md',
   closeOnBackdrop = true,
   className,
+  bodyClassName,
+  bodyScroll = true,
 }: DialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -96,7 +103,7 @@ export function Dialog({
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          'mo-glass mo-pop-in relative z-[71] flex max-h-[calc(100dvh-24px)] w-full flex-col overflow-hidden rounded-2xl border border-[var(--mo-line-strong)] bg-[var(--mo-surface)] shadow-[0_28px_80px_-28px_rgba(16,24,40,0.5),0_10px_30px_-16px_rgba(16,24,40,0.28)] outline-none sm:max-h-[calc(100dvh-48px)]',
+          'mo-glass mo-pop-in relative z-[71] flex max-h-[calc(100dvh-24px)] w-full flex-col overflow-hidden rounded-2xl border border-[var(--mo-line-strong)] bg-[var(--mo-surface-raised)] shadow-[0_28px_80px_-28px_rgba(16,24,40,0.5),0_10px_30px_-16px_rgba(16,24,40,0.28)] outline-none sm:max-h-[calc(100dvh-48px)]',
           WIDTHS[width],
           className,
         )}
@@ -125,7 +132,15 @@ export function Dialog({
             <X size={16} />
           </button>
         </div>
-        <div className="mo-scroll min-h-0 flex-1 overflow-x-hidden px-5 pb-5 text-[13px] sm:px-6">{children}</div>
+        <div
+          className={cn(
+            'min-h-0 flex-1 text-[13px]',
+            bodyScroll ? 'mo-scroll overflow-x-hidden px-5 pb-5 sm:px-6' : 'flex overflow-hidden',
+            bodyClassName,
+          )}
+        >
+          {children}
+        </div>
         {footer ? (
           <div className="flex items-center justify-end gap-2 border-t border-[var(--mo-line)] bg-[var(--mo-surface-2)]/50 px-5 py-3.5 sm:px-6">
             {footer}

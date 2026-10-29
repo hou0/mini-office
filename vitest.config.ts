@@ -17,6 +17,8 @@ const packages = [
   'editor-sheet',
   'editor-slides',
   'export-service',
+  'plugin-api',
+  'plugin-host',
 ];
 
 export default defineConfig({

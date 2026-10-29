@@ -1,0 +1,49 @@
+{
+  "id": "mini-office.theme-office-365",
+  "name": "Microsoft 365 风格外观",
+  "version": "1.0.0",
+  "publisher": "mini-office",
+  "description": "现代 Office 的 Fluent 观感：中性灰分区、细分隔线、扁平控件与蓝色强调。只改变界面外壳，不影响文档排版与打印。",
+  "license": "MIT",
+  "tier": "declarative",
+  "engines": {
+    "miniOffice": ">=0.1.5 <0.5.0",
+    "api": "^1.0.0"
+  },
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "office-365",
+        "label": "Microsoft 365",
+        "description": "Fluent 中性灰 + 扁平控件 + 舒适密度",
+        "defaultAccent": "#0F6CBD",
+        "tokens": {
+          "--mo-bg": "#FAF9F8",
+          "--mo-surface": "#FFFFFF",
+          "--mo-surface-2": "#F3F2F1",
+          "--mo-surface-3": "#EDEBE9",
+          "--mo-canvas": "#F0F0F0",
+          "--mo-text-primary": "#201F1E",
+          "--mo-text-muted": "#605E5C",
+          "--mo-text-faint": "#8A8886",
+          "--mo-line": "#E1DFDD",
+          "--mo-line-strong": "#C8C6C4",
+          "--mo-radius-md": "4px",
+          "--mo-radius-lg": "6px",
+          "--mo-radius-xl": "10px",
+          "--mo-shadow-panel": "0 0.3px 0.9px rgba(0, 0, 0, 0.05), 0 1.6px 3.6px rgba(0, 0, 0, 0.06)",
+          "--mo-shadow-pop": "0 6.4px 14.4px rgba(0, 0, 0, 0.13), 0 1.2px 3.6px rgba(0, 0, 0, 0.11)",
+          "--mo-shadow-page": "0 0.3px 0.9px rgba(0, 0, 0, 0.08), 0 1.6px 3.6px rgba(0, 0, 0, 0.1)",
+          "--mo-font-ui": "\"Segoe UI\", \"PingFang SC\", \"Microsoft YaHei\", system-ui, sans-serif"
+        },
+        "chrome": {
+          "toolbar": "modern",
+          "controlShape": "flat",
+          "density": "comfortable",
+          "titlebar": "flat"
+        }
+      }
+    ]
+  }
+}

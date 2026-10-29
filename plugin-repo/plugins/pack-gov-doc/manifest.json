@@ -1,0 +1,75 @@
+{
+  "id": "mini-office.pack-gov-doc",
+  "name": "公文排版助手",
+  "version": "1.0.1",
+  "publisher": "mini-office",
+  "description": "一键套用党政机关公文格式：仿宋三号、1.5 倍行距、首行缩进两字、标准页边距与三线表，并提供公文模板。全部为声明式宏，不运行任何插件代码。",
+  "license": "MIT",
+  "tier": "declarative",
+  "engines": {
+    "miniOffice": ">=0.1.5 <0.5.0",
+    "api": "^1.0.0"
+  },
+  "permissions": [],
+  "contributes": {
+    "commands": [
+      {
+        "id": "apply-gov-format",
+        "title": "套用公文版式",
+        "description": "正文仿宋三号、1.5 倍行距、首行缩进两字，页边距按国标设置",
+        "keywords": "公文 排版 格式 行距 仿宋 government",
+        "shortcut": "Mod+Shift+G",
+        "steps": [
+          { "op": "word.page.margins", "top": 132, "bottom": 132, "left": 106, "right": 106 },
+          { "op": "word.paragraph.format", "alignment": "justify", "lineHeight": 1.5, "firstLineIndentPx": 32, "spaceBeforePx": 0, "spaceAfterPx": 0 },
+          { "op": "word.font.apply", "fontFamily": "仿宋_GB2312", "fontSizePt": 16, "color": "#000000" }
+        ]
+      },
+      {
+        "id": "three-line-table",
+        "title": "表格转三线表",
+        "description": "把文档内所有表格改为首尾粗线、表头下细线、无竖线的三线表",
+        "keywords": "三线表 表格 边框 table",
+        "shortcut": "Mod+Shift+T",
+        "steps": [{ "op": "word.table.borders", "preset": "three-line" }]
+      },
+      {
+        "id": "reset-table-grid",
+        "title": "表格恢复全框线",
+        "description": "把文档内所有表格恢复为四周与内部都有框线",
+        "keywords": "表格 边框 网格 grid",
+        "steps": [{ "op": "word.table.borders", "preset": "grid" }]
+      },
+      {
+        "id": "landscape-page",
+        "title": "切换为横向页面",
+        "description": "用于附表、宽表格排版",
+        "keywords": "横向 横排 纸张 页面 landscape",
+        "steps": [{ "op": "word.page.orientation", "orientation": "landscape" }]
+      },
+      {
+        "id": "freeze-header-row",
+        "title": "冻结表格首行",
+        "description": "滚动时保持表头可见",
+        "keywords": "冻结 表头 首行 freeze",
+        "steps": [{ "op": "sheet.freezeHeader", "sheet": "all" }]
+      },
+      {
+        "id": "style-header-row",
+        "title": "表头加粗填充",
+        "description": "首行加粗并填充浅灰底纹",
+        "keywords": "表头 加粗 底纹 header",
+        "steps": [{ "op": "sheet.headerStyle", "sheet": "all", "bold": true, "fill": "#F2F2F2", "fontSizePt": 11 }]
+      }
+    ],
+    "templates": [
+      {
+        "id": "gov-letter",
+        "label": "党政机关公文",
+        "kind": "docx",
+        "description": "含标题、主送机关、正文层级与落款位置",
+        "file": "templates/gov-letter.docx"
+      }
+    ]
+  }
+}

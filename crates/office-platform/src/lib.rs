@@ -2,6 +2,9 @@ use office_core::{OfficeError, PlatformInfo};
 use std::fs;
 use std::path::PathBuf;
 
+// 功能：文件关联登记与默认应用申请按平台实现，供桌面壳直接调用；时间：2026-10-29；作者：lq。
+pub mod default_app;
+
 pub fn app_data_dir() -> PathBuf {
     if let Some(directory) = dirs::data_dir() {
         directory.join("MiniOffice")

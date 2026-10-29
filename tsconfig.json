@@ -31,6 +31,8 @@
       "@mini-office/editor-sheet": ["packages/editor-sheet/src/index.ts"],
       "@mini-office/editor-slides": ["packages/editor-slides/src/index.ts"],
       "@mini-office/export-service": ["packages/export-service/src/index.ts"],
+      "@mini-office/plugin-api": ["packages/plugin-api/src/index.ts"],
+      "@mini-office/plugin-host": ["packages/plugin-host/src/index.ts"],
       "@app/*": ["apps/desktop/src/*"]
     },
     "types": ["vite/client", "node"]

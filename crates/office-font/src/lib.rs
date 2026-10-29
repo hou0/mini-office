@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +13,9 @@ pub struct FontInfo {
     pub style: String,
     pub path: String,
     pub has_chinese: bool,
+    /// 功能：同一字体族的其他名称（中英文/不同平台记录），用于缺失字体判断；时间：2026-10-29；作者：lq。
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 const CJK_FONT_HINTS: &[&str] = &[
@@ -82,22 +86,44 @@ fn has_chinese_name(family: &str) -> bool {
     }
 }
 
-fn face_names(data: &[u8], index: u32) -> Option<(String, String)> {
+/// 功能：读取字体文件内全部家族名，中文名优先作为展示名，其余作为别名；时间：2026-10-29；作者：lq。
+///
+/// 背景：中文字体常同时带 Windows(英文/中文) 与 Macintosh 两套 name 记录。旧实现只取第一条，
+/// 结果展示成 "FZXiaoBiaoSong-B05S" 这类英文名，文档里的 "方正小标宋简体" 就被误判为缺失字体。
+fn face_names(data: &[u8], index: u32) -> Option<(String, String, Vec<String>)> {
     let face = ttf_parser::Face::parse(data, index).ok()?;
-    let mut family: Option<String> = None;
+    let mut families: Vec<String> = Vec::new();
     let mut style: Option<String> = None;
     for name in face.names() {
-        if name.name_id == ttf_parser::name_id::FAMILY && family.is_none() {
-            family = name.to_string();
+        // 只认家族与排版家族两类记录，子家族（Regular/Bold）单独作为 style。
+        if name.name_id == ttf_parser::name_id::FAMILY
+            || name.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+        {
+            if let Some(value) = name.to_string() {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() && !families.iter().any(|item| item == trimmed) {
+                    families.push(trimmed.to_string());
+                }
+            }
         }
         if name.name_id == ttf_parser::name_id::SUBFAMILY && style.is_none() {
             style = name.to_string();
         }
     }
-    Some((
-        family.unwrap_or_else(|| "Unknown".to_string()),
-        style.unwrap_or_else(|| "Regular".to_string()),
-    ))
+    if families.is_empty() {
+        return None;
+    }
+    // 展示名优先取含中日韩字符的名称，找不到再退回第一条记录。
+    let primary = families
+        .iter()
+        .find(|family| has_chinese_name(family))
+        .cloned()
+        .unwrap_or_else(|| families[0].clone());
+    let aliases = families
+        .into_iter()
+        .filter(|family| family != &primary)
+        .collect::<Vec<_>>();
+    Some((primary, style.unwrap_or_else(|| "Regular".to_string()), aliases))
 }
 
 fn parse_font_file(path: &Path, output: &mut Vec<FontInfo>, seen: &mut HashSet<String>) {
@@ -107,16 +133,17 @@ fn parse_font_file(path: &Path, output: &mut Vec<FontInfo>, seen: &mut HashSet<S
     };
     let count = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
     for index in 0..count {
-        if let Some((family, style)) = face_names(&data, index) {
+        if let Some((family, style, aliases)) = face_names(&data, index) {
             let key = format!("{}::{}", family.to_ascii_lowercase(), style.to_ascii_lowercase());
             if !seen.insert(key) {
                 continue;
             }
             output.push(FontInfo {
-                has_chinese: has_chinese_name(&family),
+                has_chinese: has_chinese_name(&family) || aliases.iter().any(|alias| has_chinese_name(alias)),
                 family,
                 style,
                 path: path.to_string_lossy().to_string(),
+                aliases,
             });
         }
     }
@@ -161,9 +188,42 @@ pub fn list_fonts() -> Vec<FontInfo> {
     output
 }
 
-pub fn cached_fonts() -> &'static [FontInfo] {
-    static FONTS: OnceLock<Vec<FontInfo>> = OnceLock::new();
-    FONTS.get_or_init(list_fonts)
+/// 功能：字体缓存，带过期时间与手动失效，用户新装字体后无需重启应用；时间：2026-10-29；作者：lq。
+///
+/// 旧实现用 `OnceLock` 永久缓存：用户在系统里安装字体后，应用仍按旧清单判断缺失字体，
+/// 于是“自己安装的字体”一直显示兼容性告警。改为 30 秒 TTL + 显式失效。
+const FONT_CACHE_TTL: Duration = Duration::from_secs(30);
+
+static FONT_CACHE: Mutex<Option<(Instant, Vec<FontInfo>)>> = Mutex::new(None);
+
+pub fn cached_fonts() -> Vec<FontInfo> {
+    let mut guard = match FONT_CACHE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some((stamp, fonts)) = guard.as_ref() {
+        if stamp.elapsed() < FONT_CACHE_TTL {
+            return fonts.clone();
+        }
+    }
+    let fonts = list_fonts();
+    *guard = Some((Instant::now(), fonts.clone()));
+    fonts
+}
+
+/// 功能：清空字体缓存，供“重新扫描字体”与字体目录变化后立即生效；时间：2026-10-29；作者：lq。
+pub fn invalidate_fonts() {
+    let mut guard = match FONT_CACHE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *guard = None;
+}
+
+/// 功能：强制重新扫描并回填缓存；时间：2026-10-29；作者：lq。
+pub fn refresh_fonts() -> Vec<FontInfo> {
+    invalidate_fonts();
+    cached_fonts()
 }
 
 pub fn font_families() -> Vec<String> {

@@ -1,6 +1,8 @@
 # macOS 文档关联与安全退出
 
 > 功能说明：补齐文件关联、退出保护及 Excel 结构引用；时间：2026-10-18；作者：lq。
+>
+> 关联声明已迁移到 `tauri.conf.json` 的 `fileAssociations`，并新增默认应用申请与首次启动提示，参见[默认应用与文件关联](./default-app-associations.md)。
 
 ## 本轮实现
 

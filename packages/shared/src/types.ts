@@ -65,6 +65,8 @@ export interface FontInfo {
   style?: string;
   source: string;
   hasChinese: boolean;
+  /** 功能：同一字体族的其他名称（如中英文名），用于缺失字体判断；时间：2026-10-29；作者：lq。 */
+  aliases?: string[];
 }
 
 export interface RecentEntry {

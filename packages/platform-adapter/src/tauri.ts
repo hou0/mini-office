@@ -107,12 +107,35 @@ export class TauriPlatformAdapter implements PlatformAdapter {
 
   async listFonts(): Promise<FontInfo[]> {
     try {
-      const fonts = await tauriInvoke<Array<{ family: string; style?: string; path: string }>>('list_fonts');
+      const fonts = await tauriInvoke<Array<{ family: string; style?: string; path: string; aliases?: string[] }>>('list_fonts');
       return fonts.map((font) => ({
         family: font.family,
         style: font.style,
         source: font.path,
-        hasChinese: /[\u3400-\u9fff]/.test(font.family) || /CJK|Hei|Song|Kai|Fang|YaHei|PingFang/.test(font.family),
+        hasChinese:
+          /[\u3400-\u9fff]/.test(font.family) ||
+          /CJK|Hei|Song|Kai|Fang|YaHei|PingFang/.test(font.family) ||
+          (font.aliases ?? []).some((alias) => /[\u3400-\u9fff]/.test(alias)),
+        aliases: font.aliases ?? [],
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** 功能：强制重新扫描系统字体，供用户安装字体后即时生效；时间：2026-10-29；作者：lq。 */
+  async refreshFonts(): Promise<FontInfo[]> {
+    try {
+      const fonts = await tauriInvoke<Array<{ family: string; style?: string; path: string; aliases?: string[] }>>('refresh_fonts');
+      return fonts.map((font) => ({
+        family: font.family,
+        style: font.style,
+        source: font.path,
+        hasChinese:
+          /[\u3400-\u9fff]/.test(font.family) ||
+          /CJK|Hei|Song|Kai|Fang|YaHei|PingFang/.test(font.family) ||
+          (font.aliases ?? []).some((alias) => /[\u3400-\u9fff]/.test(alias)),
+        aliases: font.aliases ?? [],
       }));
     } catch {
       return [];

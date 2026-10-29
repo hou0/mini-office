@@ -77,7 +77,7 @@ export function TablePicker({ disabled, onInsert }: {
       </IconButton>
       {open && !disabled ? createPortal(
         <div ref={panelRef} role="dialog" aria-label="插入表格"
-          className="mo-pop-in fixed z-[100] w-[264px] max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface)] p-3 text-[12px] text-[var(--mo-text-primary)] shadow-pop"
+          className="mo-pop-in fixed z-[100] w-[264px] max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-raised)] p-3 text-[12px] text-[var(--mo-text-primary)] shadow-pop"
           style={position}>
           <div className="mb-2 font-medium" aria-live="polite">{preview.columns} 列 × {preview.rows} 行表格</div>
           <div role="group" aria-label="选择表格行列" className="grid grid-cols-10 gap-1">

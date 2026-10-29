@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-29T12:21:08.247Z",
+  "plugins": [
+    {
+      "id": "mini-office.pack-gov-doc",
+      "name": "公文排版助手",
+      "version": "1.0.1",
+      "publisher": "mini-office",
+      "tier": "declarative",
+      "permissions": [],
+      "download": "https://raw.githubusercontent.com/lq0910/mini-office-plugins/main/packages/mini-office.pack-gov-doc-1.0.1.moext",
+      "sha256": "25db778c8db428f9e5ccaba14ece2b38e43fec492509d56d2c0ba3b75ea55140",
+      "size": 3569,
+      "description": "一键套用党政机关公文格式：仿宋三号、1.5 倍行距、首行缩进两字、标准页边距与三线表，并提供公文模板。全部为声明式宏，不运行任何插件代码。",
+      "license": "MIT"
+    },
+    {
+      "id": "mini-office.theme-office-2003",
+      "name": "Office 2003 经典外观",
+      "version": "1.0.0",
+      "publisher": "mini-office",
+      "tier": "declarative",
+      "permissions": [],
+      "download": "https://raw.githubusercontent.com/lq0910/mini-office-plugins/main/packages/mini-office.theme-office-2003-1.0.0.moext",
+      "sha256": "63289ec7e4dec3bbfdea121b0c10201e75231384b2fbb09cc36055a460a8da8f",
+      "size": 1013,
+      "description": "还原 Windows XP / Office 2003 的 Luna 风格：直角控件、凸起边框、紧凑密度与米黄底色。只改变界面外壳，不影响文档排版与打印。",
+      "license": "MIT",
+      "tags": [
+        "theme",
+        "office-2003"
+      ]
+    },
+    {
+      "id": "mini-office.theme-office-365",
+      "name": "Microsoft 365 风格外观",
+      "version": "1.0.0",
+      "publisher": "mini-office",
+      "tier": "declarative",
+      "permissions": [],
+      "download": "https://raw.githubusercontent.com/lq0910/mini-office-plugins/main/packages/mini-office.theme-office-365-1.0.0.moext",
+      "sha256": "c69d5b67eb7ce3e5ca51036178d6052b839525aa1a754360795e90fce4f7597e",
+      "size": 942,
+      "description": "现代 Office 的 Fluent 观感：中性灰分区、细分隔线、扁平控件与蓝色强调。只改变界面外壳，不影响文档排版与打印。",
+      "license": "MIT",
+      "tags": [
+        "theme",
+        "office-365"
+      ]
+    },
+    {
+      "id": "mini-office.theme-wps",
+      "name": "WPS 风格外观",
+      "version": "1.0.0",
+      "publisher": "mini-office",
+      "tier": "declarative",
+      "permissions": [],
+      "download": "https://raw.githubusercontent.com/lq0910/mini-office-plugins/main/packages/mini-office.theme-wps-1.0.0.moext",
+      "sha256": "511fe983ee97b1439ca6b9e8f32fa4acf1249bcd390a7dda0298585f282b79d2",
+      "size": 890,
+      "description": "贴近 WPS Office 的界面密度与冷灰色调：小圆角、默认密度、浅灰分区。只改变界面外壳，不影响文档排版与打印。",
+      "license": "MIT",
+      "tags": [
+        "theme",
+        "wps"
+      ]
+    }
+  ]
+}

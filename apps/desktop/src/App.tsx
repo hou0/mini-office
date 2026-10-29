@@ -6,8 +6,9 @@ import {
   supportsWindowVibrancy,
   watchDesktopFiles,
 } from '@mini-office/platform-adapter';
-import { AppShell } from '@mini-office/editor-shell';
+import { AppShell, maybePromptDefaultApp } from '@mini-office/editor-shell';
 import { applyAppearance } from '@mini-office/design-system';
+import { usePluginRegistry } from '@mini-office/plugin-host';
 // 功能：使用静态启动面板，待工作区首页完成首帧绘制后移除；时间：2026-10-24；作者：lq。
 import { finishStartup } from './startup';
 
@@ -16,11 +17,14 @@ export default function App() {
   const initialize = useWorkspaceStore((state) => state.initialize);
   const settings = useWorkspaceStore((state) => state.settings);
   const openPath = useWorkspaceStore((state) => state.openPath);
+  const initializePlugins = usePluginRegistry((state) => state.initialize);
 
   useEffect(() => {
     void initialize();
+    // 功能：恢复已安装插件并应用当前主题包，需在首帧后完成；时间：2026-10-29；作者：lq。
+    void initializePlugins();
     document.documentElement.dataset.platform = isTauriRuntime() ? 'tauri' : 'web';
-  }, [initialize]);
+  }, [initialize, initializePlugins]);
 
   // 功能：外观变化不再重复初始化工作区；时间：2026-10-24；作者：lq。
   useEffect(() => {
@@ -30,6 +34,15 @@ export default function App() {
   // 功能：双帧确认首页已布局绘制，不用固定延迟延长用户等待；时间：2026-10-24；作者：lq。
   useEffect(() => {
     if (hydrated) return finishStartup();
+  }, [hydrated]);
+
+  // 功能：首次启动且未设为默认应用时提示一次，等启动面板移除后再弹窗避免遮挡；时间：2026-10-29；作者：lq。
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => {
+      void maybePromptDefaultApp();
+    }, 800);
+    return () => clearTimeout(timer);
   }, [hydrated]);
 
   useEffect(() => {

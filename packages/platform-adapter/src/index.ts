@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauriRuntime, supportsWindowVibrancy } from './types';
 import { WebPlatformAdapter } from './web';
@@ -113,22 +112,10 @@ export async function toggleWindowMaximize(): Promise<void> {
   }
 }
 
-/** Print the current view. Tauri uses the native WKWebView/WebView2 print API. */
-export async function printCurrentView(): Promise<boolean> {
-  if (isTauriRuntime()) {
-    try {
-      await invoke('print_window');
-      return true;
-    } catch (error) {
-      console.warn('Tauri 原生打印失败，回退到 window.print()', error);
-    }
-  }
-  if (typeof window.print === 'function') {
-    window.print();
-    return true;
-  }
-  return false;
-}
+// 功能：打印能力统一收敛到 print.ts，Word 与 Excel 共用同一套分页与纸张规则；时间：2026-10-29；作者：lq。
+export * from './print';
 
 // 功能：导出桌面文档关联和退出保护桥接；时间：2026-10-18；作者：lq。
 export * from './desktop-events';
+// 功能：导出默认应用状态查询与申请桥接；时间：2026-10-29；作者：lq。
+export * from './default-app';

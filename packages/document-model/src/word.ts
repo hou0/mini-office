@@ -55,6 +55,8 @@ export interface ParagraphStyle {
   lineHeight?: number;
   /** Exact line height in CSS px (fixed line spacing). */
   lineHeightExactPx?: number;
+  /** 功能：最小值行距（w:lineRule="atLeast"），低于该高度时按内容撑开；时间：2026-10-29；作者：lq。 */
+  lineHeightAtLeastPx?: number;
   keepNext?: boolean;
   pageBreakBefore?: boolean;
   outlineLevel?: number;
@@ -68,6 +70,29 @@ export interface ListInfo {
   level: number;
   marker: string;
   ordered: boolean;
+}
+
+/**
+ * 功能：文档级样式定义，供「样式库」批量套用并在保存时写入 styles.xml；时间：2026-10-29；作者：lq。
+ *
+ * 设计要点：
+ * 1. `id` 直接作为 OOXML 的 `w:styleId`，内置预设沿用 Word 的内置 ID（Heading1/Title…），
+ *    这样打开 Word 文档时其标题段落能被识别，反向保存后 Word 也仍视其为内置样式。
+ * 2. 只保存「样式自身」的格式，不保存继承结果；应用时再与文档默认字体合并，
+ *    避免文档换默认字体后样式仍停留在旧字体上。
+ * 3. `origin` 仅用于 UI 分组与删除权限，不写入文件。
+ */
+export interface DocStyleDefinition {
+  id: string;
+  name: string;
+  /** OOXML 内置样式名（如 heading 1），写入 styles.xml 后 Word 会按内置样式处理。 */
+  builtinName?: string;
+  paragraph: ParagraphStyle;
+  run: RunStyle;
+  basedOn?: string;
+  /** 列表型样式：应用时同时写入段落列表标记。 */
+  list?: { ordered: boolean; level: number };
+  origin?: 'preset' | 'custom' | 'imported';
 }
 
 export interface DocParagraph {
@@ -196,6 +221,8 @@ export interface DocModel {
   stats?: { words: number; characters: number };
   /** 功能：页面渲染时的节总页数，不写入文档包；时间：2026-10-24；作者：lq。 */
   sectionPageCount?: number;
+  /** 功能：本文档自定义/导入的样式，与内置预设合并后供样式库使用；时间：2026-10-29；作者：lq。 */
+  styles?: DocStyleDefinition[];
 }
 
 export const A4_PAGE: PageSetup = {

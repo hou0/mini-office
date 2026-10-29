@@ -38,7 +38,7 @@ export function MenuList({
       role="menu"
       style={{ minWidth }}
       className={cn(
-        'mo-glass mo-pop-in overflow-hidden rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface)] p-1 shadow-pop',
+        'mo-glass mo-pop-in overflow-hidden rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-raised)] p-1 shadow-pop',
         className,
       )}
     >

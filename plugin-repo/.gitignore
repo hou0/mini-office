@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+*.log
+
+# packages/ 必须提交：客户端通过 raw.githubusercontent.com 直接下载插件包，
+# GitHub Release 资产受 CORS 限制无法在浏览器/Tauri WebView 中 fetch。

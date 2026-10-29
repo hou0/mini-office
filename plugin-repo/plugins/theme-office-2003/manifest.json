@@ -1,0 +1,58 @@
+{
+  "id": "mini-office.theme-office-2003",
+  "name": "Office 2003 经典外观",
+  "version": "1.0.0",
+  "publisher": "mini-office",
+  "description": "还原 Windows XP / Office 2003 的 Luna 风格：直角控件、凸起边框、紧凑密度与米黄底色。只改变界面外壳，不影响文档排版与打印。",
+  "license": "MIT",
+  "tier": "declarative",
+  "engines": {
+    "miniOffice": ">=0.1.5 <0.5.0",
+    "api": "^1.0.0"
+  },
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "office-2003",
+        "label": "Office 2003 经典",
+        "description": "Luna 米黄底 + 直角凸起控件 + 紧凑密度",
+        "defaultAccent": "#316AC5",
+        "tokens": {
+          "--mo-bg": "#ECE9D8",
+          "--mo-surface": "#FFFFFF",
+          "--mo-surface-2": "#F1EFE2",
+          "--mo-surface-3": "#DED8C3",
+          "--mo-canvas": "#D4D0C8",
+          "--mo-text-primary": "#000000",
+          "--mo-text-muted": "#4A4A4A",
+          "--mo-text-faint": "#6E6E6E",
+          "--mo-line": "#ACA899",
+          "--mo-line-strong": "#716F64",
+          "--mo-danger": "#C00000",
+          "--mo-danger-soft": "#F7DEDE",
+          "--mo-success": "#1F7A1F",
+          "--mo-success-soft": "#DCEFD8",
+          "--mo-warning": "#8A5A00",
+          "--mo-warning-soft": "#FBEBC8",
+          "--mo-radius-md": "0px",
+          "--mo-radius-lg": "0px",
+          "--mo-radius-xl": "0px",
+          "--mo-shadow-panel": "none",
+          "--mo-shadow-pop": "2px 2px 4px rgba(0, 0, 0, 0.28)",
+          "--mo-shadow-page": "1px 1px 3px rgba(0, 0, 0, 0.22)",
+          "--mo-font-ui": "Tahoma, \"SimSun\", \"Microsoft YaHei\", sans-serif",
+          "--mo-motion-fast": "80ms",
+          "--mo-motion-base": "120ms"
+        },
+        "chrome": {
+          "toolbar": "classic-two-row",
+          "controlShape": "beveled",
+          "density": "compact",
+          "titlebar": "gradient"
+        },
+        "docPaperTint": "#FFFFFF"
+      }
+    ]
+  }
+}

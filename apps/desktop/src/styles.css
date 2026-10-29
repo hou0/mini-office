@@ -121,3 +121,110 @@
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* --------------------------------------------------------------------------
+ * 主题插件的外壳适配层（Chrome 变体）
+ *
+ * 主题只能通过 data-chrome-* 枚举属性影响外壳，不能注入 DOM 或任意 CSS。
+ * 这样"Office 2003 风格"能成立（直角 + 凸起边框 + 紧凑密度），
+ * 又不会因为第三方主题而破坏可用性。
+ * 注意：以下规则只作用于外壳控件，绝不触碰文档画布。
+ * -------------------------------------------------------------------------- */
+
+[data-chrome-control-shape='beveled'] .mo-toolbar-btn {
+  border-radius: 0;
+  border-color: var(--mo-line-strong);
+  background: var(--mo-surface);
+  box-shadow: inset 1px 1px 0 color-mix(in srgb, white 70%, transparent),
+    inset -1px -1px 0 color-mix(in srgb, black 12%, transparent);
+}
+[data-chrome-control-shape='beveled'] .mo-toolbar-btn:hover {
+  background: var(--mo-surface-2);
+  box-shadow: inset -1px -1px 0 color-mix(in srgb, white 70%, transparent),
+    inset 1px 1px 0 color-mix(in srgb, black 12%, transparent);
+}
+[data-chrome-control-shape='beveled'] .mo-toolbar-btn[data-active='true'] {
+  background: var(--mo-surface-3);
+  box-shadow: inset 1px 1px 0 color-mix(in srgb, black 14%, transparent),
+    inset -1px -1px 0 color-mix(in srgb, white 60%, transparent);
+}
+[data-chrome-control-shape='beveled'] .mo-field {
+  border-radius: 0;
+  border-color: var(--mo-line-strong);
+  box-shadow: inset 1px 1px 0 color-mix(in srgb, black 10%, transparent);
+}
+
+[data-chrome-control-shape='rounded'] .mo-toolbar-btn {
+  border-radius: 999px;
+}
+[data-chrome-control-shape='rounded'] .mo-field {
+  border-radius: 999px;
+  padding-inline: 12px;
+}
+
+[data-chrome-density='compact'] .mo-toolbar-btn {
+  height: 24px;
+  min-width: 24px;
+  padding: 0 4px;
+}
+[data-chrome-density='compact'] .mo-field {
+  height: 24px;
+  font-size: 11.5px;
+}
+[data-chrome-density='comfortable'] .mo-toolbar-btn {
+  height: 32px;
+  min-width: 32px;
+  padding: 0 8px;
+}
+[data-chrome-density='comfortable'] .mo-field {
+  height: 32px;
+}
+
+[data-chrome-titlebar='gradient'] .mo-titlebar {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--mo-surface) 92%, white) 0%,
+    var(--mo-surface-2) 55%,
+    var(--mo-surface-3) 100%
+  );
+  border-bottom: 1px solid var(--mo-line-strong);
+}
+
+/* 经典菜单栏：仅当主题声明 chrome.toolbar = 'classic-two-row' 时渲染。 */
+[data-chrome-toolbar='classic-two-row'] .mo-menubar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 24px;
+  padding: 0 4px;
+  background: var(--mo-surface-2);
+  border-bottom: 1px solid var(--mo-line-strong);
+  user-select: none;
+}
+
+.mo-menubar-item {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11.5px;
+  line-height: 1;
+  color: var(--mo-text-primary);
+  transition: background var(--mo-motion-fast) ease;
+}
+.mo-menubar-item:hover,
+.mo-menubar-item[data-active='true'] {
+  background: var(--mo-accent-soft);
+  border-color: color-mix(in srgb, var(--mo-accent) 30%, transparent);
+  color: var(--mo-accent);
+}
+
+/* 紧凑密度下菜单栏同步收窄，避免经典风格下出现多余的纵向留白。 */
+[data-chrome-toolbar='classic-two-row'][data-chrome-density='compact'] .mo-menubar {
+  height: 22px;
+}
+[data-chrome-toolbar='classic-two-row'][data-chrome-density='compact'] .mo-menubar-item {
+  height: 18px;
+  font-size: 11px;
+}

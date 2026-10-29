@@ -31,6 +31,8 @@ export interface PlatformAdapter {
   convertLegacy?(path: string): Promise<OpenedFile | null>;
   saveBytes(bytes: Uint8Array, target: SaveTarget, mime: string): Promise<SaveOutcome>;
   listFonts(): Promise<FontInfo[]>;
+  /** 功能：强制重新扫描字体，供用户安装字体后即时生效；时间：2026-10-29；作者：lq。 */
+  refreshFonts?(): Promise<FontInfo[]>;
   saveSnapshot(snapshot: DocumentSnapshot): Promise<void>;
   listSnapshots(): Promise<DocumentSnapshotMeta[]>;
   loadSnapshot(id: string): Promise<DocumentSnapshot | null>;

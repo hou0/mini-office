@@ -1,0 +1,15 @@
+import { chromium } from 'playwright-core';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+const executablePath = resolve(homedir(), 'Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing');
+const browser = await chromium.launch({ executablePath });
+const page = await browser.newPage({ viewport: { width: 1360, height: 920 } });
+await page.goto('http://127.0.0.1:1420/', { waitUntil: 'networkidle' });
+await page.waitForTimeout(2500);
+await page.keyboard.press('Meta+Comma');
+await page.waitForTimeout(1200);
+await page.screenshot({ path: resolve('tests/output/debug-settings.png') });
+const btns = await page.getByRole('button').allInnerTexts();
+console.log('button count:', btns.length);
+console.log(JSON.stringify(btns.map((t) => t.replace(/\n/g, '|')), null, 0));
+await browser.close();

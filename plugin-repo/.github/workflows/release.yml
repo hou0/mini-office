@@ -1,0 +1,59 @@
+name: 发布插件
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装打包依赖
+        run: npm install --no-save jszip@3
+
+      # 打包全部插件并生成 index.json。
+      # 脚本固定了 zip 条目时间戳，因此同一份源码每次生成的 SHA-256 完全一致，
+      # 索引里的校验值与提交进仓库的包不会对不上。
+      - name: 打包并生成索引
+        run: node scripts/build-index.mjs
+
+      # 产物必须提交进仓库：客户端通过 raw.githubusercontent.com 下载。
+      # Release 资产会 302 到 objects.githubusercontent.com 且不带 CORS 头，fetch 会被拦截。
+      - name: 提交 packages 与 index.json
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp index.json "$RUNNER_TEMP/index.json"
+          rm -rf "$RUNNER_TEMP/packages" && cp -R packages "$RUNNER_TEMP/packages"
+          git fetch origin main
+          git checkout main
+          cp "$RUNNER_TEMP/index.json" index.json
+          rm -rf packages && cp -R "$RUNNER_TEMP/packages" packages
+          git add index.json packages
+          if git diff --staged --quiet; then
+            echo "产物无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "chore: 更新插件包与索引（${{ github.ref_name }}）"
+          git push origin main
+
+      # Release 仅作为人工下载的镜像，客户端不依赖它。
+      - name: 发布 Release 镜像
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/*.moext
+          generate_release_notes: true

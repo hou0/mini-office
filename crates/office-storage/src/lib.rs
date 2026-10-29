@@ -15,6 +15,11 @@ pub struct SaveOutcome {
     pub sha256: String,
 }
 
+/// 功能：备份统一收敛到文档同级的隐藏目录，避免在用户工作目录里堆积同名副本；时间：2026-10-29；作者：lq。
+const BACKUP_DIR: &str = ".mini-office-backups";
+/// 功能：单个文件最多保留的备份份数，超出后按时间戳淘汰最旧副本；时间：2026-10-29；作者：lq。
+const BACKUP_KEEP: usize = 10;
+
 fn backup_path_for(path: &Path) -> PathBuf {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
     let suffix = uuid::Uuid::new_v4().simple().to_string();
@@ -22,10 +27,35 @@ fn backup_path_for(path: &Path) -> PathBuf {
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("document");
-    path.with_file_name(format!(
-        "{file_name}.mini-office-backup-{stamp}-{}",
-        &suffix[..6]
-    ))
+    let directory = path
+        .parent()
+        .map(|parent| parent.join(BACKUP_DIR))
+        .unwrap_or_else(|| PathBuf::from(BACKUP_DIR));
+    directory.join(format!("{file_name}.{stamp}-{}", &suffix[..6]))
+}
+
+/// 功能：清理同一文件的过期备份，保持目录可控；时间：2026-10-29；作者：lq。
+fn prune_backups(target: &Path) {
+    let Some(parent) = target.parent() else { return };
+    let Some(file_name) = target.file_name().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let directory = parent.join(BACKUP_DIR);
+    let prefix = format!("{file_name}.");
+    let Ok(entries) = fs::read_dir(&directory) else { return };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| name.starts_with(&prefix))
+        .collect();
+    if names.len() <= BACKUP_KEEP {
+        return;
+    }
+    names.sort();
+    for name in &names[..names.len() - BACKUP_KEEP] {
+        let _ = fs::remove_file(directory.join(name));
+    }
 }
 
 fn sync_parent(path: &Path) -> Result<(), OfficeError> {
@@ -64,7 +94,11 @@ pub fn atomic_write(
 
     let backup = if create_backup && path.exists() {
         let backup = backup_path_for(path);
+        if let Some(directory) = backup.parent() {
+            fs::create_dir_all(directory)?;
+        }
         fs::copy(path, &backup)?;
+        prune_backups(path);
         Some(backup)
     } else {
         None
@@ -342,7 +376,35 @@ mod tests {
         assert_eq!(outcome.bytes_written, 11);
         assert!(outcome.backup_path.is_some());
         let backup = outcome.backup_path.unwrap();
-        assert_eq!(fs::read(backup).unwrap(), b"old");
+        assert_eq!(fs::read(&backup).unwrap(), b"old");
+        // 功能：备份收敛到隐藏目录，不再污染用户工作目录；时间：2026-10-29；作者：lq。
+        assert!(backup.contains(BACKUP_DIR));
+        assert!(!dir.path().join("document.docx.mini-office-backup").exists());
+        let mut siblings: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        siblings.sort();
+        let mut expected = vec!["document.docx".to_string(), BACKUP_DIR.to_string()];
+        expected.sort();
+        assert_eq!(siblings, expected);
+    }
+
+    #[test]
+    fn backups_are_pruned_to_keep_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("document.docx");
+        let backups = dir.path().join(BACKUP_DIR);
+        fs::create_dir_all(&backups).unwrap();
+        for index in 0..(BACKUP_KEEP + 5) {
+            fs::write(backups.join(format!("document.docx.2026010{index}-000000-000-aaaaaa")), b"x")
+                .unwrap();
+        }
+        fs::write(&target, b"old").unwrap();
+        atomic_write(&target, b"new", true).unwrap();
+        let count = fs::read_dir(&backups).unwrap().count();
+        assert_eq!(count, BACKUP_KEEP);
     }
 
     #[test]

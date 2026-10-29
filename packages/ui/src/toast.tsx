@@ -41,7 +41,7 @@ export function Toast({
   return (
     <div
       role="status"
-      className="mo-glass mo-pop-in pointer-events-auto flex w-[330px] items-start gap-2.5 rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface)] px-3 py-2.5 shadow-pop"
+      className="mo-glass mo-pop-in pointer-events-auto flex w-[330px] items-start gap-2.5 rounded-lg border border-[var(--mo-line)] bg-[var(--mo-surface-raised)] px-3 py-2.5 shadow-pop"
     >
       <Icon size={16} className={cn('mt-0.5 shrink-0', TONES[toast.level])} />
       <div className="min-w-0 flex-1">
