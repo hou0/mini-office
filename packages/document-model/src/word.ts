@@ -76,6 +76,24 @@ export interface WordTabStop {
   leader?: 'none' | 'dot' | 'hyphen' | 'middleDot' | 'underline';
 }
 
+/** 功能：VML 浮动形状（v:rect 复选框等），按锚定段落定位的页面浮层，不占行内空间；时间：2026-10-30；作者：hou0。 */
+export interface WordShape {
+  /** 水平位置：xRelative=page 时为距页面左缘的 px；margin/text 时为距内容区左缘的 px。 */
+  leftPx: number;
+  /** 垂直位置：距锚定段落顶缘的 px（可负，向上拉到前一段所在行）。 */
+  topPx: number;
+  widthPx: number;
+  heightPx: number;
+  /** 水平参照系：page=页面左缘，margin/text=内容区左缘（VML 缺省 text）。 */
+  xRelative: 'page' | 'margin';
+  /** 描边颜色（#RRGGBB），缺省黑。 */
+  strokeColor?: string;
+  /** 描边宽度 px；0 表示无描边。 */
+  strokeWidthPx?: number;
+  /** 是否填充（复选框通常只描边不填充）。 */
+  filled?: boolean;
+}
+
 export interface ParagraphStyle {
   alignment?: WordAlignment;
   indentLeftPx?: number;
@@ -87,6 +105,11 @@ export interface ParagraphStyle {
   spaceAfterPx?: number;
   /** Multiplier, e.g. 1.5. */
   lineHeight?: number;
+  /**
+   * 功能：Word 倍数行距（w:lineRule="auto" 的 line/240）；与 lineHeight 不同，它乘以字体自然行高
+   * （中文约 1.3 倍字号）而非字号本身，导入文档行距与 Word 一致；时间：2026-10-30；作者：hou0。
+   */
+  lineHeightMultipleWord?: number;
   /** Exact line height in CSS px (fixed line spacing). */
   lineHeightExactPx?: number;
   /** 功能：最小值行距（w:lineRule="atLeast"），低于该高度时按内容撑开；时间：2026-10-29；作者：lq。 */
@@ -97,6 +120,8 @@ export interface ParagraphStyle {
   backgroundColor?: string;
   /** 功能：保留段落上下左右边框，用于兼容 Word 横线与签名栏；时间：2026-10-27；作者：lq。 */
   borders?: TableBorders;
+  /** 功能：段落是否对齐到文档网格（w:snapToGrid，缺省对齐；仅显式为 false 时存储）；时间：2026-10-30；作者：hou0。 */
+  snapToGrid?: boolean;
 }
 
 export interface ListInfo {
@@ -226,6 +251,8 @@ export interface PageSetup {
   sizeName: string;
   margins: PageMargins;
   columns?: number;
+  /** 节分隔类型：'nextPage' 强制新页，'continuous' 同页继续；时间：2026-10-30；作者：hou0。 */
+  type?: 'nextPage' | 'continuous';
   /** 功能：页码起始值，独立于物理页序；时间：2026-10-24；作者：lq。 */
   pageNumberStart?: number;
 }

@@ -7,6 +7,8 @@ export function documentSections(doc: DocModel): DocModel[] {
   for (const block of doc.blocks) {
     blocks.push(block);
     if (block.type === 'paragraph' && block.sectionEnd) {
+      // continuous 节不强制翻页，块继续留在当前节内；时间：2026-10-30；作者：hou0。
+      if (block.sectionEnd.page.type === 'continuous') continue;
       result.push({ ...doc, ...block.sectionEnd, blocks });
       blocks = [];
     }
