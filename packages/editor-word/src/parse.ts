@@ -1409,6 +1409,9 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
   const columns = numericAttr(firstChild(sectPr, 'w:cols'), 'w:num');
   // 功能：解析节分隔类型，continuous 表示同页继续，nextPage 强制新页；时间：2026-10-30；作者：hou0。
   const sectType = attrValue(firstChild(sectPr, 'w:type'), 'w:val');
+  // 功能：解析文档网格行距 w:docGrid w:linePitch（twips），段落行高按此网格对齐；时间：2026-10-30；作者：hou0。
+  const docGrid = firstChild(sectPr, 'w:docGrid');
+  const linePitchTwips = docGrid ? numericAttr(docGrid, 'w:linePitch') : undefined;
   return {
     widthPx: twipsToPx(widthTwips),
     heightPx: twipsToPx(heightTwips),
@@ -1417,6 +1420,7 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
     margins,
     columns: columns && columns > 1 ? columns : undefined,
     type: sectType === 'continuous' ? 'continuous' : 'nextPage',
+    linePitchPx: linePitchTwips !== undefined ? twipsToPx(linePitchTwips) : undefined,
     // 功能：恢复 DOCX 起始页码；时间：2026-10-24；作者：lq。
     pageNumberStart: numericAttr(firstChild(sectPr, 'w:pgNumType'), 'w:start'),
   };

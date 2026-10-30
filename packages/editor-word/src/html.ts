@@ -315,16 +315,21 @@ export function paragraphWrapperStyle(paragraph: DocParagraph): React.CSSPropert
   };
 }
 
-export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string, defaultFontSizePt: number): React.CSSProperties {
+export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string, defaultFontSizePt: number, linePitchPx?: number): React.CSSProperties {
   const style: ParagraphStyle = paragraph.style;
+  // 功能：计算段落自然行高（CSS px）；时间：2026-10-30；作者：hou0。
+  const naturalLineHeightPx = style.lineHeightExactPx || style.lineHeightAtLeastPx
+    ? style.lineHeightExactPx ?? style.lineHeightAtLeastPx
+    : (defaultFontSizePt * (style.lineHeight ?? 1.5) * FONT_LINE_HEIGHT_RATIO) / 0.75;
+  // 功能：若文档定义了 w:docGrid w:linePitch，段落行高向上取整到网格行高的整数倍，解决封面空行偏矮、整体上移问题；时间：2026-10-30；作者：hou0。
+  const lineHeightValue = linePitchPx && naturalLineHeightPx
+    ? Math.ceil(naturalLineHeightPx / linePitchPx) * linePitchPx
+    : naturalLineHeightPx;
   const base: React.CSSProperties = {
     fontFamily: fontStackFor(defaultFont) || DOC_FONT_STACK,
     fontSize: `${defaultFontSizePt}pt`,
     // 功能：固定值与最小值行距都用 px 表达，CSS 无“至少”语义，取相同高度即可保证分页一致；时间：2026-10-29；作者：lq。
-    lineHeight:
-      style.lineHeightExactPx || style.lineHeightAtLeastPx
-        ? `${style.lineHeightExactPx ?? style.lineHeightAtLeastPx}px`
-        : (style.lineHeight ?? 1.5) * FONT_LINE_HEIGHT_RATIO,
+    lineHeight: `${lineHeightValue}px`,
     textIndent: style.firstLineIndentPx ? `${style.firstLineIndentPx}px` : undefined,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'break-word',

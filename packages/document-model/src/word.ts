@@ -255,6 +255,8 @@ export interface PageSetup {
   columns?: number;
   /** 节分隔类型：'nextPage' 强制新页，'continuous' 同页继续；时间：2026-10-30；作者：hou0。 */
   type?: 'nextPage' | 'continuous';
+  /** 文档网格行距（w:docGrid w:linePitch），CSS px，段落行高按此网格对齐；时间：2026-10-30；作者：hou0。 */
+  linePitchPx?: number;
   /** 功能：页码起始值，独立于物理页序；时间：2026-10-24；作者：lq。 */
   pageNumberStart?: number;
 }

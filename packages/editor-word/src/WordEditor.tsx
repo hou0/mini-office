@@ -386,7 +386,7 @@ const StaticParagraph = memo(function StaticParagraph({
     <div style={paragraphWrapperStyle(paragraph)}>
       <div
         data-bookmark={paragraph.bookmarks?.length ? paragraph.bookmarks.join(' ') : undefined}
-        style={paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt)}
+        style={paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt, doc.page.linePitchPx)}
         onClick={(event) => {
           // 功能：只读段落同样支持点击目录项跳转；时间：2026-10-30；作者：hou0。
           const link = (event.target as HTMLElement).closest<HTMLElement>('[data-anchor]');
@@ -473,7 +473,7 @@ const EditableParagraph = memo(function EditableParagraph({
         role="textbox"
         aria-multiline="true"
         aria-label="文档段落"
-        style={{ ...paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt), outline: 'none' }}
+        style={{ ...paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt, doc.page.linePitchPx), outline: 'none' }}
         onInput={(event) => handlers.onInput(paragraph.id, event.currentTarget, headEnd)}
         onPointerDown={(event) => {
           const handle = (event.target as HTMLElement).closest<HTMLElement>('[data-image-handle]');
