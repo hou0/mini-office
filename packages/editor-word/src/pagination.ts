@@ -24,6 +24,21 @@ export interface PageSlice {
   section?: DocSection;
   sectionPage?: number;
   sectionTotal?: number;
+  /** 功能：本页已用内容高度（px），连续分节的后续节据此计算剩余空间；时间：2026-10-30；作者：hou0。 */
+  usedHeight?: number;
+  /**
+   * 功能：页内多栏分区——连续分节在同一页切换栏数时，按分节记录栏参数与所属块，
+   * 渲染时同一页的标题（单栏）与三栏段互不干扰；时间：2026-10-30；作者：hou0。
+   */
+  columnGroups?: ColumnGroup[];
+}
+
+/** 功能：页内一个分节的栏参数与块范围；时间：2026-10-30；作者：hou0。 */
+export interface ColumnGroup {
+  count: number;
+  widthsPx?: number[];
+  spacesPx?: number[];
+  blockIds: string[];
 }
 
 /** 功能：表格实测布局，用于按行切页并重复表头；时间：2026-10-29；作者：lq。 */
@@ -76,7 +91,49 @@ export function paginateDocument(
   const pages: PageSlice[] = [];
   let nextNumber = 1;
   for (const section of sections) {
-    const slices = paginateBlocks(section.blocks, heights, pageMetrics(section.page).contentHeight, tables, breaker);
+    const metrics = pageMetrics(section.page);
+    // 功能：连续分节不翻页——把本节内容装进上一页的剩余空间，装不下的部分才另起新页；
+    // 同一页内出现多栏分节时按分节记录栏分组，标题（单栏）与三栏段各自排版；时间：2026-10-30；作者：hou0。
+    const previous = pages.at(-1);
+    const remaining = section.page.type === 'continuous' && previous
+      ? Math.max(0, metrics.contentHeight - (previous.usedHeight ?? 0))
+      : undefined;
+    if (remaining !== undefined && remaining > 1) {
+      const slices = paginateBlocks(section.blocks, heights, metrics.contentHeight, tables, breaker, remaining);
+      const [first, ...rest] = slices;
+      if (first) {
+        previous!.blocks = [...previous!.blocks, ...first.blocks];
+        if (first.fragments) previous!.fragments = [...(previous!.fragments ?? []), ...first.fragments];
+        if (first.locked) previous!.locked = [...(previous!.locked ?? []), ...first.locked];
+        if (first.fragmentEnds) previous!.fragmentEnds = { ...(previous!.fragmentEnds ?? {}), ...first.fragmentEnds };
+        if (section.page.columns && section.page.columns > 1) {
+          previous!.columnGroups = [
+            ...(previous!.columnGroups ?? []),
+            {
+              count: section.page.columns,
+              widthsPx: section.page.columnWidthsPx,
+              spacesPx: section.page.columnSpacePx,
+              blockIds: first.blocks.map((block) => block.id),
+            },
+          ];
+        }
+        previous!.usedHeight = (previous!.usedHeight ?? 0) + (first.usedHeight ?? 0);
+      }
+      const start = previous?.section?.page.pageNumberStart ?? nextNumber;
+      rest.forEach((slice, offset) => {
+        pages.push({
+          ...slice,
+          index: pages.length,
+          section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer },
+          sectionPage: (previous?.sectionPage ?? 0) + offset + 1,
+          sectionTotal: (previous?.sectionTotal ?? 0) + rest.length,
+        });
+      });
+      // 功能：接续节溢出的页也占用页码，避免后续节从这里重新编号；时间：2026-10-30；作者：hou0。
+      nextNumber = start + (previous?.sectionPage ?? 0) + rest.length + 1;
+      continue;
+    }
+    const slices = paginateBlocks(section.blocks, heights, metrics.contentHeight, tables, breaker);
     const start = section.page.pageNumberStart ?? nextNumber;
     slices.forEach((slice, index) => pages.push({ ...slice, index: pages.length, section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer }, sectionPage: index, sectionTotal: slices.length }));
     nextNumber = start + slices.length;
@@ -95,6 +152,8 @@ export function paginateBlocks(
   contentHeight: number,
   tables?: Map<string, TableLayout>,
   breaker?: ParagraphBreaker,
+  /** 功能：首页可用高度——连续分节接入上一页剩余空间时小于整页高；时间：2026-10-30；作者：hou0。 */
+  firstPageBudget?: number,
 ): PageSlice[] {
   const pages: PageSlice[] = [];
   let current: DocBlock[] = [];
@@ -111,6 +170,7 @@ export function paginateBlocks(
       fragments: fragments.length ? fragments : undefined,
       locked: locked.length ? locked : undefined,
       fragmentEnds: Object.keys(fragmentEnds).length ? fragmentEnds : undefined,
+      usedHeight: used,
     });
     current = [];
     fragments = [];
@@ -123,6 +183,8 @@ export function paginateBlocks(
   let pending: { block: DocBlock; isCont: boolean; forceNewPage: boolean } | null = null;
   let i = 0;
   while (i < blocks.length) {
+    // 功能：首页可用高度可小于整页（连续分节接续上一页）；后续页恢复整页高；时间：2026-10-30；作者：hou0。
+    const limit = pages.length === 0 && firstPageBudget !== undefined ? firstPageBudget : contentHeight;
     const item: { block: DocBlock; isCont: boolean; forceNewPage: boolean } = pending ?? { block: blocks[i], isCont: false, forceNewPage: false };
     pending = null;
     const block: DocBlock = item.block;
@@ -140,7 +202,7 @@ export function paginateBlocks(
     const height = Math.max(0, heights.get(block.id) ?? 0);
 
     if (block.type === 'paragraph') {
-      const fits = used + height <= contentHeight + 0.5;
+      const fits = used + height <= limit + 0.5;
       // 功能：段内分页符是强制断点，即使整段放得下也必须在此断开；时间：2026-10-30；作者：lq。
       const mustBreak = breaker?.needsBreak(block) === true;
       if (fits && !mustBreak) {
@@ -151,13 +213,13 @@ export function paginateBlocks(
           locked.push(block.id);
         }
         used += height;
-        if (used > contentHeight + 0.5) flush();
+        if (used > limit + 0.5) flush();
         i += 1;
         continue;
       }
       // 功能：段高超过本页剩余空间——先换页，再按行切分；强制断点则留在本页；时间：2026-10-30；作者：lq。
       if (!fits && current.length > 0) flush();
-      const remaining = contentHeight - used;
+      const remaining = limit - used;
       const split = breaker?.split(block, remaining) ?? null;
       if (split) {
         // 功能：首片为空表示此处只断页（段首分页符），不产出多余空行；时间：2026-10-30；作者：lq。
@@ -192,7 +254,7 @@ export function paginateBlocks(
         locked.push(block.id);
       }
       used += height;
-      if (used > contentHeight + 0.5) flush();
+      if (used > limit + 0.5) flush();
       i += 1;
       continue;
     }
@@ -200,11 +262,11 @@ export function paginateBlocks(
     // 功能：表格：整表放得下时保持原样，避免无意义的切片；时间：2026-10-29；作者：lq。
     const table = block.type === 'table' ? block : undefined;
     const layout = table ? tables?.get(table.id) : undefined;
-    if (!table || !layout || used + height <= contentHeight + 0.5) {
-      if (current.length > 0 && used + height > contentHeight + 0.5) flush();
+    if (!table || !layout || used + height <= limit + 0.5) {
+      if (current.length > 0 && used + height > limit + 0.5) flush();
       current.push(block);
       used += height;
-      if (used > contentHeight + 0.5) flush();
+      if (used > limit + 0.5) flush();
       i += 1;
       continue;
     }
@@ -215,11 +277,11 @@ export function paginateBlocks(
     while (start < table.rows.length) {
       const headerRows = continuation ? layout.headerRows : 0;
       const headerHeight = sumHeights(layout.rowHeights, 0, headerRows);
-      let budget = contentHeight - used - headerHeight;
+      let budget = limit - used - headerHeight;
       if (budget <= 0) {
         if (current.length > 0) { flush(); continue; }
         // 功能：表头本身高于整页时仍允许输出，避免死循环；时间：2026-10-29；作者：lq。
-        budget = Math.max(1, contentHeight - headerHeight);
+        budget = Math.max(1, limit - headerHeight);
       }
       let end = start;
       let acc = 0;

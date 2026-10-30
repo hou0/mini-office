@@ -31,8 +31,14 @@ export interface DocImage {
   dataUrl?: string;
   /** 功能：保存图片的文字环绕方式，支持嵌入、左右环绕、上下型和无环绕（VML rect 浮层）；时间：2026-10-24；作者：lq。 */
   wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom' | 'none';
-  /** 功能：VML rect 绝对定位浮层（页面坐标系，CSS px），仅 v:rect 带 position:absolute 时存在；时间：2026-10-30；作者：hou0。 */
-  vmlRect?: { left: number; top: number; width: number; height: number };
+  /**
+   * 功能：VML 浮层定位（v:rect 带 position:absolute 时存在），CSS px；
+   * left 按 xRelative 解释：page=页面左缘，text=内容区左缘；top 为相对锚定段落顶缘的偏移（可负）；时间：2026-10-30；作者：hou0。
+   */
+  vmlRect?: { left: number; top: number; width: number; height: number; xRelative?: 'page' | 'text'; checked?: boolean };
+  /** 功能：VML rect 的描边颜色与粗细（px），用于渲染方框边框而非占位字符；时间：2026-10-30；作者：hou0。 */
+  strokeColor?: string;
+  strokeWidthPx?: number;
 }
 
 export interface MergeFieldFormat {
@@ -43,6 +49,27 @@ export interface MergeFieldFormat {
   after?: string;      // \f 非空后缀
 }
 
+/**
+ * 功能：Word 内容控件（w:sdt）的语义——复选框可勾选、下拉/组合框可选项、日期选择器可按格式填值；
+ * 解析后保留控件类型与当前值，渲染成可交互控件并可原样写回；时间：2026-10-30；作者：hou0。
+ */
+export interface RunControl {
+  kind: 'checkbox' | 'dropdown' | 'comboBox' | 'date' | 'text';
+  /** 复选框当前是否勾选（对应 w14:checked / w:checked）。 */
+  checked?: boolean;
+  /** 下拉/组合框的候选值（w:listItem 的 displayText）。 */
+  choices?: string[];
+  /** 日期格式（w:dateFormat，如 yyyy年M月d日）。 */
+  dateFormat?: string;
+  /** 控件别名与标记，写回时保留（w:alias / w:tag）。 */
+  alias?: string;
+  tag?: string;
+  /** 尚未填写（内容为空、显示占位提示）。 */
+  placeholder?: boolean;
+  /** 是否锁定内容不可编辑（w:lock）。 */
+  locked?: boolean;
+}
+
 export interface DocRun {
   text?: string;
   style: RunStyle;
@@ -51,6 +78,8 @@ export interface DocRun {
   lineBreak?: boolean;
   /** 功能：段内分页符（w:br w:type="page"），该位置必须强制断页；时间：2026-10-30；作者：lq。 */
   pageBreak?: boolean;
+  /** 功能：段内分栏符（w:br w:type="column"），多栏节中在此换到下一栏；时间：2026-10-30；作者：hou0。 */
+  columnBreak?: boolean;
   tab?: boolean;
   /** Field code such as PAGE / NUMPAGES, resolved by the renderer. */
   field?: string;
@@ -67,6 +96,8 @@ export interface DocRun {
   anchor?: string;
   /** 功能：外部超链接地址（由 w:hyperlink 的 r:id 经文档关系解析得到）；时间：2026-10-30；作者：hou0。 */
   href?: string;
+  /** 功能：该 run 是内容控件（w:sdt）的呈现内容；时间：2026-10-30；作者：hou0。 */
+  control?: RunControl;
 }
 
 export interface WordTabStop {
@@ -76,24 +107,6 @@ export interface WordTabStop {
   kind: 'left' | 'center' | 'right' | 'decimal';
   /** 功能：制表符前导符（Word 目录靠它在标题与页码间填充点/横线）；时间：2026-10-30；作者：hou0。 */
   leader?: 'none' | 'dot' | 'hyphen' | 'middleDot' | 'underline';
-}
-
-/** 功能：VML 浮动形状（v:rect 复选框等），按锚定段落定位的页面浮层，不占行内空间；时间：2026-10-30；作者：hou0。 */
-export interface WordShape {
-  /** 水平位置：xRelative=page 时为距页面左缘的 px；margin/text 时为距内容区左缘的 px。 */
-  leftPx: number;
-  /** 垂直位置：距锚定段落顶缘的 px（可负，向上拉到前一段所在行）。 */
-  topPx: number;
-  widthPx: number;
-  heightPx: number;
-  /** 水平参照系：page=页面左缘，margin/text=内容区左缘（VML 缺省 text）。 */
-  xRelative: 'page' | 'margin';
-  /** 描边颜色（#RRGGBB），缺省黑。 */
-  strokeColor?: string;
-  /** 描边宽度 px；0 表示无描边。 */
-  strokeWidthPx?: number;
-  /** 是否填充（复选框通常只描边不填充）。 */
-  filled?: boolean;
 }
 
 export interface ParagraphStyle {
@@ -107,11 +120,6 @@ export interface ParagraphStyle {
   spaceAfterPx?: number;
   /** Multiplier, e.g. 1.5. */
   lineHeight?: number;
-  /**
-   * 功能：Word 倍数行距（w:lineRule="auto" 的 line/240）；与 lineHeight 不同，它乘以字体自然行高
-   * （中文约 1.3 倍字号）而非字号本身，导入文档行距与 Word 一致；时间：2026-10-30；作者：hou0。
-   */
-  lineHeightMultipleWord?: number;
   /** Exact line height in CSS px (fixed line spacing). */
   lineHeightExactPx?: number;
   /** 功能：最小值行距（w:lineRule="atLeast"），低于该高度时按内容撑开；时间：2026-10-29；作者：lq。 */
@@ -124,6 +132,8 @@ export interface ParagraphStyle {
   borders?: TableBorders;
   /** 功能：段落是否对齐到文档网格（w:snapToGrid，缺省对齐；仅显式为 false 时存储）；时间：2026-10-30；作者：hou0。 */
   snapToGrid?: boolean;
+  /** 功能：段首分栏符（w:br w:type="column"），多栏节中本段另起一栏；时间：2026-10-30；作者：hou0。 */
+  columnBreakBefore?: boolean;
 }
 
 export interface ListInfo {
@@ -323,6 +333,8 @@ export interface DocModel {
   sectionPageCount?: number;
   /** 功能：本文档自定义/导入的样式，与内置预设合并后供样式库使用；时间：2026-10-29；作者：lq。 */
   styles?: DocStyleDefinition[];
+  /** 功能：默认制表位间距（settings.xml 的 w:defaultTabStop，CSS px）；无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30；作者：hou0。 */
+  defaultTabStopPx?: number;
 }
 
 export const A4_PAGE: PageSetup = {

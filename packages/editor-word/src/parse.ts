@@ -13,6 +13,7 @@ import {
   type ListInfo,
   type PageSetup,
   type ParagraphStyle,
+  type RunControl,
   type RunStyle,
   type TableBorderSide,
   type TableBorders,
@@ -261,10 +262,20 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
     const right = numericAttr(indent, 'w:right') ?? numericAttr(indent, 'w:end');
     const firstLine = numericAttr(indent, 'w:firstLine');
     const hanging = numericAttr(indent, 'w:hanging');
+    // 功能：WPS/中文模板常用字符单位缩进（leftChars/firstLineChars/hangingChars），按字号换算为 px，避免缩进丢失；时间：2026-10-30；作者：hou0。
+    const charPx = (ctx.defaultSizePt ?? 10.5) * (96 / 72);
+    const leftChars = numericAttr(indent, 'w:leftChars') ?? numericAttr(indent, 'w:startChars');
+    const rightChars = numericAttr(indent, 'w:rightChars') ?? numericAttr(indent, 'w:endChars');
+    const firstLineChars = numericAttr(indent, 'w:firstLineChars');
+    const hangingChars = numericAttr(indent, 'w:hangingChars');
     if (left !== undefined) style.indentLeftPx = twipsToPx(left);
+    else if (leftChars !== undefined) style.indentLeftPx = (leftChars / 100) * charPx;
     if (right !== undefined) style.indentRightPx = twipsToPx(right);
+    else if (rightChars !== undefined) style.indentRightPx = (rightChars / 100) * charPx;
     if (firstLine !== undefined) style.firstLineIndentPx = twipsToPx(firstLine);
     else if (hanging !== undefined) style.firstLineIndentPx = -twipsToPx(hanging);
+    else if (firstLineChars !== undefined) style.firstLineIndentPx = (firstLineChars / 100) * charPx;
+    else if (hangingChars !== undefined) style.firstLineIndentPx = -(hangingChars / 100) * charPx;
   }
 
   const tabs = firstChild(pPr, 'w:tabs');
@@ -305,6 +316,9 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
   if (keepNext) style.keepNext = toggleValue(keepNext);
   const pageBreakBefore = firstChild(pPr, 'w:pageBreakBefore');
   if (pageBreakBefore) style.pageBreakBefore = toggleValue(pageBreakBefore);
+  // 功能：段落显式关闭「对齐到网格」时记下来，行高不再向上取整到 docGrid 行距；时间：2026-10-30；作者：hou0。
+  const snapToGrid = firstChild(pPr, 'w:snapToGrid');
+  if (snapToGrid && !toggleValue(snapToGrid)) style.snapToGrid = false;
   const outline = numericAttr(firstChild(pPr, 'w:outlineLvl'), 'w:val');
   if (outline !== undefined) style.outlineLevel = outline;
 
@@ -678,7 +692,7 @@ function vmlStyleSize(style: string | undefined): { width: number; height: numbe
 }
 
 /** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；支持负值 margin；时间：2026-10-30；作者：hou0。 */
-function parseVmlRectStyle(style: string): { left: number; top: number; width: number; height: number } | undefined {
+function parseVmlRectStyle(style: string): { left: number; top: number; width: number; height: number; xRelative: 'page' | 'text' } | undefined {
   const position = /(?:^|;)\s*position\s*:\s*absolute/i.test(style);
   if (!position) return undefined;
   const left = /(?:^|;)\s*margin-left\s*:\s*(-?[\d.]+)(pt|px|in|cm)/i.exec(style);
@@ -699,7 +713,15 @@ function parseVmlRectStyle(style: string): { left: number; top: number; width: n
         return value;
     }
   };
-  return { left: convert(left), top: convert(top), width: convert(width), height: convert(height) };
+  // 功能：mso-position-horizontal-relative:page 表示横坐标相对页面左缘，缺省相对内容区左缘；时间：2026-10-30；作者：hou0。
+  const horizontalRelative = /mso-position-horizontal-relative\s*:\s*([a-z]+)/i.exec(style)?.[1]?.toLowerCase();
+  return {
+    left: convert(left),
+    top: convert(top),
+    width: convert(width),
+    height: convert(height),
+    xRelative: horizontalRelative === 'page' ? 'page' : 'text',
+  };
 }
 
 async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun[]> {
@@ -735,6 +757,64 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
   return [{ text: '', style: {}, image }];
 }
 
+/**
+ * 功能：从 w:sdtPr 读出内容控件语义——复选框勾选状态、下拉/组合框候选、日期格式与别名；
+ * 未识别的控件按普通文本处理；时间：2026-10-30；作者：hou0。
+ */
+function parseSdtControl(sdt: Element): RunControl | undefined {
+  const pr = firstChild(sdt, 'w:sdtPr');
+  if (!pr) return undefined;
+  const alias = attrValue(firstChild(pr, 'w:alias'), 'w:val');
+  const tag = attrValue(firstChild(pr, 'w:tag'), 'w:val');
+  const locked = toggleValue(firstChild(pr, 'w:lock'));
+  const base: RunControl = {
+    kind: 'text',
+    ...(alias ? { alias } : {}),
+    ...(tag ? { tag } : {}),
+    ...(locked ? { locked } : {}),
+  };
+  // 功能：复选框控件（w14:checkbox）读取 w14:checked；时间：2026-10-30；作者：hou0。
+  const checkbox = firstDescendant(pr, 'checkbox') ?? firstChild(pr, 'w:checkBox');
+  if (checkbox) {
+    const checkedNode =
+      firstDescendant(checkbox, 'checked') ?? firstChild(checkbox, 'w:checked');
+    return { ...base, kind: 'checkbox', checked: toggleValue(checkedNode) };
+  }
+  const dropdown = firstChild(pr, 'w:dropDownList');
+  if (dropdown) {
+    const choices = Array.from(dropdown.getElementsByTagName('w:listItem'))
+      .map((item) => attrValue(item, 'w:displayText') ?? attrValue(item, 'w:value'))
+      .filter((value): value is string => !!value);
+    return { ...base, kind: 'dropdown', choices };
+  }
+  const comboBox = firstChild(pr, 'w:comboBox');
+  if (comboBox) {
+    const choices = Array.from(comboBox.getElementsByTagName('w:listItem'))
+      .map((item) => attrValue(item, 'w:displayText') ?? attrValue(item, 'w:value'))
+      .filter((value): value is string => !!value);
+    return { ...base, kind: 'comboBox', choices };
+  }
+  const date = firstChild(pr, 'w:date');
+  if (date) {
+    const format =
+      attrValue(firstChild(date, 'w:dateFormat'), 'w:val') ??
+      attrValue(firstChild(date, 'w:dateFormat'), 'w:valFormat');
+    return { ...base, kind: 'date', ...(format ? { dateFormat: format } : {}) };
+  }
+  const text = firstChild(pr, 'w:text');
+  if (text) return { ...base, kind: 'text' };
+  // 未带具体类型的 sdt（如富文本控件）也保留包装语义，便于写回。
+  return base;
+}
+
+/** 功能：VML 方框内是否已画勾（v:textbox 内的 ✓），用于恢复勾选状态；时间：2026-10-30；作者：hou0。 */
+function vmlRectChecked(rect: Element): boolean {
+  const textbox = firstDescendant(rect, 'v:textbox');
+  if (!textbox) return false;
+  const text = textbox.textContent ?? '';
+  return /[✓✔☑√]/.test(text);
+}
+
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
   // 功能：VML 复选框（v:rect）按定位信息渲染；时间：2026-10-30；作者：hou0。
   const rect = firstDescendant(pict, 'v:rect');
@@ -743,6 +823,8 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
     const rectStyle = parseVmlRectStyle(style);
     // 有定位信息的 rect 渲染为绝对定位浮层；仅无定位信息的才退化为 □ 字符；
     if (rectStyle) {
+      const strokeWeight = /strokeweight\s*:\s*(-?[\d.]+)(pt|px)/i.exec(style);
+      const strokeColor = attrValue(rect, 'strokecolor');
       return [
         {
           text: '',
@@ -752,7 +834,14 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
             src: '',
             widthPx: rectStyle.width,
             heightPx: rectStyle.height,
-            vmlRect: rectStyle,
+            vmlRect: { ...rectStyle, ...(vmlRectChecked(rect) ? { checked: true } : {}) },
+            strokeColor: strokeColor && /^#?[0-9a-fA-F]{6}$/.test(strokeColor)
+              ? `#${strokeColor.replace('#', '').toUpperCase()}`
+              : undefined,
+            // 功能：描边粗细按 strokeweight 换算 px（pt→px 乘 4/3），缺省 0.72pt；时间：2026-10-30；作者：hou0。
+            strokeWidthPx: strokeWeight
+              ? Number(strokeWeight[1]) * (strokeWeight[2].toLowerCase() === 'pt' ? 4 / 3 : 1)
+              : 1,
             wrap: 'none',
           },
         },
@@ -895,8 +984,14 @@ async function parseRunElement(
         break;
       case 'br': {
         const type = attrValue(child, 'w:type');
-        // 功能：段内分页符保留为 pageBreak 标志，由分页器强制断页；时间：2026-10-30；作者：lq。
-        runs.push({ text: '', style, pageBreak: type === 'page', lineBreak: type !== 'page' });
+        // 功能：分页符强制断页、分栏符切到下一栏，其余按普通换行；时间：2026-10-30；作者：lq。
+        runs.push({
+          text: '',
+          style,
+          pageBreak: type === 'page',
+          columnBreak: type === 'column',
+          lineBreak: type !== 'page' && type !== 'column',
+        });
         break;
       }
       case 'cr':
@@ -1019,7 +1114,21 @@ async function parseInlineChildren(
           localName(child) === 'sdt' ? firstChild(child, 'w:sdtContent') ?? child : child;
         if (localName(child) === 'ins') ctx.hasTrackedChanges = true;
         if (localName(child) === 'sdt') ctx.hasContentControls = true;
-        runs.push(...(await parseInlineChildren(container, base, ctx, state)));
+        const inner = await parseInlineChildren(container, base, ctx, state);
+        // 功能：内联内容控件保留控件语义（复选框/下拉/日期），空内容标记为占位待填；时间：2026-10-30；作者：hou0。
+        const control = localName(child) === 'sdt' ? parseSdtControl(child) : undefined;
+        if (control) {
+          const text = inner.map((run) => run.text ?? '').join('');
+          if (!inner.length || !text.trim()) control.placeholder = true;
+          if (inner.length) {
+            inner[0] = { ...inner[0], control };
+            runs.push(...inner);
+          } else {
+            runs.push({ text: '', style: base, control });
+          }
+          break;
+        }
+        runs.push(...inner);
         break;
       }
       case 'fldSimple': {
@@ -1065,10 +1174,18 @@ async function parseInlineChildren(
       case 'commentRangeEnd':
       case 'proofErr':
         break;
-      case 'br':
-        // 功能：段内分页符保留为 pageBreak 标志，由分页器强制断页；时间：2026-10-30；作者：lq。
-        runs.push({ text: '', style: base, pageBreak: getAttr(child, 'w:type') === 'page', lineBreak: getAttr(child, 'w:type') !== 'page' });
+      case 'br': {
+        // 功能：分页符强制断页、分栏符切到下一栏，其余按普通换行；时间：2026-10-30；作者：lq。
+        const brType = getAttr(child, 'w:type');
+        runs.push({
+          text: '',
+          style: base,
+          pageBreak: brType === 'page',
+          columnBreak: brType === 'column',
+          lineBreak: brType !== 'page' && brType !== 'column',
+        });
         break;
+      }
       default:
         break;
     }
@@ -1130,6 +1247,12 @@ async function parseParagraph(
   const lastRun = runs[runs.length - 1];
   const pageBreakAfter = lastRun?.pageBreak === true;
   if (pageBreakAfter) runs = runs.slice(0, -1);
+  // 功能：段首分栏符提升为段落属性，多栏节渲染时据此切栏；时间：2026-10-30；作者：hou0。
+  const leadingColumnBreak = runs[0]?.columnBreak === true;
+  if (leadingColumnBreak) {
+    runs = runs.slice(1);
+    paragraphStyle.columnBreakBefore = true;
+  }
   if (runs.length === 0) runs = [{ text: '', style: runBase }];
   // 功能：逐字母模式合并——空格 run 带负 letterSpacing，合并到前一字母 run，去掉可见空格；
   // 时间：2026-10-30；作者：hou0。
@@ -1359,7 +1482,19 @@ async function parseBlockContainer(element: Element, ctx: ParseContext): Promise
       case 'sdt': {
         ctx.hasContentControls = true;
         const content = firstChild(child, 'w:sdtContent');
-        if (content) blocks.push(...(await parseBlockContainer(content, ctx)));
+        if (!content) break;
+        const inner = await parseBlockContainer(content, ctx);
+        // 功能：块级内容控件只包一段时挂到该段上，渲染成可交互控件；时间：2026-10-30；作者：hou0。
+        const control = parseSdtControl(child);
+        if (control && inner.length === 1 && inner[0].type === 'paragraph') {
+          // 功能：块级控件挂到该段首个 run 上，渲染与写回和行内控件走同一条路径；时间：2026-10-30；作者：hou0。
+          const paragraph = inner[0];
+          const runs = paragraph.runs.length ? paragraph.runs : [{ text: '', style: {} }];
+          runs[0] = { ...runs[0], control };
+          if (!(runs[0].text ?? '').trim()) control.placeholder = true;
+          inner[0] = { ...paragraph, runs };
+        }
+        blocks.push(...inner);
         break;
       }
       case 'customXml': {
@@ -1577,7 +1712,8 @@ export async function parseDocxPackage(
   // 功能：把导入文档的段落样式带进模型，样式库可直接套用与识别；时间：2026-10-29；作者：lq。
   const documentStyles = collectDocumentStyles(blocks, header, footer, provisional.styles);
 
-  // 功能：读回模板里保存的邮件合并面板状态，供打开时恢复面板；时间：2026-10-29；作者：lq。
+  // 功能：读回模板里保存的邮件合并面板状态，供打开时恢复面板；同时读取默认制表位间距；时间：2026-10-29；作者：lq。
+  let defaultTabStopPx: number | undefined;
   if (pkg.has('word/settings.xml')) {
     try {
       const settingsDocument = parseXmlDom(await pkg.text('word/settings.xml'));
@@ -1589,6 +1725,10 @@ export async function parseDocxPackage(
           break;
         }
       }
+      // 功能：默认制表位（w:defaultTabStop，twips），无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30；作者：hou0。
+      const tabStop = settingsDocument.getElementsByTagName('w:defaultTabStop')[0];
+      const tabStopTwips = tabStop ? numericAttr(tabStop, 'w:val') : undefined;
+      if (tabStopTwips && tabStopTwips > 0) defaultTabStopPx = twipsToPx(tabStopTwips);
     } catch {
       // 忽略读取失败，不影响正文解析
     }
@@ -1611,6 +1751,7 @@ export async function parseDocxPackage(
     hasContentControls: provisional.hasContentControls,
     stats: { words, characters },
     ...(documentStyles.length > 0 ? { styles: documentStyles } : {}),
+    ...(defaultTabStopPx !== undefined ? { defaultTabStopPx } : {}),
   };
 }
 

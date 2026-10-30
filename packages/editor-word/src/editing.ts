@@ -105,10 +105,13 @@ function mergeTextRuns(runs: DocRun[]): DocRun[] {
       !previous.tab &&
       !previous.lineBreak &&
       !previous.field && !previous.mergeField &&
+      // 功能：内容控件是独立整体，不能被相邻同样式文本合并掉；时间：2026-10-30；作者：hou0。
+      !previous.control &&
       !run.image &&
       !run.tab &&
       !run.lineBreak &&
       !run.field && !run.mergeField &&
+      !run.control &&
       styleIsEqual(previous.style, run.style)
     ) {
       previous.text = (previous.text ?? '') + (run.text ?? '');
@@ -117,6 +120,68 @@ function mergeTextRuns(runs: DocRun[]): DocRun[] {
     }
   }
   return result;
+}
+
+/** 功能：从 DOM 属性还原候选列表（JSON），解析失败时退回按分隔符拆分；时间：2026-10-30；作者：hou0。 */
+function parseControlChoices(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map((item) => String(item));
+  } catch {
+    // 回退到旧格式
+  }
+  return raw.split('');
+}
+
+/**
+ * 功能：在 [start,end) 处插入一个制表符 run——折叠光标即插入，选区则整体替换为一个 Tab；
+ * Word 标准：正文 Tab 跳到下一个制表位而不是插入空格；时间：2026-10-30；作者：hou0。
+ */
+export function insertTabAt(runs: DocRun[], start: number, end: number, style: RunStyle): DocRun[] {
+  const total = runs.reduce((sum, run) => sum + (run.tab || run.image || run.lineBreak || run.mergeField ? 1 : (run.text ?? '').length), 0);
+  const safeStart = Math.max(0, Math.min(start, total));
+  const safeEnd = Math.max(safeStart, Math.min(end, total));
+  const tabRun: DocRun = { text: '', style: { ...style }, tab: true };
+  const consumed = (run: DocRun) => (run.tab || run.image || run.lineBreak || run.mergeField ? 1 : (run.text ?? '').length);
+  const output: DocRun[] = [];
+  let position = 0;
+  let inserted = false;
+  for (const run of runs) {
+    const runEnd = position + consumed(run);
+    if (!inserted && runEnd > safeStart) {
+      // 功能：插入点落在本 run 内或起点——保留删除区间前的尾部，插入 Tab，再保留删除区间后的头部；时间：2026-10-30；作者：hou0。
+      if (position < safeStart) output.push(sliceRunText(run, 0, safeStart - position));
+      output.push(tabRun);
+      inserted = true;
+      if (runEnd > safeEnd) output.push(sliceRunText(run, safeEnd - position, (run.text ?? '').length));
+    } else if (inserted && position < safeEnd && runEnd > safeEnd) {
+      // 删除区间跨到本 run：只留区间之后的部分
+      output.push(sliceRunText(run, safeEnd - position, (run.text ?? '').length));
+    } else if (inserted && runEnd <= safeEnd) {
+      // 完整落在删除区间内：丢弃
+    } else {
+      output.push(run);
+    }
+    position = runEnd;
+  }
+  if (!inserted) output.push(tabRun);
+  return output;
+}
+
+/** 功能：按文本区间截取 run；原子 run（tab/图片/换行）原样返回；时间：2026-10-30；作者：hou0。 */
+function sliceRunText(run: DocRun, from: number, to: number): DocRun {
+  if (run.tab || run.image || run.lineBreak || run.mergeField) return { ...run };
+  return { ...run, text: (run.text ?? '').slice(from, to) };
+}
+
+function elementBoxWidth(node: Element): number {
+  const width = parseFloat((node as HTMLElement).style.width ?? '');
+  return Number.isFinite(width) ? width : 0;
+}
+
+function elementBoxHeight(node: Element): number {
+  const height = parseFloat((node as HTMLElement).style.height ?? '');
+  return Number.isFinite(height) ? height : 0;
 }
 
 export function serializeDomRuns(
@@ -134,6 +199,58 @@ export function serializeDomRuns(
     }
     if (!(node instanceof Element)) return;
     if (node.getAttribute('data-list-marker') === '1') return;
+    // 功能：VML 浮层方框在编辑回读时还原为图片 run（含勾选状态），避免编辑段落时丢失复选框；时间：2026-10-30；作者：hou0。
+    if (node.hasAttribute('data-vml-rect')) {
+      const number = (name: string, fallback: number) => {
+        const value = Number(node.getAttribute(name));
+        return Number.isFinite(value) && node.getAttribute(name) !== null ? value : fallback;
+      };
+      const xRelative = node.getAttribute('data-vml-xrel') === 'page' ? 'page' as const : 'text' as const;
+      const width = number('data-vml-width', 0) || elementBoxWidth(node);
+      const height = number('data-vml-height', 0) || elementBoxHeight(node);
+      runs.push({
+        text: '',
+        style: { ...style },
+        image: {
+          id: node.getAttribute('data-vml-id') ?? undefined,
+          src: '',
+          widthPx: width,
+          heightPx: height,
+          wrap: 'none',
+          vmlRect: {
+            left: number('data-vml-left', 0),
+            top: number('data-vml-top', 0),
+            width,
+            height,
+            xRelative,
+            ...(node.getAttribute('data-vml-checked') === '1' ? { checked: true } : {}),
+          },
+          strokeColor: node.getAttribute('data-vml-stroke') ?? undefined,
+          strokeWidthPx: number('data-vml-stroke-width', 1),
+        },
+      });
+      return;
+    }
+    // 功能：内容控件 chip 在编辑回读时还原为带 control 的 run，保存后仍是可交互控件；时间：2026-10-30；作者：hou0。
+    const controlKind = node.getAttribute('data-control');
+    if (controlKind) {
+      const kind = controlKind as NonNullable<DocRun['control']>['kind'];
+      const text = node.getAttribute('data-control-value') ?? '';
+      const choices = node.getAttribute('data-control-choices');
+      const format = node.getAttribute('data-control-format');
+      runs.push({
+        text,
+        style: { ...style },
+        control: {
+          kind,
+          ...(kind === 'checkbox' ? { checked: node.getAttribute('data-control-checked') === '1' } : {}),
+          ...(choices ? { choices: parseControlChoices(choices) } : {}),
+          ...(format ? { dateFormat: format } : {}),
+          ...(node.getAttribute('data-control-placeholder') === '1' || !text ? { placeholder: true } : {}),
+        },
+      });
+      return;
+    }
     if (node.hasAttribute('data-tab')) { runs.push({ text: '', style: { ...style }, tab: true }); return; }
     const tag = node.tagName;
     if (tag === 'BR') {

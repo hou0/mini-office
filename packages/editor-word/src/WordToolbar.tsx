@@ -1,5 +1,6 @@
 import type { DocParagraph, DocModel, ParagraphStyle, RunStyle } from '@mini-office/document-model';
 import { FONT_CHOICES } from '@mini-office/design-system';
+import { mergeFontChoices } from './use-system-fonts';
 // 功能：按操作系统展示 Word 缩放快捷键，并使用统一比例上下限；时间：2026-10-24；作者：lq。
 import { MOD_KEY } from '@mini-office/shared';
 import { WORD_ZOOM_MIN, WORD_ZOOM_MAX } from './zoom-shortcuts';
@@ -44,6 +45,8 @@ import { StylePicker, type StylePickerProps } from './StylePicker';
 
 export interface WordToolbarProps {
   doc: DocModel;
+  /** 功能：系统字体列表（平台枚举），与内置列表合并进字体下拉框；时间：2026-10-30；作者：hou0。 */
+  systemFonts?: string[];
   readonly: boolean;
   activeParagraph?: DocParagraph;
   activeStyle: RunStyle;
@@ -167,7 +170,7 @@ export function WordToolbar(props: WordToolbarProps) {
           props.onFontFormat({ fontFamily: value === '默认' ? undefined : value });
         }}
       >
-        {FONT_CHOICES.map((font) => (
+        {mergeFontChoices(props.systemFonts ?? [], activeStyle.fontFamily, props.doc.defaultFont).map((font) => (
           <option key={font} value={font}>
             {font}
           </option>
