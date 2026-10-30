@@ -1087,6 +1087,29 @@ async function parseParagraph(
   const pageBreakAfter = lastRun?.pageBreak === true;
   if (pageBreakAfter) runs = runs.slice(0, -1);
   if (runs.length === 0) runs = [{ text: '', style: runBase }];
+  // 功能：逐字母模式合并——空格 run 带负 letterSpacing，合并到前一字母 run，去掉可见空格；
+  // 时间：2026-10-30；作者：hou0。
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i];
+    const prev = runs[i - 1];
+    if (
+      run.text === ' ' &&
+      run.style.letterSpacingPx !== undefined &&
+      prev &&
+      prev.text &&
+      prev.text.length === 1 &&
+      !prev.image &&
+      !prev.field &&
+      !prev.mergeField &&
+      !prev.anchor &&
+      !prev.href &&
+      !prev.style.letterSpacingPx
+    ) {
+      prev.style.letterSpacingPx = run.style.letterSpacingPx;
+      runs.splice(i, 1);
+      i--;
+    }
+  }
 
   const paragraph: DocParagraph = {
     type: 'paragraph',

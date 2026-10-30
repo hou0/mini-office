@@ -70,26 +70,43 @@ function imageHtml(run: DocRun): string {
 
 export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): string {
   const parts: string[] = [];
+
+  // 缓冲区：合并连续的文本 run（逐字母模式 + 负字距），避免多栏布局下单词被拆分；
+  // 时间：2026-10-30；作者：hou0。
+  let bufText = '';
+  let bufCss = '';
+
+  const flushBuf = () => {
+    if (!bufText) return;
+    const escaped = escapeHtml(bufText).replace(/\n/g, '<br>');
+    parts.push(bufCss ? `<span style="${bufCss} white-space:nowrap;">${escaped}</span>` : escaped);
+    bufText = '';
+    bufCss = '';
+  };
+
   for (const run of runs) {
     if (run.image) {
+      flushBuf();
       parts.push(imageHtml(run));
       continue;
     }
     if (run.lineBreak) {
+      flushBuf();
       parts.push('<br>');
       continue;
     }
-    // 功能：段内分页符渲染为不可见原子标记，断页由分页器实现；时间：2026-10-30；作者：lq。
     if (run.pageBreak) {
+      flushBuf();
       parts.push('<span data-page-break="1" contenteditable="false" style="display:inline-block;width:0;height:0;overflow:hidden;"></span>');
       continue;
     }
     if (run.tab) {
+      flushBuf();
       parts.push('<span data-tab="1" contenteditable="false">\u2003\u2003</span>');
       continue;
     }
-    // 功能：字段显示为不可拆开的占位块，保留原字符样式；时间：2026-10-24；作者：lq。
     if (run.mergeField) {
+      flushBuf();
       parts.push(`<span data-merge-field="${escapeHtml(run.mergeField)}" contenteditable="false" style="${runStyleCss(run.style)}"><span style="background:#e8f1ff;border-radius:3px;color:#245694;">«${escapeHtml(run.mergeField)}»</span></span>`);
       continue;
     }
@@ -102,20 +119,31 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
       text = String(context.totalPages);
     }
     if (!text) continue;
+
     const escaped = escapeHtml(text).replace(/\n/g, '<br>');
     const css = runStyleCss(run.style);
-    let html = css ? `<span style="${css}">${escaped}</span>` : escaped;
-    if (run.style.verticalAlign === 'super') html = `<sup>${html}</sup>`;
-    else if (run.style.verticalAlign === 'sub') html = `<sub>${html}</sub>`;
-    // 功能：内部书签链接（目录项、交叉引用）按 Word 表现显示为正文色、无下划线，仅保留可点击；
-    // 外部超链接才用蓝色下划线；时间：2026-10-30；作者：hou0。
-    if (run.anchor) {
-      html = `<a data-anchor="${escapeHtml(run.anchor)}" style="color:inherit;text-decoration:none;cursor:pointer;">${html}</a>`;
-    } else if (run.href) {
-      html = `<a href="${escapeHtml(run.href)}" style="color:#0563c1;text-decoration:underline;cursor:pointer;">${html}</a>`;
+
+    // 逐字母模式：连续文本 run 且有 letterSpacing，合并到 buffer，包在 nowrap span 里；
+    // 普通文本（无 letterSpacing）直接渲染，遇到 buffer 非空时先 flush。
+    const isPlainText = !run.field && !run.anchor && !run.href && run.style.verticalAlign !== 'super' && run.style.verticalAlign !== 'sub';
+    if (isPlainText && css) {
+      if (!bufCss) bufCss = css;
+      bufText += text;
+    } else {
+      flushBuf();
+      let html = css ? `<span style="${css}">${escaped}</span>` : escaped;
+      if (run.style.verticalAlign === 'super') html = `<sup>${html}</sup>`;
+      else if (run.style.verticalAlign === 'sub') html = `<sub>${html}</sub>`;
+      if (run.anchor) {
+        html = `<a data-anchor="${escapeHtml(run.anchor)}" style="color:inherit;text-decoration:none;cursor:pointer;">${html}</a>`;
+      } else if (run.href) {
+        html = `<a href="${escapeHtml(run.href)}" style="color:#0563c1;text-decoration:underline;cursor:pointer;">${html}</a>`;
+      }
+      parts.push(html);
     }
-    parts.push(html);
   }
+
+  flushBuf();
   return parts.join('');
 }
 
