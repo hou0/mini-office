@@ -3302,6 +3302,8 @@ function WordPageView({
             left: margins.left,
             top: margins.top,
             width: contentWidth,
+            columnCount: doc.page.columns && doc.page.columns > 1 ? doc.page.columns : undefined,
+            columnGap: doc.page.columns && doc.page.columns > 1 ? '18px' : undefined,
           }}
         >
           {blocks.map((block) =>

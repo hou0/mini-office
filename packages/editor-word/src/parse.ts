@@ -711,6 +711,11 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
 }
 
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
+  // 功能：VML 复选框（v:rect）解析为方框字符；时间：2026-10-30；作者：hou0。
+  const rect = firstDescendant(pict, 'v:rect');
+  if (rect) {
+    return [{ text: '□', style: {} }];
+  }
   const imageData = firstDescendant(pict, 'v:imagedata');
   const rid = attrValue(imageData, 'r:id') ?? attrValue(imageData, 'r:embed');
   if (!rid) return [];
