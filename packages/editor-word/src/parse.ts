@@ -8,6 +8,7 @@ import {
   type DocTable,
   type DocTableCell,
   type DocTableRow,
+  type FieldMarker,
   type HeaderFooter,
   type ListInfo,
   type PageSetup,
@@ -15,6 +16,7 @@ import {
   type RunStyle,
   type TableBorderSide,
   type TableBorders,
+  type WordTabStop,
 } from '@mini-office/document-model';
 import {
   cssColor,
@@ -114,6 +116,8 @@ interface ParseContext {
   blockCounter: number;
   hasTrackedChanges: boolean;
   hasContentControls: boolean;
+  /** 功能：文档级复杂域栈——TOC 等域的 begin/end 常跨段落，靠它串联；时间：2026-10-30；作者：hou0。 */
+  fieldStack: FieldStackEntry[];
 }
 
 function mergeRun(base: RunStyle, override: RunStyle | undefined): RunStyle {
@@ -182,12 +186,13 @@ function applyRunStyle(base: RunStyle, rPr: Element | null, ctx: ParseContext): 
   if (!rPr) return { ...base };
   const style: RunStyle = { ...base };
   const fonts = firstChild(rPr, 'w:rFonts');
-  const font =
-    attrValue(fonts, 'w:eastAsia') ??
-    attrValue(fonts, 'w:ascii') ??
-    attrValue(fonts, 'w:hAnsi') ??
-    attrValue(fonts, 'w:cs');
+  // 功能：Word 中西文字体分槽（w:ascii / w:eastAsia），分别记录避免中文样式被西文覆盖；时间：2026-10-30；作者：hou0。
+  const asciiFont =
+    attrValue(fonts, 'w:ascii') ?? attrValue(fonts, 'w:hAnsi') ?? attrValue(fonts, 'w:cs');
+  const eastAsiaAttr = attrValue(fonts, 'w:eastAsia');
+  const font = asciiFont ?? eastAsiaAttr;
   if (font) style.fontFamily = font;
+  if (eastAsiaAttr) style.eastAsiaFont = eastAsiaAttr;
 
   const size = numericAttr(firstChild(rPr, 'w:sz'), 'w:val');
   const sizeCs = numericAttr(firstChild(rPr, 'w:szCs'), 'w:val');
@@ -201,7 +206,7 @@ function applyRunStyle(base: RunStyle, rPr: Element | null, ctx: ParseContext): 
   const underline = firstChild(rPr, 'w:u');
   if (underline) {
     const value = attrValue(underline, 'w:val');
-    style.underline = value ? !['none', '0', 'false'].includes(value.toLowerCase()) : true;
+    style.underline = value ? !['none', '0', 'false'].includes(value.toLowerCase()) : false;
   }
   const strike = firstChild(rPr, 'w:strike');
   if (strike) style.strike = toggleValue(strike);
@@ -260,6 +265,25 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
     if (right !== undefined) style.indentRightPx = twipsToPx(right);
     if (firstLine !== undefined) style.firstLineIndentPx = twipsToPx(firstLine);
     else if (hanging !== undefined) style.firstLineIndentPx = -twipsToPx(hanging);
+  }
+
+  const tabs = firstChild(pPr, 'w:tabs');
+  if (tabs) {
+    const tabStops: WordTabStop[] = [];
+    for (const child of Array.from(tabs.childNodes)) {
+      if (!(child instanceof Element) || localName(child) !== 'tab') continue;
+      const pos = numericAttr(child, 'w:pos');
+      if (pos === undefined) continue;
+      const val = attrValue(child, 'w:val');
+      const kind: WordTabStop['kind'] =
+        val === 'center' || val === 'right' || val === 'decimal' ? val : 'left';
+      // 功能：解析制表符前导符（dot/hyphen/underline…），供目录等场景渲染「标题…页码」；时间：2026-10-30；作者：hou0。
+      const leader = attrValue(child, 'w:leader') as WordTabStop['leader'] | undefined;
+      const tabStop: WordTabStop = { posPx: twipsToPx(pos), kind };
+      if (leader) tabStop.leader = leader;
+      tabStops.push(tabStop);
+    }
+    if (tabStops.length) style.tabStops = tabStops;
   }
 
   const spacing = firstChild(pPr, 'w:spacing');
@@ -711,7 +735,31 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
 }
 
 interface ParseInlineState {
-  fieldStack: Array<{ instr: string; phase: 'instr' | 'result'; mergeEmitted?: boolean }>;
+  /** 功能：文档级复杂域栈，跨段落串联 TOC 等域的 begin/end；时间：2026-10-30；作者：hou0。 */
+  fieldStack: FieldStackEntry[];
+  /** 功能：本段落已产出的 run 数，用于把域标记定位到段内位置；时间：2026-10-30；作者：hou0。 */
+  runCount?: number;
+  /** 功能：本段落的域字符标记，保存时写回 fldChar/instrText；时间：2026-10-30；作者：hou0。 */
+  markers?: FieldMarker[];
+  /** 功能：累积本段落内出现的书签名（w:bookmarkStart），解析完挂到 DocParagraph.bookmarks；时间：2026-10-30；作者：hou0。 */
+  bookmarks?: string[];
+}
+
+/** 功能：文档级复杂域的栈项，记录指令文本与已登记的域标记；时间：2026-10-30；作者：hou0。 */
+interface FieldStackEntry {
+  instr: string;
+  phase: 'instr' | 'result';
+  mergeEmitted?: boolean;
+  /** 功能：begin 标记对象——指令文本在 separate/end 时才完整，届时回填；时间：2026-10-30；作者：hou0。 */
+  beginMarker?: FieldMarker;
+  /** 功能：本域已登记的标记（begin/separate），命中自表达域时整体跳过写回；时间：2026-10-30；作者：hou0。 */
+  markers?: FieldMarker[];
+}
+
+/** 功能：判断域指令是否已由 fldSimple 自表达（合并域、页码域），这类域不再写回复杂域结构；时间：2026-10-30；作者：hou0。 */
+function isSelfExpressedField(instr: string): boolean {
+  if (parseMergeField(instr) || parseMergeDirective(instr)) return true;
+  return /\bPAGE\b/i.test(instr) || /\bNUMPAGES\b/i.test(instr) || /\bSECTIONPAGES\b/i.test(instr);
 }
 
 function pushControlFieldRun(runs: DocRun[], directive: MergeDirective, style: RunStyle): void {
@@ -798,7 +846,8 @@ async function parseRunElement(
         break;
       case 'br': {
         const type = attrValue(child, 'w:type');
-        runs.push({ text: '', style, field: type === 'page' ? '__PAGE_BREAK__' : undefined, lineBreak: type !== 'page' });
+        // 功能：段内分页符保留为 pageBreak 标志，由分页器强制断页；时间：2026-10-30；作者：lq。
+        runs.push({ text: '', style, pageBreak: type === 'page', lineBreak: type !== 'page' });
         break;
       }
       case 'cr':
@@ -828,9 +877,19 @@ async function parseRunElement(
       }
       case 'fldChar': {
         const type = attrValue(child, 'w:fldCharType');
-        if (type === 'begin') state.fieldStack.push({ instr: '', phase: 'instr' });
-        else if (type === 'separate' && topField()) topField()!.phase = 'result';
-        else if (type === 'end') {
+        if (type === 'begin') {
+          // 功能：登记复杂域的 begin 标记，保存时写回 fldChar+instrText，避免目录等域退化成死文本；时间：2026-10-30；作者：hou0。
+          const marker: FieldMarker = { role: 'begin', afterRun: state.runCount ?? 0 };
+          state.fieldStack.push({ instr: '', phase: 'instr', beginMarker: marker, markers: [marker] });
+          state.markers?.push(marker);
+        } else if (type === 'separate' && topField()) {
+          const field = topField()!;
+          field.phase = 'result';
+          if (field.beginMarker) field.beginMarker.instr = field.instr;
+          const marker: FieldMarker = { role: 'separate', afterRun: state.runCount ?? 0 };
+          field.markers?.push(marker);
+          state.markers?.push(marker);
+        } else if (type === 'end') {
           const field = topField();
           if (field) {
             const name = parseMergeField(field.instr);
@@ -850,7 +909,16 @@ async function parseRunElement(
                 pushControlFieldRun(runs, directive, style);
               }
             }
+            // 功能：合并域/页码域由 fldSimple 自表达，复杂域结构不再写回以免重复；时间：2026-10-30；作者：hou0。
+            if (isSelfExpressedField(field.instr)) {
+              for (const marker of field.markers ?? []) marker.skip = true;
+            } else if (field.beginMarker) {
+              field.beginMarker.instr = field.instr;
+            }
           }
+          const marker: FieldMarker = { role: 'end', afterRun: state.runCount ?? 0 };
+          if (field && isSelfExpressedField(field.instr)) marker.skip = true;
+          state.markers?.push(marker);
           state.fieldStack.pop();
         }
         break;
@@ -879,10 +947,21 @@ async function parseInlineChildren(
   for (const child of Array.from(parent.childNodes)) {
     if (!(child instanceof Element)) continue;
     switch (localName(child)) {
-      case 'r':
-        runs.push(...(await parseRunElement(child, base, ctx, state)));
+      case 'r': {
+        const produced = await parseRunElement(child, base, ctx, state);
+        // 功能：累计本段已产出的 run 数，供域标记定位插入位置；时间：2026-10-30；作者：hou0。
+        state.runCount = (state.runCount ?? 0) + produced.length;
+        runs.push(...produced);
         break;
-      case 'hyperlink':
+      }
+      case 'hyperlink': {
+        // 功能：保留目录项等内部书签链接（w:anchor），供编辑区点击跳转到目标标题；时间：2026-10-30；作者：hou0。
+        const anchor = attrValue(child, 'w:anchor');
+        const inner = await parseInlineChildren(child, base, ctx, state);
+        if (anchor) for (const run of inner) run.anchor = anchor;
+        runs.push(...inner);
+        break;
+      }
       case 'ins':
       case 'smartTag':
       case 'customXml':
@@ -926,14 +1005,20 @@ async function parseInlineChildren(
       case 'del':
         ctx.hasTrackedChanges = true;
         break;
-      case 'bookmarkStart':
+      case 'bookmarkStart': {
+        // 功能：记录书签名（w:name），供目录项 anchor 跳转定位到该段落；时间：2026-10-30；作者：hou0。
+        const name = attrValue(child, 'w:name');
+        if (name) (state.bookmarks ??= []).push(name);
+        break;
+      }
       case 'bookmarkEnd':
       case 'commentRangeStart':
       case 'commentRangeEnd':
       case 'proofErr':
         break;
       case 'br':
-        runs.push({ text: '', style: base, lineBreak: getAttr(child, 'w:type') !== 'page' });
+        // 功能：段内分页符保留为 pageBreak 标志，由分页器强制断页；时间：2026-10-30；作者：lq。
+        runs.push({ text: '', style: base, pageBreak: getAttr(child, 'w:type') === 'page', lineBreak: getAttr(child, 'w:type') !== 'page' });
         break;
       default:
         break;
@@ -955,6 +1040,14 @@ async function parseParagraph(
     para: ctx.styles.docDefaults.para,
   };
   let paragraphStyle = applyParagraphStyle(mergeParagraph(styleBase.para, baseStyle?.para), pPr, ctx);
+  // 功能：文档自带 TOC 样式若缺少制表位，回退到内置默认（右对齐+点前导符）；时间：2026-10-30；作者：hou0。
+  if (styleId && /^TOC\s*\d+$/i.test(styleId) && !paragraphStyle.tabStops?.length) {
+    const level = parseInt(styleId.replace(/[^\d]/g, ''), 10);
+    if (level >= 1 && level <= 9) {
+      paragraphStyle.tabStops = [{ posPx: 400, kind: 'right', leader: 'dot' }];
+      paragraphStyle.indentLeftPx ??= level * 18;
+    }
+  }
   const numbering = parseProjectedParagraphNumbering(pPr);
   const numId = numbering.numId ?? styleFromId?.numId;
   const ilvl = numbering.ilvl ?? styleFromId?.ilvl ?? 0;
@@ -982,10 +1075,12 @@ async function parseParagraph(
     mergeRun(mergeRun(ctx.styles.docDefaults.run, styleBase.run), baseStyle?.run),
     paragraphRun,
   );
-  const state: ParseInlineState = { fieldStack: [] };
+  const state: ParseInlineState = { fieldStack: ctx.fieldStack, runCount: 0, markers: [], bookmarks: [] };
   let runs = await parseInlineChildren(element, runBase, ctx, state);
-  const pageBreakAfter = runs.some((run) => run.field === '__PAGE_BREAK__');
-  runs = runs.filter((run) => run.field !== '__PAGE_BREAK__');
+  // 功能：只有段末的分页符才算"此段之后分页"；段中/段首的分页符保留为强制断点，由分页器处理；时间：2026-10-30；作者：lq。
+  const lastRun = runs[runs.length - 1];
+  const pageBreakAfter = lastRun?.pageBreak === true;
+  if (pageBreakAfter) runs = runs.slice(0, -1);
   if (runs.length === 0) runs = [{ text: '', style: runBase }];
 
   const paragraph: DocParagraph = {
@@ -995,6 +1090,9 @@ async function parseParagraph(
     style: paragraphStyle,
     list,
     styleId,
+    bookmarks: state.bookmarks?.length ? [...state.bookmarks] : undefined,
+    // 功能：保留本段落内的域字符标记，保存时写回复杂域结构（目录等）；时间：2026-10-30；作者：hou0。
+    fieldMarkers: state.markers?.length ? state.markers : undefined,
   };
   // 功能：保留段尾分节以及各节独立的页眉页脚与编号；时间：2026-10-24；作者：lq。
   const section = firstChild(pPr, 'w:sectPr');
@@ -1314,6 +1412,7 @@ export async function parseDocxPackage(
     blockCounter: 0,
     hasTrackedChanges: false,
     hasContentControls: false,
+    fieldStack: [],
   };
 
   provisional.styles = parseStyleSheet(stylesXml, provisional);

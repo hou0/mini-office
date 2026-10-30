@@ -224,6 +224,11 @@ export function serializeDomRuns(
       runs.push({ text: `«${name}»`, mergeField: name, style: next });
       return;
     }
+    // 功能：段内分页符标记还原为 pageBreak run，保证编辑后不丢分页位置；时间：2026-10-30；作者：lq。
+    if (node.getAttribute('data-page-break') === '1') {
+      runs.push({ text: '', style: next, pageBreak: true });
+      return;
+    }
     for (const child of Array.from(node.childNodes)) walk(child, next);
   };
 
@@ -237,7 +242,9 @@ function isAtomicElement(element: Element): boolean {
   return (
     element.tagName === 'IMG' ||
     element.tagName === 'BR' ||
-    element.getAttribute('data-tab') === '1' || element.hasAttribute('data-merge-field')
+    element.getAttribute('data-tab') === '1' ||
+    element.getAttribute('data-page-break') === '1' ||
+    element.hasAttribute('data-merge-field')
   );
 }
 
@@ -360,6 +367,11 @@ export function getParagraphPlainTextFromDom(root: HTMLElement): string {
       text += '\t';
       return;
     }
+    // 功能：段内分页符在 DOM 纯文本中按一个换行计；时间：2026-10-30；作者：lq。
+    if (node.getAttribute('data-page-break') === '1') {
+      text += '\n';
+      return;
+    }
     for (const child of Array.from(node.childNodes)) walk(child);
   };
   for (const child of Array.from(root.childNodes)) walk(child);
@@ -372,6 +384,8 @@ export function runsPlainText(runs: DocRun[]): string {
       if (run.image || run.mergeField) return '￼';
       if (run.tab) return '\t';
       if (run.lineBreak) return '\n';
+      // 功能：段内分页符在纯文本中按一个换行计，与 offset 口径一致；时间：2026-10-30；作者：lq。
+      if (run.pageBreak) return '\n';
       return run.text ?? '';
     })
     .join('');
@@ -532,3 +546,4 @@ export function selectedParagraphSlices(root: HTMLElement, range: Range): Array<
   });
   return slices;
 }
+

@@ -32,6 +32,7 @@ import {
   Mails,
   Paintbrush,
   Pilcrow,
+  Ruler,
 } from 'lucide-react';
 import { ColorField, Dropdown, IconButton, Kbd, Select, Tooltip } from '@mini-office/ui';
 import type { MenuItem } from '@mini-office/ui';
@@ -71,6 +72,9 @@ export interface WordToolbarProps {
   onFitWidth: () => void;
   onToggleFind: () => void;
   onToggleProperties: () => void;
+  /** 功能：Word 标尺显示开关；时间：2026-10-30；作者：hou0。 */
+  showRuler: boolean;
+  onToggleRuler: () => void;
   onExport: () => void;
   onPrint: () => void;
   onShowCompatibility: () => void;
@@ -379,6 +383,10 @@ export function WordToolbar(props: WordToolbarProps) {
       {/* 功能：常驻打开页面布局与文档属性，支持页边距、方向和纸张大小；时间：2026-10-24；作者：lq。 */}
       <IconButton label="布局与属性" active={props.propertiesOpen} onClick={props.onToggleProperties}>
         <PanelRight size={15} />
+      </IconButton>
+      {/* 功能：Word 标尺显示开关；时间：2026-10-30；作者：hou0。 */}
+      <IconButton label="标尺" active={props.showRuler} onClick={props.onToggleRuler}>
+        <Ruler size={15} />
       </IconButton>
       <Tooltip label="打印 ⌘P">
         <IconButton label="打印" onClick={props.onPrint}>

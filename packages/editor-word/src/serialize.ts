@@ -8,6 +8,7 @@ import {
   type DocStyleDefinition,
   type DocTable,
   type DocTableCell,
+  type FieldMarker,
   type PageSetup,
   type ParagraphStyle,
   type RunStyle,
@@ -58,6 +59,8 @@ interface SerializeState {
   imageCounter: number;
   /** 功能：图形对象 ID 必须全文档唯一，独立计数避免复用关系时产生重复 docPr id；时间：2026-10-29；作者：lq。 */
   drawingCounter: number;
+  /** 功能：书签 id 计数器——写回书签时保证 id 唯一；时间：2026-10-30；作者：hou0。 */
+  bookmarkCounter: number;
   hasNumbering: boolean;
   sectPrXml?: string;
 }
@@ -103,9 +106,12 @@ function boolTag(tag: string, value: boolean | undefined, valueAttribute = true)
  */
 function runProperties(style: RunStyle): string {
   const parts: string[] = [];
-  if (style.fontFamily) {
+  if (style.fontFamily || style.eastAsiaFont) {
+    // 功能：中西文字体分槽写回（w:ascii / w:eastAsia），保存后 Word/WPS 显示不变；时间：2026-10-30；作者：hou0。
+    const latin = escapeXml(style.fontFamily ?? style.eastAsiaFont!);
+    const eastAsia = escapeXml(style.eastAsiaFont ?? style.fontFamily!);
     parts.push(
-      `<w:rFonts w:ascii="${escapeXml(style.fontFamily)}" w:hAnsi="${escapeXml(style.fontFamily)}" w:eastAsia="${escapeXml(style.fontFamily)}" w:cs="${escapeXml(style.fontFamily)}"/>`,
+      `<w:rFonts w:ascii="${latin}" w:hAnsi="${latin}" w:eastAsia="${eastAsia}" w:cs="${latin}"/>`,
     );
   }
   if (style.bold !== undefined) parts.push(`<w:b${style.bold ? '' : ' w:val="0"'}/>`);
@@ -161,6 +167,18 @@ function paragraphProperties(
   const background = hexColor(style.backgroundColor);
   if (background) {
     parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${background}"/>`);
+  }
+  if (style.tabStops?.length) {
+    // 功能：写出制表位前导符（w:leader），Word/WPS 打开后目录仍显示「标题……页码」点线；时间：2026-10-30；作者：hou0。
+    const tabXml = style.tabStops
+      .map(
+        (t) =>
+          `<w:tab w:val="${t.kind}" w:pos="${Math.round(t.posPx * 15)}"${
+            t.leader && t.leader !== 'none' ? ` w:leader="${t.leader}"` : ''
+          }/>`,
+      )
+      .join('');
+    parts.push(`<w:tabs>${tabXml}</w:tabs>`);
   }
   const spacingParts: string[] = [];
   if (style.spaceBeforePx !== undefined) spacingParts.push(`w:before="${Math.round(style.spaceBeforePx * 15)}"`);
@@ -354,7 +372,9 @@ async function runXml(run: DocRun, state: SerializeState): Promise<string> {
   const properties = runProperties(run.style);
   let content = '';
   if (run.tab) content += '<w:tab/>';
-  if (run.lineBreak) content += '<w:br/>';
+  // 功能：段内分页符写回 w:br w:type="page"，保证 docx 往返不丢分页位置；时间：2026-10-30；作者：lq。
+  if (run.pageBreak) content += '<w:br w:type="page"/>';
+  else if (run.lineBreak) content += '<w:br/>';
   if (run.text) content += `<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>`;
   if (!content && !properties) content = '<w:t xml:space="preserve"></w:t>';
   const core = `<w:r>${properties}${content}</w:r>`;
@@ -393,6 +413,22 @@ async function runXml(run: DocRun, state: SerializeState): Promise<string> {
   return core;
 }
 
+/**
+ * 功能：复杂域标记写回为 fldChar/instrText——保住 TOC 等域结构，Word 打开后仍可"更新目录"；
+ * 时间：2026-10-30；作者：hou0。
+ */
+function fieldMarkerXml(marker: FieldMarker): string {
+  if (marker.role === 'begin') {
+    const instr = marker.instr?.trim();
+    const instruction = instr
+      ? `<w:r><w:instrText xml:space="preserve">${escapeXml(instr)}</w:instrText></w:r>`
+      : '';
+    return `<w:r><w:fldChar w:fldCharType="begin"/></w:r>${instruction}`;
+  }
+  if (marker.role === 'separate') return `<w:r><w:fldChar w:fldCharType="separate"/></w:r>`;
+  return `<w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+}
+
 async function paragraphXml(
   paragraph: DocParagraph,
   state: SerializeState,
@@ -408,7 +444,49 @@ async function paragraphXml(
     prefix = `<w:r><w:t xml:space="preserve">${escapeXml(paragraph.list.marker)} </w:t></w:r>`;
   }
   const runs = await Promise.all(paragraph.runs.map((run) => runXml(run, state)));
-  return `<w:p>${pPr}${prefix}${runs.join('')}</w:p>`;
+  // 功能：写回段落书签（目录项的锚点目标），保存后 Word 里目录才能真正跳转；时间：2026-10-30；作者：hou0。
+  const bookmarkNames = [...new Set(paragraph.bookmarks ?? [])];
+  const bookmarkIds: number[] = [];
+  let bookmarkStartXml = '';
+  for (const name of bookmarkNames) {
+    state.bookmarkCounter += 1;
+    bookmarkIds.push(state.bookmarkCounter);
+    bookmarkStartXml += `<w:bookmarkStart w:id="${state.bookmarkCounter}" w:name="${escapeXml(name)}"/>`;
+  }
+  const bookmarkEndXml = bookmarkIds.map((id) => `<w:bookmarkEnd w:id="${id}"/>`).join('');
+  // 功能：域标记按段内位置插回 run 之间，保证域结构与条目顺序一致；时间：2026-10-30；作者：hou0。
+  const markers = (paragraph.fieldMarkers ?? [])
+    .filter((marker) => !marker.skip)
+    .slice()
+    .sort((a, b) => a.afterRun - b.afterRun);
+  const parts: string[] = [];
+  let groupAnchor: string | undefined;
+  let group: string[] = [];
+  const flushGroup = () => {
+    if (!group.length) return;
+    const xml = group.join('');
+    // 功能：目录项等内部书签链接写回 w:hyperlink，保存后 Word 仍可点击跳转；时间：2026-10-30；作者：hou0。
+    parts.push(
+      groupAnchor
+        ? `<w:hyperlink w:anchor="${escapeXml(groupAnchor)}" w:history="1">${xml}</w:hyperlink>`
+        : xml,
+    );
+    group = [];
+  };
+  for (let index = 0; index <= runs.length; index += 1) {
+    for (const marker of markers) {
+      if (marker.afterRun !== index) continue;
+      flushGroup();
+      parts.push(fieldMarkerXml(marker));
+    }
+    if (index === runs.length) break;
+    const run = paragraph.runs[index];
+    if (group.length && run.anchor !== groupAnchor) flushGroup();
+    groupAnchor = run.anchor;
+    group.push(runs[index]);
+  }
+  flushGroup();
+  return `<w:p>${pPr}${prefix}${bookmarkStartXml}${parts.join('')}${bookmarkEndXml}</w:p>`;
 }
 
 async function cellXml(
@@ -837,6 +915,7 @@ export async function serializeDocx(
     addedImages: new Map(),
     imageCounter: 0,
     drawingCounter: 0,
+    bookmarkCounter: 0,
     hasNumbering: sourceExists && zip.file('word/numbering.xml') !== null,
     sectPrXml: collectSectPrXml(documentXml),
   };

@@ -12,7 +12,17 @@ export interface RunRenderContext {
 function runStyleCss(style: RunStyle): string {
   const css: string[] = [];
   if (style.fontFamily) {
-    css.push(`font-family:${fontStackFor(style.fontFamily).replace(/"/g, "'")}`);
+    // 功能：中西文分开组栈——西文用主字体，中文插 eastAsia 字体（Word 的 ascii/eastAsia 双槽模型）；时间：2026-10-30；作者：hou0。
+    let stack = fontStackFor(style.fontFamily).replace(/"/g, "'");
+    if (style.eastAsiaFont && style.eastAsiaFont !== style.fontFamily) {
+      const eastAsiaStack = fontStackFor(style.eastAsiaFont).replace(/"/g, "'");
+      const firstComma = stack.indexOf(',');
+      stack =
+        firstComma === -1
+          ? `${stack}, ${eastAsiaStack}`
+          : `${stack.slice(0, firstComma)}, ${eastAsiaStack}${stack.slice(firstComma)}`;
+    }
+    css.push(`font-family:${stack}`);
   }
   if (style.fontSizePt) css.push(`font-size:${style.fontSizePt}pt`);
   if (style.bold) css.push('font-weight:700');
@@ -69,6 +79,11 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
       parts.push('<br>');
       continue;
     }
+    // 功能：段内分页符渲染为不可见原子标记，断页由分页器实现；时间：2026-10-30；作者：lq。
+    if (run.pageBreak) {
+      parts.push('<span data-page-break="1" contenteditable="false" style="display:inline-block;width:0;height:0;overflow:hidden;"></span>');
+      continue;
+    }
     if (run.tab) {
       parts.push('<span data-tab="1" contenteditable="false">\u2003\u2003</span>');
       continue;
@@ -92,9 +107,71 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
     let html = css ? `<span style="${css}">${escaped}</span>` : escaped;
     if (run.style.verticalAlign === 'super') html = `<sup>${html}</sup>`;
     else if (run.style.verticalAlign === 'sub') html = `<sub>${html}</sub>`;
+    // 功能：内部书签链接（目录项、交叉引用）按 Word 表现显示为正文色、无下划线，仅保留可点击；
+    // 外部超链接才用蓝色下划线；时间：2026-10-30；作者：hou0。
+    if (run.anchor) {
+      html = `<a data-anchor="${escapeHtml(run.anchor)}" style="color:inherit;text-decoration:none;cursor:pointer;">${html}</a>`;
+    } else if (run.href) {
+      html = `<a href="${escapeHtml(run.href)}" style="color:#0563c1;text-decoration:underline;cursor:pointer;">${html}</a>`;
+    }
     parts.push(html);
   }
   return parts.join('');
+}
+
+/** 功能：判断是否为 Word 自动目录段落（TOC1~TOC9 样式），作为制表位信息缺失时的兜底；时间：2026-10-30；作者：hou0。 */
+function isTocParagraph(paragraph: DocParagraph): boolean {
+  return !!paragraph.styleId && /^TOC\s*\d+$/i.test(paragraph.styleId);
+}
+
+/** 功能：段落含「右对齐/居中制表位 + 前导符」，应渲染为「标题 + 前导点 + 页码右对齐」；时间：2026-10-30；作者：hou0。 */
+function hasLeaderTab(paragraph: DocParagraph): boolean {
+  return (
+    paragraph.style.tabStops?.some(
+      (t) => (t.kind === 'right' || t.kind === 'center') && t.leader && t.leader !== 'none',
+    ) ?? false
+  );
+}
+
+/** 功能：是否走前导点布局（标准 TOC，或带前导符制表位的手动目录如样式"7"）；时间：2026-10-30；作者：hou0。 */
+function useLeaderLayout(paragraph: DocParagraph): boolean {
+  return hasLeaderTab(paragraph) || isTocParagraph(paragraph);
+}
+
+/**
+ * 功能：前导符字符——用真实字符绘制点线，密度与 Word 一致（border 虚线过于稀疏，且打印会丢）；
+ * 时间：2026-10-30；作者：hou0。
+ */
+const LEADER_GLYPH: Record<string, string> = {
+  dot: '.',
+  middleDot: '·',
+  hyphen: '-',
+  underline: '_',
+};
+
+/**
+ * 功能：把目录类段落渲染成「标题 + 前导点 + 页码右对齐」的 flex 结构，对齐 Word/WPS 目录外观；
+ * 前导符按制表位 leader 类型选择字符（dot 用点、hyphen 用连字符）；时间：2026-10-30；作者：hou0。
+ */
+function renderLeaderTabHtml(paragraph: DocParagraph, context: RunRenderContext): string {
+  const runs = paragraph.runs;
+  const tabIndex = runs.findIndex((run) => run.tab);
+  if (tabIndex === -1) return renderRunsHtml(runs, context) || '<br>';
+  const left = runs.slice(0, tabIndex);
+  const right = runs.slice(tabIndex + 1);
+  const leftHtml = renderRunsHtml(left, context) || '';
+  const rightHtml = renderRunsHtml(right, context) || '';
+  const tabStop = paragraph.style.tabStops?.find(
+    (t) => (t.kind === 'right' || t.kind === 'center') && t.leader && t.leader !== 'none',
+  );
+  const leaderChar = LEADER_GLYPH[tabStop?.leader ?? 'dot'] ?? '.';
+  // 功能：前导点用足够多的真实字符铺满，再由 overflow 裁剪到弹性宽度，点的疏密与 Word 接近；时间：2026-10-30；作者：hou0。
+  const leaderHtml = leaderChar.repeat(240);
+  return (
+    `<span class="mo-toc-title" style="flex:0 0 auto;white-space:pre-wrap;">${leftHtml}</span>` +
+    `<span class="mo-toc-leader" contenteditable="false" style="flex:1 1 auto;overflow:hidden;white-space:nowrap;letter-spacing:0.22em;margin:0 4px;min-width:10px;">${leaderHtml}</span>` +
+    `<span class="mo-toc-page" style="flex:0 0 auto;white-space:pre-wrap;">${rightHtml}</span>`
+  );
 }
 
 export function renderParagraphHtml(
@@ -107,7 +184,9 @@ export function renderParagraphHtml(
       paragraph.list.marker,
     )}</span>`;
   }
-  const content = renderRunsHtml(paragraph.runs, context);
+  const content = useLeaderLayout(paragraph)
+    ? renderLeaderTabHtml(paragraph, context)
+    : renderRunsHtml(paragraph.runs, context);
   return `${marker}${content || '<br>'}`;
 }
 
@@ -130,7 +209,7 @@ export function paragraphWrapperStyle(paragraph: DocParagraph): React.CSSPropert
 
 export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string, defaultFontSizePt: number): React.CSSProperties {
   const style: ParagraphStyle = paragraph.style;
-  return {
+  const base: React.CSSProperties = {
     fontFamily: fontStackFor(defaultFont) || DOC_FONT_STACK,
     fontSize: `${defaultFontSizePt}pt`,
     // 功能：固定值与最小值行距都用 px 表达，CSS 无“至少”语义，取相同高度即可保证分页一致；时间：2026-10-29；作者：lq。
@@ -143,6 +222,11 @@ export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string,
     overflowWrap: 'break-word',
     wordBreak: 'break-word',
   };
+  // 功能：目录类段落改用 flex，让前导点与页码右对齐；时间：2026-10-30；作者：hou0。
+  if (useLeaderLayout(paragraph)) {
+    return { ...base, display: 'flex', alignItems: 'baseline' };
+  }
+  return base;
 }
 
 export function paragraphPlainText(paragraph: DocParagraph, context: RunRenderContext = {}): string {

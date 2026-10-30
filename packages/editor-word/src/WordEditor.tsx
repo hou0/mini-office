@@ -15,7 +15,10 @@ import {
   computeDocStats,
   makeParagraph,
   mapParagraphs,
+  mergeFragmentRuns,
   paragraphImages,
+  runLength,
+  runsLength,
   splitRunsAtOffset,
   tableCellPlacements,
   totalTableColumns,
@@ -40,8 +43,11 @@ import {
   renderParagraphHtml,
 } from './html';
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
-import { pageMetrics, paginateDocument, type PageSlice, type TableLayout } from './pagination';
+import { pageMetrics, paginateDocument, type PageSlice, type ParagraphBreaker, type TableLayout } from './pagination';
 import { WordToolbar } from './WordToolbar';
+// 功能：Word 标尺（段落缩进可视化拖拽）；时间：2026-10-30；作者：hou0。
+import { WordRuler } from './WordRuler';
+import { type RulerIndents, type RulerMetrics } from './word-ruler';
 // 功能：接入段落对话框与格式刷所需的排版工具；时间：2026-10-29；作者：lq。
 import { ParagraphDialog } from './ParagraphDialog';
 import {
@@ -92,6 +98,7 @@ import type {
   ParagraphStyle,
   RunStyle,
   TableBorderSide,
+  WordTabStop,
 } from '@mini-office/document-model';
 import {
   Button,
@@ -322,7 +329,8 @@ function cellBorderStyle(cell: DocTable['rows'][number]['cells'][number], table:
 
 interface ParagraphHandlers {
   syncToken: number;
-  onInput: (paragraphId: string, element: HTMLElement) => void;
+  // 功能：headEnd 表示该片段在模型段落中的结束偏移，用于跨页首片编辑时保留续页尾部；时间：2026-10-30；作者：lq。
+  onInput: (paragraphId: string, element: HTMLElement, headEnd?: number) => void;
   onBlur: (paragraphId: string) => void;
   onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>, paragraphId: string, element: HTMLDivElement) => void;
   onTableContextMenu: (event: React.MouseEvent, table: DocTable, rowIndex: number, cellId: string) => void;
@@ -337,6 +345,26 @@ interface ParagraphHandlers {
   /** 功能：将图片环绕与对象操作入口放入图片右键菜单；时间：2026-10-24；作者：lq。 */
   onImageContextMenu?: (event: React.MouseEvent, imageId: string) => void;
   selectedImageId?: string;
+}
+
+/**
+ * 功能：转义 CSS 选择器中的特殊字符，用于按书签名定位目录跳转目标；时间：2026-10-30；作者：hou0。
+ */
+function cssEscape(value: string): string {
+  if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, '\\$&');
+}
+
+/** 功能：点击目录项（data-anchor）滚动到对应书签标题，编辑态与只读态共用；时间：2026-10-30；作者：hou0。 */
+function scrollToAnchor(currentTarget: HTMLElement, link: HTMLElement): void {
+  const name = link.getAttribute('data-anchor');
+  if (!name) return;
+  const editorRoot = currentTarget.closest('[data-word-editor]');
+  editorRoot
+    ?.querySelector<HTMLElement>(`[data-bookmark~="${cssEscape(name)}"]`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 const StaticParagraph = memo(function StaticParagraph({
@@ -357,7 +385,16 @@ const StaticParagraph = memo(function StaticParagraph({
   return (
     <div style={paragraphWrapperStyle(paragraph)}>
       <div
+        data-bookmark={paragraph.bookmarks?.length ? paragraph.bookmarks.join(' ') : undefined}
         style={paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt)}
+        onClick={(event) => {
+          // 功能：只读段落同样支持点击目录项跳转；时间：2026-10-30；作者：hou0。
+          const link = (event.target as HTMLElement).closest<HTMLElement>('[data-anchor]');
+          if (link) {
+            event.preventDefault();
+            scrollToAnchor(event.currentTarget as HTMLElement, link);
+          }
+        }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
@@ -371,6 +408,7 @@ const EditableParagraph = memo(function EditableParagraph({
   totalPages,
   readonly,
   handlers,
+  headEnd,
 }: {
   paragraph: DocParagraph;
   doc: DocModel;
@@ -378,6 +416,8 @@ const EditableParagraph = memo(function EditableParagraph({
   totalPages: number;
   readonly: boolean;
   handlers: ParagraphHandlers;
+  /** 功能：跨页首片在模型段落中的结束偏移，编辑回写时据此保留续页尾部；时间：2026-10-30；作者：lq。 */
+  headEnd?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const lastSyncToken = useRef(handlers.syncToken);
@@ -427,11 +467,14 @@ const EditableParagraph = memo(function EditableParagraph({
         suppressContentEditableWarning
         spellCheck={false}
         data-paragraph-id={paragraph.id}
+        // 功能：跨页首片的模型边界，供文档根的兜底提交复用；时间：2026-10-30；作者：lq。
+        data-head-end={headEnd}
+        data-bookmark={paragraph.bookmarks?.length ? paragraph.bookmarks.join(' ') : undefined}
         role="textbox"
         aria-multiline="true"
         aria-label="文档段落"
         style={{ ...paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt), outline: 'none' }}
-        onInput={(event) => handlers.onInput(paragraph.id, event.currentTarget)}
+        onInput={(event) => handlers.onInput(paragraph.id, event.currentTarget, headEnd)}
         onPointerDown={(event) => {
           const handle = (event.target as HTMLElement).closest<HTMLElement>('[data-image-handle]');
           const frame = (event.target as HTMLElement).closest<HTMLElement>('[data-image-frame]');
@@ -443,6 +486,13 @@ const EditableParagraph = memo(function EditableParagraph({
         }}
         // 功能：点击图片进入图片上下文工具，避免把图片当作普通文本处理；时间：2026-10-24；作者：lq。
         onClick={(event) => {
+          // 功能：点击目录项（data-anchor）滚动到对应书签标题；时间：2026-10-30；作者：hou0。
+          const link = (event.target as HTMLElement).closest<HTMLElement>('[data-anchor]');
+          if (link) {
+            event.preventDefault();
+            scrollToAnchor(event.currentTarget as HTMLElement, link);
+            return;
+          }
           const image = (event.target as HTMLElement).closest<HTMLImageElement>('img[data-image-id]');
           if (image) {
             event.preventDefault();
@@ -922,6 +972,10 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeParagraphId, setActiveParagraphId] = useState<string>();
+  // 功能：Word 标尺——段落缩进拖拽，默认显示，工具栏可开关；时间：2026-10-30；作者：hou0。
+  const [showRuler, setShowRuler] = useState(true);
+  const [rulerMetrics, setRulerMetrics] = useState<RulerMetrics | null>(null);
+  const rulerHostRef = useRef<HTMLDivElement>(null);
   // 功能：记录当前图片选中状态，驱动边框手柄与右键菜单；时间：2026-10-24；作者：lq。
   const [selectedImageId, setSelectedImageId] = useState<string>();
   const [activeStyle, setActiveStyle] = useState<RunStyle>({
@@ -1092,7 +1146,7 @@ export function WordEditor({ session }: { session: WordSession }) {
     }
     const offset = getCaretOffset(element);
     setActiveParagraphId(paragraphId);
-    setActiveStyle(styleAtOffset(paragraph, offset));
+    setActiveStyle(resolveStyleRun({ run: styleAtOffset(paragraph, offset) }, current));
   }, [latestDoc, rememberSelection]);
 
   useEffect(() => {
@@ -1114,6 +1168,73 @@ export function WordEditor({ session }: { session: WordSession }) {
   const metrics = useMemo(() => pageMetrics(doc.page), [doc.page]);
   const effectiveZoom = exporting ? 1 : zoom;
 
+  // 功能：Word 标尺——缩进标记取值、页面内容盒测量与拖拽提交；时间：2026-10-30；作者：hou0。
+  const rulerIndents: RulerIndents = {
+    left: activeParagraph?.style?.indentLeftPx ?? 0,
+    firstLine: activeParagraph?.style?.firstLineIndentPx ?? 0,
+    right: activeParagraph?.style?.indentRightPx ?? 0,
+  };
+
+  const measureRuler = useCallback(() => {
+    if (!showRuler) return;
+    const pageEl = pagesRef.current?.querySelector<HTMLElement>('[data-word-page-wrapper]');
+    const host = rulerHostRef.current;
+    if (!pageEl || !host) return;
+    const pageRect = pageEl.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const margins = doc.page.margins;
+    const contentW = Math.max(120, doc.page.widthPx - margins.left - margins.right);
+    setRulerMetrics({
+      contentLeft: pageRect.left + margins.left * effectiveZoom - hostRect.left,
+      contentWidth: contentW * effectiveZoom,
+      zoom: effectiveZoom,
+    });
+  }, [doc.page, effectiveZoom, showRuler]);
+
+  useEffect(() => {
+    measureRuler();
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    scroller.addEventListener('scroll', measureRuler, { passive: true });
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measureRuler);
+      ro.observe(scroller);
+    }
+    return () => {
+      scroller.removeEventListener('scroll', measureRuler);
+      ro?.disconnect();
+    };
+  }, [measureRuler]);
+
+  const onRulerChange = useCallback(
+    (next: RulerIndents) => {
+      if (readonly || !activeParagraphId) return;
+      const updated = updateParagraph(latestDoc(), activeParagraphId, (paragraph) => ({
+        ...paragraph,
+        style: mergeParagraphStyle(paragraph.style, {
+          indentLeftPx: next.left,
+          firstLineIndentPx: next.firstLine,
+          indentRightPx: next.right,
+        }),
+      }));
+      commit(updated, { reflow: true, key: 'ruler-indent' });
+    },
+    [readonly, activeParagraphId, commit, latestDoc],
+  );
+
+  const onTabStopsChange = useCallback(
+    (next: WordTabStop[]) => {
+      if (readonly || !activeParagraphId) return;
+      const updated = updateParagraph(latestDoc(), activeParagraphId, (paragraph) => ({
+        ...paragraph,
+        style: mergeParagraphStyle(paragraph.style, { tabStops: next }),
+      }));
+      commit(updated, { reflow: true, key: 'ruler-tabstop' });
+    },
+    [readonly, activeParagraphId, commit, latestDoc],
+  );
+
   const blockMap = useMemo(() => new Map(doc.blocks.map((block) => [block.id, block])), [doc.blocks]);
 
   useLayoutEffect(() => {
@@ -1121,6 +1242,8 @@ export function WordEditor({ session }: { session: WordSession }) {
     if (!container) return;
     const heights = new Map<string, number>();
     const tables = new Map<string, TableLayout>();
+    // 功能：缓存段落渲染外壳，供跨页切分时克隆测量前缀高度；时间：2026-10-30；作者：lq。
+    const wrapperByParagraph = new Map<string, HTMLElement>();
     container.querySelectorAll<HTMLElement>('[data-measure-id]').forEach((element) => {
       const id = element.getAttribute('data-measure-id');
       if (id) heights.set(id, element.getBoundingClientRect().height);
@@ -1128,7 +1251,13 @@ export function WordEditor({ session }: { session: WordSession }) {
       // 功能：读取表格每行实测高度，用于长表格跨页切分并重复表头；时间：2026-10-29；作者：lq。
       const grid = element.querySelector<HTMLElement>('[data-table-id]');
       const block = blockMap.get(id);
-      if (!grid || !block || block.type !== 'table') return;
+      if (!grid || !block || block.type !== 'table') {
+        if (block && block.type === 'paragraph') {
+          const wrapper = element.firstElementChild as HTMLElement | null;
+          if (wrapper) wrapperByParagraph.set(id, wrapper);
+        }
+        return;
+      }
       const rowHeights = getComputedStyle(grid).gridTemplateRows
         .split(' ')
         .map((value) => parseFloat(value))
@@ -1138,7 +1267,83 @@ export function WordEditor({ session }: { session: WordSession }) {
       while (block.rows[headerRows]?.isHeader) headerRows += 1;
       tables.set(id, { rowHeights, headerRows });
     });
-    setPages(paginateDocument(docRef.current, heights, tables));
+
+    // 功能：段落断页器——按真实 DOM 测量前缀高度做二分，找到本页能容纳的字符断点；段内分页符作为强制断点；时间：2026-10-30；作者：lq。
+    const probeRoot = document.createElement('div');
+    probeRoot.style.cssText = `position:absolute;left:-100000px;top:0;width:${metrics.contentWidth}px;visibility:hidden;pointer-events:none;`;
+    document.body.appendChild(probeRoot);
+    const measurePrefix = (paragraph: DocParagraph, offset: number, baseWrapper: HTMLElement): number => {
+      const [headRuns] = splitRunsAtOffset(paragraph.runs, offset, {});
+      const inner = (baseWrapper.firstElementChild as HTMLElement).cloneNode(false) as HTMLElement;
+      inner.innerHTML = renderParagraphHtml({ ...paragraph, runs: headRuns }, {});
+      const probeWrapper = baseWrapper.cloneNode(false) as HTMLElement;
+      probeWrapper.style.paddingTop = `${paragraph.style.spaceBeforePx ?? 0}px`;
+      probeWrapper.style.paddingBottom = `${paragraph.style.spaceAfterPx ?? 0}px`;
+      probeWrapper.innerHTML = '';
+      probeWrapper.appendChild(inner);
+      const box = document.createElement('div');
+      box.style.display = 'flow-root';
+      box.appendChild(probeWrapper);
+      probeRoot.appendChild(box);
+      const h = box.getBoundingClientRect().height;
+      probeRoot.removeChild(box);
+      return h;
+    };
+    const toContinuation = (p: DocParagraph): DocParagraph => ({
+      ...p,
+      style: { ...p.style, firstLineIndentPx: 0, spaceBeforePx: 0, spaceAfterPx: 0 },
+      list: undefined,
+    });
+    /** 功能：找出段落中第一个段内分页符所在的模型偏移；时间：2026-10-30；作者：lq。 */
+    const forcedBreakOffset = (paragraph: DocParagraph): number => {
+      let acc = 0;
+      for (const run of paragraph.runs) {
+        if (run.pageBreak) return acc;
+        acc += runLength(run);
+      }
+      return -1;
+    };
+    const breaker: ParagraphBreaker = {
+      needsBreak: (paragraph) => paragraph.runs.some((run) => run.pageBreak),
+      split: (paragraph, maxHeight) => {
+        const baseId = paragraph.id.replace(/(?:-cont)+$/, '') || paragraph.id;
+        const wrapper = wrapperByParagraph.get(baseId);
+        if (!wrapper) return null;
+        const total = runsLength(paragraph.runs);
+        if (total <= 0) return null;
+        // 功能：强制断点之前的内容必须留在本页，二分上界不能越过它；时间：2026-10-30；作者：lq。
+        const forced = forcedBreakOffset(paragraph);
+        const limit = forced >= 0 ? forced : total;
+        let lo = 0;
+        let hi = limit;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          if (measurePrefix(paragraph, mid, wrapper) <= maxHeight + 0.5) lo = mid;
+          else hi = mid - 1;
+        }
+        // 功能：强制断点处放得下就按它断开；分页符本身归入续页，避免续页再次从同一断点起断；时间：2026-10-30；作者：lq。
+        const forcedHit = lo >= limit && forced >= 0 && forced < total;
+        const headEnd = forcedHit ? forced : lo;
+        const tailStart = forcedHit ? forced + 1 : headEnd;
+        if (headEnd <= 0 && tailStart <= 0) return null;
+        if (tailStart >= total && headEnd <= 0) return null;
+        const [headRuns] = splitRunsAtOffset(paragraph.runs, headEnd, {});
+        const [, tailRuns] = splitRunsAtOffset(paragraph.runs, tailStart, {});
+        const head = { ...paragraph, runs: headRuns };
+        const tail = toContinuation({ ...paragraph, runs: tailRuns });
+        return {
+          head,
+          tail,
+          headEnd,
+          // 功能：段内分页符断出的续片必须另起一页；高度切出的续片则接在本页首片之后；时间：2026-10-30；作者：lq。
+          forceNewPage: forcedHit,
+          headHeight: measurePrefix(head, headEnd, wrapper),
+          tailHeight: measurePrefix(tail, total - tailStart, wrapper),
+        };
+      },
+    };
+    setPages(paginateDocument(docRef.current, heights, tables, breaker));
+    document.body.removeChild(probeRoot);
   }, [
     layoutRevision,
     metrics.contentHeight,
@@ -1531,12 +1736,16 @@ export function WordEditor({ session }: { session: WordSession }) {
   );
 
   const handleParagraphInput = useCallback(
-    (paragraphId: string, element: HTMLElement) => {
+    (paragraphId: string, element: HTMLElement, headEnd?: number) => {
       const current = latestDoc();
       const paragraph = findParagraph(current, paragraphId);
       if (!paragraph) return;
       const fallback = baseRunStyle(paragraph, current);
-      const runs = serializeDomRuns(element, fallback, paragraphImages(paragraph));
+      const domRuns = serializeDomRuns(element, fallback, paragraphImages(paragraph));
+      // 功能：跨页首片只含段落前缀，编辑后按边界回写，保留被切到续页的尾部；时间：2026-10-30；作者：lq。
+      const runs = headEnd === undefined
+        ? domRuns
+        : mergeFragmentRuns(paragraph.runs, headEnd, domRuns, fallback);
       const next = updateParagraph(current, paragraphId, (existing) => ({ ...existing, runs }));
       commit(next, { key: `type:${paragraphId}` });
       setActiveParagraphId(paragraphId);
@@ -2576,6 +2785,8 @@ export function WordEditor({ session }: { session: WordSession }) {
           onFitWidth={fitWidth}
           onToggleFind={() => setFindOpen((open) => !open)}
           onToggleProperties={() => updateSettings({ showProperties: !settings.showProperties })}
+          showRuler={showRuler}
+          onToggleRuler={() => setShowRuler((visible) => !visible)}
           onExport={() => {
             setExportName(`${stripExtension(session.displayName)}.pdf`);
             setExportRange('');
@@ -2620,6 +2831,12 @@ export function WordEditor({ session }: { session: WordSession }) {
         {mailMerge.previewOn ? <MergePreviewBar controller={mailMerge} /> : null}
         {/* 功能：选中表格自动显示专属工具；时间：2026-10-19；作者：lq。 */}
         {!readonly && activeTable && tableSelection ? <TableTools table={activeTable} selection={tableSelection} onAction={runTableAction} onFormat={(format) => mutateTable(activeTable.id, (table) => formatTable(table, tableSelection, format, metrics.contentWidth))} /> : null}
+        {/* 功能：Word 标尺——对齐页面内容盒，拖拽调整当前段落缩进；时间：2026-10-30；作者：hou0。 */}
+        {!readonly && !mailMerge.previewOn && showRuler ? (
+          <div ref={rulerHostRef} className="relative">
+            {rulerMetrics ? <WordRuler metrics={rulerMetrics} indents={rulerIndents} onChange={onRulerChange} tabStops={activeParagraph?.style?.tabStops ?? []} onTabStopsChange={onTabStopsChange} /> : null}
+          </div>
+        ) : null}
         {mailMerge.previewOn ? (
           <MailMergeCanvas controller={mailMerge} doc={doc} />
         ) : (
@@ -2665,7 +2882,11 @@ export function WordEditor({ session }: { session: WordSession }) {
               if (event.target !== event.currentTarget) return;
               const node = window.getSelection()?.anchorNode;
               const paragraph = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-paragraph-id]');
-              if (paragraph && event.currentTarget.contains(paragraph)) handleParagraphInput(paragraph.dataset.paragraphId!, paragraph);
+              if (paragraph && event.currentTarget.contains(paragraph)) {
+                // 功能：兜底提交同样按片段边界回写，避免跨页首片编辑截断模型尾部；时间：2026-10-30；作者：lq。
+                const headEnd = paragraph.dataset.headEnd ? Number(paragraph.dataset.headEnd) : undefined;
+                handleParagraphInput(paragraph.dataset.paragraphId!, paragraph, headEnd);
+              }
             }}
             onPaste={(event) => {
               if (readonly) { event.preventDefault(); return; }
@@ -3020,6 +3241,8 @@ function WordPageView({
   const pageNumber = (page.sectionPage ?? index) + (doc.page.pageNumberStart ?? 1);
   const fragments = page.fragments;
   const locked = page.locked;
+  // 功能：跨页首片的模型边界，编辑回写时用于保留续页尾部；时间：2026-10-30；作者：lq。
+  const fragmentEnds = page.fragmentEnds;
   // 功能：表格跨页片段是分页切片而不是原表，跳过原表映射；续页只读，首片仍可编辑原表；时间：2026-10-29；作者：lq。
   const blocks = page.blocks
     .map((block) => (fragments?.includes(block.id) ? block : blockMap.get(block.id) ?? block))
@@ -3083,15 +3306,21 @@ function WordPageView({
         >
           {blocks.map((block) =>
             block.type === 'paragraph' ? (
-              <EditableParagraph
-                key={block.id}
-                paragraph={block}
-                doc={doc}
-                pageNumber={pageNumber}
-                totalPages={total}
-                readonly={readonly}
-                handlers={handlers}
-              />
+              locked?.includes(block.id) ? (
+                // 功能：跨页续片段只读，避免编辑落到错误位置；时间：2026-10-30；作者：lq。
+                <StaticParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} />
+              ) : (
+                <EditableParagraph
+                  key={block.id}
+                  paragraph={block}
+                  doc={doc}
+                  pageNumber={pageNumber}
+                  totalPages={total}
+                  readonly={readonly}
+                  handlers={handlers}
+                  headEnd={fragmentEnds?.[block.id]}
+                />
+              )
             ) : block.type === 'table' ? (
               <TableGrid
                 key={block.id}

@@ -4,6 +4,7 @@ export { wordFormatHandler } from './handler';
 export { parseDocx, parseDocxPackage } from './parse';
 export { serializeDocx, mergeStyleDefinitions } from './serialize';
 export { paginateBlocks, pageMetrics } from './pagination';
+export { renderParagraphHtml, paragraphTextStyle, renderRunsHtml } from './html';
 export * from './doc-utils';
 export * from './editing';
 export * from './styles';

@@ -2,6 +2,8 @@ export type WordAlignment = 'left' | 'center' | 'right' | 'justify';
 
 export interface RunStyle {
   fontFamily?: string;
+  /** 功能：中文字体（Word w:rFonts 的 w:eastAsia 槽），与西文 fontFamily 分开记录，避免中文样式被西文覆盖；时间：2026-10-30；作者：hou0。 */
+  eastAsiaFont?: string;
   fontSizePt?: number;
   bold?: boolean;
   italic?: boolean;
@@ -45,6 +47,8 @@ export interface DocRun {
   image?: DocImage;
   /** Explicit line break attached to this run. */
   lineBreak?: boolean;
+  /** 功能：段内分页符（w:br w:type="page"），该位置必须强制断页；时间：2026-10-30；作者：lq。 */
+  pageBreak?: boolean;
   tab?: boolean;
   /** Field code such as PAGE / NUMPAGES, resolved by the renderer. */
   field?: string;
@@ -57,6 +61,19 @@ export interface DocRun {
   mergeSkipIf?: string;        // SKIPIF 条件表达式
   mergeRecord?: boolean;       // MERGEREC
   mergeSeq?: boolean;          // MERGESEQ
+  /** 功能：内部书签链接（指向 DocParagraph.bookmarks 中的书签名），用于目录项点击跳转；时间：2026-10-30；作者：hou0。 */
+  anchor?: string;
+  /** 功能：外部超链接地址（由 w:hyperlink 的 r:id 经文档关系解析得到）；时间：2026-10-30；作者：hou0。 */
+  href?: string;
+}
+
+export interface WordTabStop {
+  /** 距内容盒左缘（左边距）的偏移，CSS px。 */
+  posPx: number;
+  /** 制表位对齐方式。 */
+  kind: 'left' | 'center' | 'right' | 'decimal';
+  /** 功能：制表符前导符（Word 目录靠它在标题与页码间填充点/横线）；时间：2026-10-30；作者：hou0。 */
+  leader?: 'none' | 'dot' | 'hyphen' | 'middleDot' | 'underline';
 }
 
 export interface ParagraphStyle {
@@ -64,6 +81,8 @@ export interface ParagraphStyle {
   indentLeftPx?: number;
   indentRightPx?: number;
   firstLineIndentPx?: number;
+  /** 制表位（Word 标尺可设）。 */
+  tabStops?: WordTabStop[];
   spaceBeforePx?: number;
   spaceAfterPx?: number;
   /** Multiplier, e.g. 1.5. */
@@ -121,6 +140,22 @@ export interface DocParagraph {
   sourceIndex?: number;
   /** 功能：保留段尾分节信息，让批量报告重新打开后仍独立编号；时间：2026-10-24；作者：lq。 */
   sectionEnd?: DocSection;
+  /** 功能：段落上标记的书签名集合（来自 w:bookmarkStart），供目录项锚点跳转定位；时间：2026-10-30；作者：hou0。 */
+  bookmarks?: string[];
+  /** 功能：段落内复杂域的域字符标记（begin/separate/end），保存时还原 TOC 等域结构；时间：2026-10-30；作者：hou0。 */
+  fieldMarkers?: FieldMarker[];
+}
+
+/** 功能：复杂域的域字符标记，用于 docx 往返时保留 TOC/PAGEREF 等域结构；时间：2026-10-30；作者：hou0。 */
+export interface FieldMarker {
+  /** 功能：域字符类型；时间：2026-10-30；作者：hou0。 */
+  role: 'begin' | 'separate' | 'end';
+  /** 功能：域指令文本（如 TOC \o "1-3" \h \z \u），仅 begin 使用；时间：2026-10-30；作者：hou0。 */
+  instr?: string;
+  /** 功能：标记插入位置——位于本段第 N 个 run 之后；时间：2026-10-30；作者：hou0。 */
+  afterRun: number;
+  /** 功能：该域已由 fldSimple 表达（MERGEFIELD/PAGE 等），无需再写复杂域结构；时间：2026-10-30；作者：hou0。 */
+  skip?: boolean;
 }
 
 export interface TableBorderSide {
