@@ -677,14 +677,14 @@ function vmlStyleSize(style: string | undefined): { width: number; height: numbe
   return { width: convert(width), height: convert(height) };
 }
 
-/** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；时间：2026-10-30；作者：hou0。 */
+/** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；支持负值 margin；时间：2026-10-30；作者：hou0。 */
 function parseVmlRectStyle(style: string): { left: number; top: number; width: number; height: number } | undefined {
   const position = /(?:^|;)\s*position\s*:\s*absolute/i.test(style);
   if (!position) return undefined;
-  const left = /(?:^|;)\s*margin-left\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
-  const top = /(?:^|;)\s*margin-top\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
-  const width = /(?:^|;)\s*width\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
-  const height = /(?:^|;)\s*height\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
+  const left = /(?:^|;)\s*margin-left\s*:\s*(-?[\d.]+)(pt|px|in|cm)/i.exec(style);
+  const top = /(?:^|;)\s*margin-top\s*:\s*(-?[\d.]+)(pt|px|in|cm)/i.exec(style);
+  const width = /(?:^|;)\s*width\s*:\s*(-?[\d.]+)(pt|px|in|cm)/i.exec(style);
+  const height = /(?:^|;)\s*height\s*:\s*(-?[\d.]+)(pt|px|in|cm)/i.exec(style);
   if (!left || !top || !width || !height) return undefined;
   const convert = (match: RegExpExecArray) => {
     const value = Number(match[1]);
