@@ -119,6 +119,8 @@ interface ParseContext {
   hasContentControls: boolean;
   /** 功能：文档级复杂域栈——TOC 等域的 begin/end 常跨段落，靠它串联；时间：2026-10-30；作者：hou0。 */
   fieldStack: FieldStackEntry[];
+  /** 功能：页眉页脚按内容去重缓存——重模板的 125 个部件往往只有十几种内容；时间：2026-10-31；作者：hou0。 */
+  headerFooterCache?: Map<string, HeaderFooter>;
 }
 
 function mergeRun(base: RunStyle, override: RunStyle | undefined): RunStyle {
@@ -1193,6 +1195,7 @@ async function parseInlineChildren(
   return runs;
 }
 
+
 async function parseParagraph(
   element: Element,
   ctx: ParseContext,
@@ -1298,7 +1301,7 @@ async function parseParagraph(
       header: await parseHeaderFooter(section, ctx, 'header', page.margins.header),
       footer: await parseHeaderFooter(section, ctx, 'footer', page.margins.footer),
     };
-  }
+    }
   return { paragraph, pageBreakAfter };
 }
 
@@ -1580,6 +1583,47 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
   };
 }
 
+/**
+ * 功能：FNV-1a 字符串哈希——页眉页脚内容去重的缓存键；时间：2026-10-31；作者：hou0。
+ */
+function hashXml(xml: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < xml.length; index += 1) {
+    hash ^= xml.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${(hash >>> 0).toString(36)}-${xml.length}`;
+}
+
+/** 功能：深克隆块数组并重新生成所有 id（段落/表格/行/单元格/图片），保证模型内 id 唯一；时间：2026-10-31；作者：hou0。 */
+function cloneBlocksWithFreshIds(blocks: DocBlock[]): DocBlock[] {
+  return blocks.map((block) => cloneBlockWithFreshIds(block));
+}
+
+function cloneBlockWithFreshIds(block: DocBlock): DocBlock {
+  if (block.type === 'paragraph') {
+    return {
+      ...block,
+      id: uid('p'),
+      runs: block.runs.map((run) => (run.image ? { ...run, image: { ...run.image, id: uid('img') } } : run)),
+      bookmarks: block.bookmarks ? [...block.bookmarks] : undefined,
+      fieldMarkers: block.fieldMarkers ? block.fieldMarkers.map((marker) => ({ ...marker })) : undefined,
+    };
+  }
+  if (block.type === 'table') {
+    return {
+      ...block,
+      id: uid('tbl'),
+      rows: block.rows.map((row) => ({
+        ...row,
+        id: uid('row'),
+        cells: row.cells.map((cell) => ({ ...cell, id: uid('cell'), blocks: cloneBlocksWithFreshIds(cell.blocks) })),
+      })),
+    };
+  }
+  return { ...block, id: uid('break') };
+}
+
 async function parseHeaderFooter(
   sectPr: Element | null,
   ctx: ParseContext,
@@ -1599,6 +1643,12 @@ async function parseHeaderFooter(
   const rel = ctx.rels.get(relId);
   if (!rel?.resolved) return undefined;
   const xml = await ctx.pkg.text(rel.resolved);
+  // 功能：相同内容的页眉页脚只解析一次，使用时克隆并重新分配 id；时间：2026-10-31；作者：hou0。
+  const cacheKey = `${kind}:${hashXml(xml)}`;
+  const cached = ctx.headerFooterCache?.get(cacheKey);
+  if (cached) {
+    return { ...cached, blocks: cloneBlocksWithFreshIds(cached.blocks), distancePx, sourcePart: rel.resolved };
+  }
   const doc = parseXmlDom(xml);
   const root = firstDescendant(doc, kind === 'header' ? 'w:hdr' : 'w:ftr') ?? doc.documentElement;
   // 功能：页眉页脚图片关系按自身部件解析；时间：2026-10-24；作者：lq。
@@ -1606,6 +1656,7 @@ async function parseHeaderFooter(
   const pageNumbers = blocks.some((block) =>
     block.type === 'paragraph' ? block.runs.some((run) => run.field === 'PAGE') : false,
   );
+    ctx.headerFooterCache?.set(cacheKey, { blocks, distancePx, pageNumbers, sourcePart: rel.resolved });
   return { blocks, distancePx, pageNumbers, sourcePart: rel.resolved };
 }
 
@@ -1646,6 +1697,7 @@ export async function parseDocxPackage(
     hasTrackedChanges: false,
     hasContentControls: false,
     fieldStack: [],
+    headerFooterCache: new Map(),
   };
 
   provisional.styles = parseStyleSheet(stylesXml, provisional);
