@@ -31,6 +31,14 @@ export interface DocImage {
   wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom';
 }
 
+export interface MergeFieldFormat {
+  num?: string;        // \# 格式，如 "#,##0.00"
+  date?: string;       // \@ 格式，如 "yyyy年M月d日"
+  case?: 'upper' | 'lower' | 'caps' | 'firstcap'; // \* 开关
+  before?: string;     // \b 非空前缀
+  after?: string;      // \f 非空后缀
+}
+
 export interface DocRun {
   text?: string;
   style: RunStyle;
@@ -42,6 +50,13 @@ export interface DocRun {
   field?: string;
   /** 功能：结构化邮件合并字段名称，与普通文字独立保存；时间：2026-10-24；作者：lq。 */
   mergeField?: string;
+  mergeFormat?: MergeFieldFormat;
+  /** Word 邮件合并控制域（解析后占位文本，合并时消耗） */
+  mergeNext?: boolean;         // NEXT
+  mergeNextIf?: string;        // NEXTIF 条件表达式
+  mergeSkipIf?: string;        // SKIPIF 条件表达式
+  mergeRecord?: boolean;       // MERGEREC
+  mergeSeq?: boolean;          // MERGESEQ
 }
 
 export interface ParagraphStyle {
@@ -193,6 +208,15 @@ export interface HeaderFooter {
 /** 功能：描述一个报告节的页面与页眉页脚；时间：2026-10-24；作者：lq。 */
 export interface DocSection { page: PageSetup; header?: HeaderFooter; footer?: HeaderFooter }
 
+/** 功能：邮件合并筛选条件，面板筛选与 Word 兼容输出共用同一结构；时间：2026-10-29；作者：lq。 */
+export interface DocMergeCondition {
+  field: string;
+  op: 'contains' | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'empty' | 'notEmpty' | 'notContains';
+  value: string;
+  /** 与上一条件的组合方式，仅第 2 条起生效；对齐 Word 查询选项的「且 / 或」。 */
+  conjunction?: 'and' | 'or';
+}
+
 export interface DocMeta {
   title?: string;
   author?: string;
@@ -200,6 +224,10 @@ export interface DocMeta {
   created?: string;
   modified?: string;
   lastModifiedBy?: string;
+  /** 邮件合并面板持久化的筛选/排序/输出状态（JSON 字符串），保存在 settings.xml 的文档变量中。 */
+  mailMergeState?: string;
+  /** 写给 Word / WPS 的邮件合并数据源与筛选，保存模板时转成标准 w:mailMerge，不参与 mini-office 自身恢复。 */
+  mailMergeTemplate?: { dataSourcePath: string; sheetName: string; fields: string[]; conditions: DocMergeCondition[] };
 }
 
 export interface DocModel {

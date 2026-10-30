@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDownAZ, ArrowUpAZ, X } from 'lucide-react';
 import { Button, Input } from '@mini-office/ui';
+import { RESIZE_HANDLES, usePopoverResize, type PopoverSize } from './usePopoverResize';
+
+// 功能：在同一次运行内记住筛选浮层尺寸，重新打开时沿用，重启后回到默认；时间：2026-10-30；作者：lq。
+let rememberedSize: PopoverSize | null = null;
 
 export interface ColumnFilterMenuProps {
   anchor: { left: number; bottom: number };
@@ -20,6 +24,11 @@ export function ColumnFilterMenu(props: ColumnFilterMenuProps) {
   const [query, setQuery] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const allRef = useRef<HTMLInputElement>(null);
+  const { size, left, top, handleProps } = usePopoverResize({
+    anchor: props.anchor,
+    initial: rememberedSize,
+    onCommit: (next) => { rememberedSize = next; },
+  });
   const visible = props.values.filter((value) => (value || '(空白)').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   const count = visible.filter((value) => props.selected.has(value)).length;
   useEffect(() => {
@@ -42,8 +51,8 @@ export function ColumnFilterMenu(props: ColumnFilterMenuProps) {
     };
   }, [props.onClose]);
   return createPortal(
-    <div ref={menuRef} role="dialog" aria-label={`筛选 ${props.title}`} className="mo-glass fixed z-[100] flex w-[280px] flex-col gap-2 rounded-xl border border-[var(--mo-line)] bg-[var(--mo-surface)] p-3 text-[12px] text-[var(--mo-text-primary)] shadow-2xl"
-      style={{ left: Math.max(8, Math.min(props.anchor.left, window.innerWidth - 288)), top: Math.max(8, Math.min(props.anchor.bottom + 4, window.innerHeight - 480)), maxHeight: 'calc(100vh - 16px)' }}>
+    <div ref={menuRef} role="dialog" aria-label={`筛选 ${props.title}`} className="mo-glass fixed z-[100] flex flex-col gap-2 rounded-xl border border-[var(--mo-line)] bg-[var(--mo-surface)] p-3 text-[12px] text-[var(--mo-text-primary)] shadow-2xl"
+      style={{ left, top, width: size.width, height: size.height ?? undefined, maxHeight: 'calc(100vh - 16px)' }}>
       <div className="flex items-center justify-between"><strong className="truncate">{props.title}</strong><button aria-label="关闭筛选菜单" onClick={props.onClose}><X size={14} /></button></div>
       <div className="flex gap-2"><Button className="flex-1" onClick={() => props.onSort(true)}><ArrowUpAZ size={14} />升序</Button><Button className="flex-1" onClick={() => props.onSort(false)}><ArrowDownAZ size={14} />降序</Button></div>
       <Button variant="ghost" onClick={props.onClear}>清除此列筛选</Button>
@@ -56,7 +65,7 @@ export function ColumnFilterMenu(props: ColumnFilterMenuProps) {
             props.onSelected(next);
           }} />{query ? '全选搜索结果' : '(全选)'}
       </label>
-      <div className="min-h-0 max-h-[240px] flex-1 overflow-auto">
+      <div className={`min-h-0 flex-1 overflow-auto ${size.height === null ? 'max-h-[240px]' : ''}`}>
         {visible.length ? visible.map((value) => <label key={value} className="flex items-center gap-2 rounded px-1 py-1 hover:bg-[var(--mo-surface-2)]">
           <input type="checkbox" className="accent-[var(--mo-accent)]" checked={props.selected.has(value)} onChange={(event) => {
             const next = new Set(props.selected);
@@ -66,6 +75,12 @@ export function ColumnFilterMenu(props: ColumnFilterMenuProps) {
         </label>) : <p className="py-5 text-center text-[var(--mo-text-muted)]">没有匹配项</p>}
       </div>
       <div className="flex justify-end gap-2 border-t border-[var(--mo-line)] pt-2"><Button onClick={props.onClose}>取消</Button><Button variant="primary" disabled={query ? count === 0 : !props.selected.size} onClick={() => props.onApply(query ? new Set(visible.filter((value) => props.selected.has(value))) : props.selected)}>确定</Button></div>
+      {/* 功能：四边四角提供鼠标缩放热区，悬停高亮但不占用内容空间；时间：2026-10-30；作者：lq。 */}
+      {RESIZE_HANDLES.map((handle) => (
+        <div key={handle.axis} role="separator" aria-label={`调整筛选浮层大小（${handle.label}）`} data-resize-axis={handle.axis}
+          className={`absolute z-20 touch-none rounded-sm transition-colors hover:bg-[var(--mo-accent-soft)] ${handle.className}`}
+          {...handleProps(handle.axis)} />
+      ))}
     </div>, document.body,
   );
 }

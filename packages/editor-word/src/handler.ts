@@ -50,6 +50,9 @@ export const wordFormatHandler: FormatHandler<DocModel> = {
     return serializeDocx(data, {
       sourceBytes: context.sourceBytes,
       name: context.name,
+      // 功能：模板保存时把面板状态与 Word / WPS 兼容的邮件合并信息一并写出；时间：2026-10-29；作者：lq。
+      mailMergeState: data.meta?.mailMergeState,
+      mailMerge: data.meta?.mailMergeTemplate,
     });
   },
 

@@ -28,7 +28,7 @@ import {
 } from '@mini-office/ooxml';
 import { baseName, stripExtension } from '@mini-office/shared';
 import { BUILTIN_NUMBER_FORMATS } from './format';
-import { recalculateWorkbook } from './formula/engine';
+import { recalculateWorkbook, recalculateWorkbookAsync } from './formula/engine';
 // 功能：重开文件时恢复筛选勾选项及可清除的隐藏状态；时间：2026-10-24；作者：lq。
 import { parseSheetImages } from './sheet-images';
 import { cellDisplay } from './sheet-utils';
@@ -284,6 +284,7 @@ async function parseSheet(
   styles: Record<string, CellStyle>,
   defaultStyleId: string,
   theme: Record<string, string>,
+  lightweight = false,
 ): Promise<SheetModel> {
   const xml = await pkg.text(descriptor.part);
   const doc = parseXmlDom(xml);
@@ -373,14 +374,12 @@ async function parseSheet(
 
   const inlineSharedFormula = new Map<string, { formula: string; row: number; col: number }>();
   const cellsContainer = firstChild(worksheet, 'sheetData');
-  const rowElements = Array.from(cellsContainer?.childNodes ?? []).filter(
-    (node): node is Element => node instanceof Element && localName(node) === 'row',
-  );
+  const rowElements = Array.from(cellsContainer?.children ?? []).filter((node) => localName(node) === 'row');
 
   // First pass: collect shared formula masters.
   for (const rowElement of rowElements) {
-    for (const cellElement of Array.from(rowElement.childNodes)) {
-      if (!(cellElement instanceof Element) || localName(cellElement) !== 'c') continue;
+    for (const cellElement of rowElement.children) {
+      if (localName(cellElement) !== 'c') continue;
       const formulaElement = firstChild(cellElement, 'f');
       if (!formulaElement) continue;
       if (getAttr(formulaElement, 't') !== 'shared') continue;
@@ -402,8 +401,8 @@ async function parseSheet(
     if (getAttr(rowElement, 'hidden') === '1') sheet.hiddenRows[rowNumber] = true;
     maxRow = Math.max(maxRow, rowNumber);
 
-    for (const cellElement of Array.from(rowElement.childNodes)) {
-      if (!(cellElement instanceof Element) || localName(cellElement) !== 'c') continue;
+    for (const cellElement of rowElement.children) {
+      if (localName(cellElement) !== 'c') continue;
       const reference = getAttr(cellElement, 'r');
       if (!reference) continue;
       const position = parseReference(reference);
@@ -417,7 +416,16 @@ async function parseSheet(
       const style = styles[styleId];
       const cell: Cell = { value: null, styleId: styles[styleId] ? styleId : undefined };
 
-      const formulaElement = firstChild(cellElement, 'f');
+      // 功能：一次遍历取出公式、值与内联文本节点，减少每个单元格的 DOM 查询次数；时间：2026-10-30；作者：lq。
+      let formulaElement: Element | null = null;
+      let valueElement: Element | null = null;
+      let inlineElement: Element | null = null;
+      for (const child of cellElement.children) {
+        const childName = localName(child);
+        if (childName === 'f') { if (!formulaElement) formulaElement = child; }
+        else if (childName === 'v') { if (!valueElement) valueElement = child; }
+        else if (childName === 'is') { if (!inlineElement) inlineElement = child; }
+      }
       if (formulaElement) {
         let formulaText = formulaElement.textContent ?? '';
         const sharedType = getAttr(formulaElement, 't');
@@ -434,10 +442,8 @@ async function parseSheet(
       }
 
       if (type === 'inlineStr') {
-        const inline = firstChild(cellElement, 'is');
-        cell.value = inline?.textContent ?? '';
+        cell.value = inlineElement?.textContent ?? '';
       } else {
-        const valueElement = firstChild(cellElement, 'v');
         const raw = valueElement?.textContent ?? '';
         if (type === 's') {
           const index = Number(raw);
@@ -512,7 +518,9 @@ async function parseSheet(
   }
 
   // 功能：加载工作表图片及其锚点；时间：2026-10-24；作者：lq。
-  sheet.images = await parseSheetImages(pkg, descriptor.part, worksheet, sheet);
+  // 功能：数据源轻量模式跳过图片解析，邮件合并只需单元格值与公式；时间：2026-10-30；作者：lq。
+  if (lightweight) sheet.images = [];
+  else sheet.images = await parseSheetImages(pkg, descriptor.part, worksheet, sheet);
   // 功能：标签颜色存放在标准 sheetPr 节点，兼容无 sheetView 的工作表；时间：2026-10-24；作者：lq。
   const propertyColor = excelColor(firstChild(firstChild(worksheet, 'sheetPr'), 'tabColor'), theme);
   if (propertyColor) sheet.tabColor = propertyColor;
@@ -537,9 +545,19 @@ function parseReference(reference: string): { row: number; col: number } | null 
   return { row: Number(match[2]) - 1, col: columnIndexFromLabel(match[1]) };
 }
 
+export interface ParseWorkbookOptions {
+  formulaCellsOnly?: boolean;
+  calculate?: boolean;
+  asyncCalculation?: boolean;
+  /** 功能：数据源轻量模式，跳过图片与筛选还原等编辑态特性，用于邮件合并等只需取值的场景；时间：2026-10-30；作者：lq。 */
+  lightweight?: boolean;
+  onProgress?: (stage: 'parsing' | 'calculating' | 'complete', completed: number, total: number) => void;
+}
+
 export async function parseWorkbookPackage(
   pkg: OoxmlPackage,
   fileName: string,
+  options?: ParseWorkbookOptions,
 ): Promise<WorkbookModel> {
   const theme = await readThemeColors(pkg, 'xl/theme/theme1.xml');
   // 功能：让 XLSX 默认字体继承主题正文字体，减少跨平台打开时字体和列宽变化；时间：2026-10-28；作者：lq。
@@ -575,11 +593,15 @@ export async function parseWorkbookPackage(
     });
   });
 
+  options?.onProgress?.('parsing', 0, descriptors.length);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
   const sheets: SheetModel[] = [];
-  for (const descriptor of descriptors) {
+  for (const [index, descriptor] of descriptors.entries()) {
     sheets.push(
-      await parseSheet(pkg, descriptor, sharedStrings, parsedStyles.styles, parsedStyles.defaultStyleId, theme),
+      await parseSheet(pkg, descriptor, sharedStrings, parsedStyles.styles, parsedStyles.defaultStyleId, theme, options?.lightweight === true),
     );
+    options?.onProgress?.('parsing', index + 1, descriptors.length);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   if (sheets.length === 0) {
     const fallback = createBlankWorkbook().sheets[0];
@@ -618,9 +640,19 @@ export async function parseWorkbookPackage(
       sheets: sheets.length,
     },
   };
-  const calculated = recalculateWorkbook(model);
+  const formulaCellsOnly = options?.formulaCellsOnly === true;
+  const shouldCalculate = options?.calculate !== false;
+  const calculated = shouldCalculate
+    ? options?.asyncCalculation
+      ? await recalculateWorkbookAsync(model, {
+          formulaCellsOnly,
+          onProgress: (completed, total) => options?.onProgress?.('calculating', completed, total),
+        })
+      : recalculateWorkbook(model, { formulaCellsOnly })
+    : model;
   // 功能：将文件内原始筛选值还原为菜单显示值，区分筛选隐藏与手动隐藏；时间：2026-10-24；作者：lq。
-  for (const sheet of calculated.sheets) {
+  // 功能：数据源轻量模式跳过筛选还原，邮件合并不使用筛选状态；时间：2026-10-30；作者：lq。
+  for (const sheet of options?.lightweight ? [] : calculated.sheets) {
     if (!sheet.autoFilter || !sheet.filterCriteria) continue;
     const rawCriteria = Object.entries(sheet.filterCriteria).map(([column, values]) => [Number(column), new Set(values)] as const);
     const criteria: Record<number, string[]> = {};
@@ -637,6 +669,7 @@ export async function parseWorkbookPackage(
     sheet.filterCriteria = criteria;
     sheet.filterBaseHiddenRows = baseHidden;
   }
+  options?.onProgress?.('complete', sheets.length, sheets.length);
   return calculated;
 }
 

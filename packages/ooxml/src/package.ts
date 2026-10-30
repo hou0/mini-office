@@ -5,6 +5,8 @@ import { parseXml, type XmlObject } from './xml';
 const MAX_ENTRIES = 6000;
 const MAX_UNCOMPRESSED_BYTES = 600 * 1024 * 1024;
 const MAX_SINGLE_ENTRY_BYTES = 250 * 1024 * 1024;
+/** 解压打开 OOXML 压缩包的超时，避免 JSZip.loadAsync 对异常/加密/巨型 ZIP 卡住导致界面永久停留在读取中。 */
+const LOAD_PACKAGE_TIMEOUT_MS = 60 * 1000;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   png: 'image/png',
@@ -144,7 +146,34 @@ export function isLegacyOle(bytes: Uint8Array): boolean {
   );
 }
 
-export async function loadOoxmlPackage(bytes: Uint8Array): Promise<OoxmlPackage> {
+/** 带超时的 JSZip.loadAsync，防止对异常 ZIP（如加密或结构异常）卡住导致 Promise 永不 resolve。 */
+async function loadZipWithTimeout(bytes: Uint8Array, timeoutMs: number): Promise<JSZip> {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`读取 OOXML 压缩包超时（${timeoutMs / 1000} 秒），文件可能过大或已损坏。`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      JSZip.loadAsync(bytes, { checkCRC32: false }).finally(() => {
+        settled = true;
+        if (timer) clearTimeout(timer);
+      }),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (!settled && timer) {
+      settled = true;
+      clearTimeout(timer);
+    }
+  }
+}
+
+export async function loadOoxmlPackage(bytes: Uint8Array, timeoutMs = LOAD_PACKAGE_TIMEOUT_MS): Promise<OoxmlPackage> {
   if (isLegacyOle(bytes)) {
     throw new OfficeError(
       ErrorCodes.LEGACY_FORMAT,
@@ -156,7 +185,7 @@ export async function loadOoxmlPackage(bytes: Uint8Array): Promise<OoxmlPackage>
   }
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(bytes, { checkCRC32: false });
+    zip = await loadZipWithTimeout(bytes, timeoutMs);
   } catch (error) {
     throw new OfficeError(
       ErrorCodes.CORRUPT_PACKAGE,

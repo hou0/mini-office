@@ -141,6 +141,7 @@ export interface WorkspaceState {
     data: AnyDocumentData | ((current: AnyDocumentData) => AnyDocumentData),
     options?: { dirty?: boolean },
   ): void;
+  updateDocMeta(id: string, metaPatch: Partial<DocModel['meta']> | ((current: DocModel['meta']) => DocModel['meta'])): void;
   updateView(id: string, patch: SessionView): void;
   saveSession(id: string, options?: { asNew?: boolean }): Promise<boolean>;
   saveActive(options?: { asNew?: boolean }): Promise<boolean>;
@@ -709,6 +710,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
         state: saveInFlight.has(id) ? 'SAVING' : dirty ? 'DIRTY' : 'EDIT_READY',
       });
       if (dirty) scheduleSnapshot(id);
+    },
+
+    // 功能：只更新文档 meta，不触碰正文；邮件合并面板状态/Word 兼容信息写入这里；时间：2026-10-29；作者：lq。
+    updateDocMeta(id, metaPatch) {
+      const session = get().sessions[id];
+      if (!session || session.readonly) return;
+      const next = typeof metaPatch === 'function' ? metaPatch(session.data.meta) : { ...session.data.meta, ...metaPatch };
+      patchSession(id, { data: { ...session.data, meta: next }, dirty: true, state: saveInFlight.has(id) ? 'SAVING' : 'DIRTY' });
+      scheduleSnapshot(id);
     },
 
     updateView(id, patch) {

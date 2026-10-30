@@ -37,8 +37,8 @@ import {
   type Relationship,
 } from '@mini-office/ooxml';
 import { countWords, uid } from '@mini-office/shared';
-// 功能：解析 Word 原生合并域；时间：2026-10-24；作者：lq。
-import { parseMergeField } from './merge-fields';
+// 功能：解析 Word 原生合并域（含 NEXT/NEXTIF/SKIPIF/MERGEREC/MERGESEQ 控制域与格式开关）；时间：2026-10-24；作者：lq。
+import { parseMergeDirective, parseMergeField, type MergeDirective } from './merge-fields';
 
 const HIGHLIGHT_COLORS: Record<string, string | undefined> = {
   black: '#000000',
@@ -714,6 +714,34 @@ interface ParseInlineState {
   fieldStack: Array<{ instr: string; phase: 'instr' | 'result'; mergeEmitted?: boolean }>;
 }
 
+function pushControlFieldRun(runs: DocRun[], directive: MergeDirective, style: RunStyle): void {
+  switch (directive.kind) {
+    case 'next':
+      runs.push({ text: '«NEXT»', mergeNext: true, style });
+      break;
+    case 'nextIf':
+      runs.push({ text: '«NEXTIF»', mergeNextIf: directive.condition, style });
+      break;
+    case 'skipIf':
+      runs.push({ text: '«SKIPIF»', mergeSkipIf: directive.condition, style });
+      break;
+    case 'record':
+      runs.push({ text: '«MERGEREC»', mergeRecord: true, style });
+      break;
+    case 'seq':
+      runs.push({ text: '«MERGESEQ»', mergeSeq: true, style });
+      break;
+    case 'mergeField':
+      runs.push({
+        text: `«${directive.name}»`,
+        mergeField: directive.name,
+        mergeFormat: directive.format,
+        style,
+      });
+      break;
+  }
+}
+
 async function parseRunElement(
   element: Element,
   base: RunStyle,
@@ -739,8 +767,22 @@ async function parseRunElement(
             // 功能：跨多个文本 run 的字段只生成一个原子占位符；时间：2026-10-24；作者：lq。
             const name = parseMergeField(field.instr);
             if (name) {
-              if (!field.mergeEmitted) runs.push({ text: `«${name}»`, mergeField: name, style });
+              if (!field.mergeEmitted) {
+                const directive = parseMergeDirective(field.instr);
+                runs.push({
+                  text: `«${name}»`,
+                  mergeField: name,
+                  ...(directive?.kind === 'mergeField' && directive.format ? { mergeFormat: directive.format } : {}),
+                  style,
+                });
+              }
               field.mergeEmitted = true;
+              break;
+            }
+            const directive = parseMergeDirective(field.instr);
+            if (directive && !field.mergeEmitted) {
+              field.mergeEmitted = true;
+              pushControlFieldRun(runs, directive, style);
               break;
             }
             if (/\bPAGE\b/i.test(field.instr) && !/NUMPAGES/i.test(field.instr)) run.field = 'PAGE';
@@ -790,8 +832,25 @@ async function parseRunElement(
         else if (type === 'separate' && topField()) topField()!.phase = 'result';
         else if (type === 'end') {
           const field = topField();
-          const name = field && parseMergeField(field.instr);
-          if (name && !field?.mergeEmitted) runs.push({ text: `«${name}»`, mergeField: name, style });
+          if (field) {
+            const name = parseMergeField(field.instr);
+            if (name && !field.mergeEmitted) {
+              const directive = parseMergeDirective(field.instr);
+              runs.push({
+                text: `«${name}»`,
+                mergeField: name,
+                ...(directive?.kind === 'mergeField' && directive.format ? { mergeFormat: directive.format } : {}),
+                style,
+              });
+              field.mergeEmitted = true;
+            } else if (!field.mergeEmitted) {
+              const directive = parseMergeDirective(field.instr);
+              if (directive) {
+                field.mergeEmitted = true;
+                pushControlFieldRun(runs, directive, style);
+              }
+            }
+          }
           state.fieldStack.pop();
         }
         break;
@@ -838,10 +897,19 @@ async function parseInlineChildren(
       case 'fldSimple': {
         const instr = attrValue(child, 'w:instr') ?? '';
         // 功能：兼容简式 MERGEFIELD，保持第一个结果字符的样式；时间：2026-10-24；作者：lq。
-        const name = parseMergeField(instr);
-        if (name) {
+        const directive = parseMergeDirective(instr);
+        if (directive?.kind === 'mergeField') {
           const result = await parseInlineChildren(child, base, ctx, state);
-          runs.push({ text: `«${name}»`, mergeField: name, style: result[0]?.style ?? base });
+          runs.push({
+            text: `«${directive.name}»`,
+            mergeField: directive.name,
+            mergeFormat: directive.format,
+            style: result[0]?.style ?? base,
+          });
+          break;
+        }
+        if (directive) {
+          pushControlFieldRun(runs, directive, base);
           break;
         }
         const before = runs.length;
@@ -1311,6 +1379,23 @@ export async function parseDocxPackage(
   const meta = await parseDocMeta(pkg);
   // 功能：把导入文档的段落样式带进模型，样式库可直接套用与识别；时间：2026-10-29；作者：lq。
   const documentStyles = collectDocumentStyles(blocks, header, footer, provisional.styles);
+
+  // 功能：读回模板里保存的邮件合并面板状态，供打开时恢复面板；时间：2026-10-29；作者：lq。
+  if (pkg.has('word/settings.xml')) {
+    try {
+      const settingsDocument = parseXmlDom(await pkg.text('word/settings.xml'));
+      const docVars = settingsDocument.getElementsByTagName('w:docVar');
+      for (const docVar of Array.from(docVars)) {
+        if (docVar.getAttribute('w:name') === 'mailMergePanelState') {
+          const value = docVar.getAttribute('w:val');
+          if (value) (meta as Record<string, unknown>).mailMergeState = value;
+          break;
+        }
+      }
+    } catch {
+      // 忽略读取失败，不影响正文解析
+    }
+  }
 
   return {
     version: 1,

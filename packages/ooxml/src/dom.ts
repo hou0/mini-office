@@ -32,7 +32,12 @@ function matchesTag(element: Element, tagName: string): boolean {
 
 /** 功能：统一取得 XML 元素本地名称，供需要 switch 的解析器兼容任意命名空间前缀；时间：2026-10-28；作者：lq。 */
 export function localName(element: Element): string {
-  return element.localName || element.tagName.split(':').at(-1) || element.tagName;
+  // 功能：避免 split(':') 每次分配数组，该函数在大部件解析中被高频调用；时间：2026-10-29；作者：lq。
+  const own = element.localName;
+  if (own) return own;
+  const tag = element.tagName;
+  const index = tag.indexOf(':');
+  return index === -1 ? tag : tag.slice(index + 1);
 }
 
 export function childElements(
@@ -67,12 +72,35 @@ export function firstChild(
   return null;
 }
 
+/** 功能：惰性遍历所有元素后代，避免 getElementsByTagName('*') 一次性物化整棵树的巨额开销；时间：2026-10-29；作者：lq。 */
+function* iterateDescendants(parent: Element | Document): Generator<Element> {
+  const children = parent.children;
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    yield child;
+    yield* iterateDescendants(child);
+  }
+}
+
 export function descendants(
   parent: Element | Document | null | undefined,
   tagName: string,
 ): Element[] {
   if (!parent) return [];
-  return Array.from(parent.getElementsByTagName('*')).filter((element) => matchesTag(element, tagName));
+  // 功能：优先用原生按名查找（无命名空间前缀的 OOXML 部件直接命中），
+  // 再惰性扫描补齐带前缀的同名节点，兼顾速度与前缀兼容；时间：2026-10-29；作者：lq。
+  const result: Element[] = [];
+  const seen = new Set<Element>();
+  const exact = parent.getElementsByTagName(tagName);
+  for (let index = 0; index < exact.length; index += 1) {
+    const element = exact[index];
+    if (!seen.has(element)) { seen.add(element); result.push(element); }
+  }
+  for (const element of iterateDescendants(parent)) {
+    if (seen.has(element)) continue;
+    if (matchesTag(element, tagName)) { seen.add(element); result.push(element); }
+  }
+  return result;
 }
 
 export function firstDescendant(
@@ -80,7 +108,13 @@ export function firstDescendant(
   tagName: string,
 ): Element | null {
   if (!parent) return null;
-  return Array.from(parent.getElementsByTagName('*')).find((element) => matchesTag(element, tagName)) ?? null;
+  // 功能：优先用原生按名查找，未命中再惰性扫描（带命名空间前缀时）并提前结束；时间：2026-10-29；作者：lq。
+  const exact = parent.getElementsByTagName(tagName);
+  if (exact.length > 0) return exact[0];
+  for (const element of iterateDescendants(parent)) {
+    if (matchesTag(element, tagName)) return element;
+  }
+  return null;
 }
 
 /** Attribute lookup by local name, tolerating different namespace prefixes. */

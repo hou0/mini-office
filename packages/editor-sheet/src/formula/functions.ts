@@ -2,12 +2,16 @@ import type { SheetModel, WorkbookModel } from '@mini-office/document-model';
 import {
   ERROR_CODES,
   FormulaError,
+  compareText,
   error,
   flattenRange,
   isError,
   isRange,
+  intersectScalar,
+  rangeCell,
   unwrap,
   type EvalValue,
+  type RangeStats,
   type RangeValue,
 } from './types';
 import type { Expr } from './parser';
@@ -37,6 +41,8 @@ export interface FunctionContext {
     r2: number,
     c2: number,
   ) => RangeValue;
+  /** 统计区域内的数值单元格，聚合函数优先复用该结果避免重复展开区域。 */
+  rangeStats?: (range: RangeValue) => RangeStats;
   resolveSheet: (name?: string) => SheetModel | undefined;
 }
 
@@ -82,9 +88,7 @@ function firstError(values: EvalValue[]): FormulaError | null {
   for (const value of values) {
     if (isError(value)) return value;
     if (isRange(value)) {
-      for (const row of value.cells) {
-        for (const cell of row) if (isError(cell)) return cell;
-      }
+      for (const cell of flattenRange(value)) if (isError(cell)) return cell;
     }
   }
   return null;
@@ -189,6 +193,56 @@ function aggregateNumbers(args: Expr[], ctx: FunctionContext): NumericCollection
   return collectNumbers(evaluateAll(args, ctx));
 }
 
+/** 聚合结果，与 collectNumbers 语义一致，但优先复用区域统计避免整体展开区域。 */
+interface NumericAggregate {
+  count: number;
+  sum: number;
+  max: number;
+  min: number;
+  product: number;
+  error?: FormulaError;
+}
+
+function mergeNumericValues(aggregate: NumericAggregate, numbers: number[]): void {
+  for (const number of numbers) {
+    aggregate.count += 1;
+    aggregate.sum += number;
+    if (number > aggregate.max) aggregate.max = number;
+    if (number < aggregate.min) aggregate.min = number;
+    aggregate.product *= number;
+  }
+}
+
+/** 功能：SUM/AVERAGE/MAX/MIN/PRODUCT 优先使用区域统计结果；时间：2026-10-27；作者：lq。 */
+function aggregateStats(args: Expr[], ctx: FunctionContext): NumericAggregate {
+  const aggregate: NumericAggregate = { count: 0, sum: 0, max: -Infinity, min: Infinity, product: 1 };
+  for (const arg of args) {
+    const value = ctx.evalArg(arg);
+    if (isError(value)) return { ...aggregate, error: value };
+    if (isRange(value)) {
+      const stats = ctx.rangeStats?.(value);
+      if (!stats) {
+        const collection = collectNumbers([value]);
+        if (collection.error) return { ...aggregate, error: collection.error };
+        mergeNumericValues(aggregate, collection.numbers);
+        continue;
+      }
+      if (stats.error) return { ...aggregate, error: stats.error };
+      aggregate.count += stats.count;
+      aggregate.sum += stats.sum;
+      if (stats.count) {
+        if (stats.max > aggregate.max) aggregate.max = stats.max;
+        if (stats.min < aggregate.min) aggregate.min = stats.min;
+      }
+      aggregate.product *= stats.product;
+      continue;
+    }
+    if (typeof value === 'number') mergeNumericValues(aggregate, [value]);
+    else if (typeof value === 'boolean') mergeNumericValues(aggregate, [value ? 1 : 0]);
+  }
+  return aggregate;
+}
+
 function textOf(value: EvalValue): string {
   const scalar = unwrap(value);
   if (isError(scalar)) return scalar.code;
@@ -211,7 +265,7 @@ function compareValues(a: EvalValue, b: EvalValue): number {
   }
   const leftText = textOf(left);
   const rightText = textOf(right);
-  return leftText.localeCompare(rightText, 'zh-CN', { sensitivity: 'accent' });
+  return compareText(leftText, rightText);
 }
 
 function equalValues(a: EvalValue, b: EvalValue): boolean {
@@ -219,7 +273,7 @@ function equalValues(a: EvalValue, b: EvalValue): boolean {
   const right = unwrap(b);
   if (left === null && right === null) return true;
   if (typeof left === 'string' && typeof right === 'string') {
-    return left.localeCompare(right, 'zh-CN', { sensitivity: 'accent' }) === 0;
+    return compareText(left, right) === 0;
   }
   if (typeof left === 'boolean' || typeof right === 'boolean') {
     const lb = typeof left === 'boolean' ? left : String(left).toUpperCase() === 'TRUE';
@@ -276,7 +330,7 @@ function matchesCriteria(value: EvalValue, criteria: Criteria): boolean {
   if (criteria.op === '=') {
     if (criteria.operand === null) return scalar === null || scalar === '';
     if (typeof criteria.operand === 'string') {
-      return textOf(scalar).localeCompare(criteria.operand, 'zh-CN', { sensitivity: 'accent' }) === 0;
+      return compareText(textOf(scalar), criteria.operand) === 0;
     }
     return equalValues(scalar, criteria.operand);
   }
@@ -312,16 +366,16 @@ function filteredValues(
 // ---- Math & statistics -------------------------------------------------
 
 registerFunction('SUM', fn(0, 255, (args, ctx) => {
-  const collection = aggregateNumbers(args, ctx);
-  if (collection.error) return collection.error;
-  return collection.numbers.reduce((sum, value) => sum + value, 0);
+  const aggregate = aggregateStats(args, ctx);
+  if (aggregate.error) return aggregate.error;
+  return aggregate.sum;
 }));
 
 registerFunction('AVERAGE', fn(1, 255, (args, ctx) => {
-  const collection = aggregateNumbers(args, ctx);
-  if (collection.error) return collection.error;
-  if (collection.numbers.length === 0) return error(ERROR_CODES.DIV_ZERO);
-  return collection.numbers.reduce((sum, value) => sum + value, 0) / collection.numbers.length;
+  const aggregate = aggregateStats(args, ctx);
+  if (aggregate.error) return aggregate.error;
+  if (aggregate.count === 0) return error(ERROR_CODES.DIV_ZERO);
+  return aggregate.sum / aggregate.count;
 }));
 
 registerFunction('COUNT', fn(0, 255, (args, ctx) => {
@@ -350,22 +404,21 @@ registerFunction('COUNTA', fn(0, 255, (args, ctx) => {
 }));
 
 registerFunction('MAX', fn(0, 255, (args, ctx) => {
-  const collection = aggregateNumbers(args, ctx);
-  if (collection.error) return collection.error;
-  return collection.numbers.length ? Math.max(...collection.numbers) : 0;
+  const aggregate = aggregateStats(args, ctx);
+  if (aggregate.error) return aggregate.error;
+  return aggregate.count ? aggregate.max : 0;
 }));
 
 registerFunction('MIN', fn(0, 255, (args, ctx) => {
-  const collection = aggregateNumbers(args, ctx);
-  if (collection.error) return collection.error;
-  return collection.numbers.length ? Math.min(...collection.numbers) : 0;
+  const aggregate = aggregateStats(args, ctx);
+  if (aggregate.error) return aggregate.error;
+  return aggregate.count ? aggregate.min : 0;
 }));
 
 registerFunction('PRODUCT', fn(0, 255, (args, ctx) => {
-  const collection = aggregateNumbers(args, ctx);
-  if (collection.error) return collection.error;
-  if (!collection.numbers.length) return 0;
-  return collection.numbers.reduce((product, value) => product * value, 1);
+  const aggregate = aggregateStats(args, ctx);
+  if (aggregate.error) return aggregate.error;
+  return aggregate.count ? aggregate.product : 0;
 }));
 
 registerFunction('MEDIAN', fn(1, 255, (args, ctx) => {
@@ -801,8 +854,69 @@ registerFunction('SUMPRODUCT', fn(1, 255, (args, ctx) => {
 
 // ---- Lookup ------------------------------------------------------------
 
+/** 功能：缓存查找匹配行，重复的查找值只扫描一次查找列；时间：2026-10-27；作者：lq。 */
+const exactLookupCache = new WeakMap<RangeValue, Map<unknown, number>>();
+const approximateLookupCache = new WeakMap<RangeValue, Map<unknown, number>>();
+const exactColumnCache = new WeakMap<RangeValue, Map<unknown, number>>();
+const approximateColumnCache = new WeakMap<RangeValue, Map<unknown, number>>();
+
+function isCacheableLookup(target: EvalValue): boolean {
+  return (
+    target === null ||
+    typeof target === 'number' ||
+    typeof target === 'string' ||
+    typeof target === 'boolean'
+  );
+}
+
+function lookupRowIndex(table: RangeValue, target: EvalValue, approximate: boolean): number {
+  const cache = approximate ? approximateLookupCache : exactLookupCache;
+  let matches = cache.get(table);
+  if (!matches) {
+    matches = new Map<unknown, number>();
+    cache.set(table, matches);
+  }
+  const cacheable = isCacheableLookup(target);
+  if (cacheable && matches.has(target)) return matches.get(target)!;
+  let rowIndex = -1;
+  for (let index = 0; index < table.rows; index += 1) {
+    const candidate = rangeCell(table, index, 0);
+    if (approximate) {
+      if (compareValues(candidate, target) <= 0) rowIndex = index;
+    } else if (equalValues(candidate, target)) {
+      rowIndex = index;
+      break;
+    }
+  }
+  if (cacheable) matches.set(target, rowIndex);
+  return rowIndex;
+}
+
+function lookupColumnIndex(table: RangeValue, target: EvalValue, approximate: boolean): number {
+  const cache = approximate ? approximateColumnCache : exactColumnCache;
+  let matches = cache.get(table);
+  if (!matches) {
+    matches = new Map<unknown, number>();
+    cache.set(table, matches);
+  }
+  const cacheable = isCacheableLookup(target);
+  if (cacheable && matches.has(target)) return matches.get(target)!;
+  let columnIndex = -1;
+  for (let index = 0; index < table.cols; index += 1) {
+    const candidate = rangeCell(table, 0, index);
+    if (approximate) {
+      if (compareValues(candidate, target) <= 0) columnIndex = index;
+    } else if (equalValues(candidate, target)) {
+      columnIndex = index;
+      break;
+    }
+  }
+  if (cacheable) matches.set(target, columnIndex);
+  return columnIndex;
+}
+
 registerFunction('VLOOKUP', fn(3, 4, (args, ctx) => {
-  const lookup = ctx.evalArg(args[0]);
+  const lookup = intersectScalar(ctx.evalArg(args[0]), ctx.currentRow, ctx.currentCol);
   const table = ctx.evalArg(args[1]);
   const column = numberArg(args, 2, ctx);
   if (isError(column)) return column;
@@ -810,22 +924,13 @@ registerFunction('VLOOKUP', fn(3, 4, (args, ctx) => {
   if (isError(approximate)) return approximate;
   if (!isRange(table)) return error(ERROR_CODES.VALUE);
   if (column < 1 || column > table.cols) return error(ERROR_CODES.REF);
-  let rowIndex = -1;
-  for (let index = 0; index < table.rows; index += 1) {
-    const candidate = table.cells[index][0];
-    if (approximate) {
-      if (compareValues(candidate, lookup) <= 0) rowIndex = index;
-    } else if (equalValues(candidate, lookup)) {
-      rowIndex = index;
-      break;
-    }
-  }
+  const rowIndex = lookupRowIndex(table, unwrap(lookup), approximate);
   if (rowIndex < 0) return error(ERROR_CODES.NA);
-  return table.cells[rowIndex][Math.trunc(column) - 1] ?? null;
+  return rangeCell(table, rowIndex, Math.trunc(column) - 1);
 }));
 
 registerFunction('HLOOKUP', fn(3, 4, (args, ctx) => {
-  const lookup = ctx.evalArg(args[0]);
+  const lookup = intersectScalar(ctx.evalArg(args[0]), ctx.currentRow, ctx.currentCol);
   const table = ctx.evalArg(args[1]);
   const row = numberArg(args, 2, ctx);
   const approximate = booleanArg(args, 3, ctx, true);
@@ -833,22 +938,13 @@ registerFunction('HLOOKUP', fn(3, 4, (args, ctx) => {
   if (isError(approximate)) return approximate;
   if (!isRange(table)) return error(ERROR_CODES.VALUE);
   if (row < 1 || row > table.rows) return error(ERROR_CODES.REF);
-  let columnIndex = -1;
-  for (let index = 0; index < table.cols; index += 1) {
-    const candidate = table.cells[0][index];
-    if (approximate) {
-      if (compareValues(candidate, lookup) <= 0) columnIndex = index;
-    } else if (equalValues(candidate, lookup)) {
-      columnIndex = index;
-      break;
-    }
-  }
+  const columnIndex = lookupColumnIndex(table, unwrap(lookup), approximate);
   if (columnIndex < 0) return error(ERROR_CODES.NA);
-  return table.cells[Math.trunc(row) - 1][columnIndex] ?? null;
+  return rangeCell(table, Math.trunc(row) - 1, columnIndex);
 }));
 
 registerFunction('XLOOKUP', fn(3, 6, (args, ctx) => {
-  const lookup = ctx.evalArg(args[0]);
+  const lookup = intersectScalar(ctx.evalArg(args[0]), ctx.currentRow, ctx.currentCol);
   const lookupRange = ctx.evalArg(args[1]);
   const returnRange = ctx.evalArg(args[2]);
   if (!isRange(lookupRange) || !isRange(returnRange)) return error(ERROR_CODES.VALUE);
@@ -894,11 +990,11 @@ registerFunction('INDEX', fn(2, 3, (args, ctx) => {
     return ctx.createRange(range.sheetName, range.r1 + Math.trunc(row) - 1, range.c1, range.r1 + Math.trunc(row) - 1, range.c2);
   }
   if (row > range.rows || col > range.cols) return error(ERROR_CODES.REF);
-  return range.cells[Math.trunc(row) - 1]?.[Math.trunc(col) - 1] ?? null;
+  return rangeCell(range, Math.trunc(row) - 1, Math.trunc(col) - 1);
 }));
 
 registerFunction('MATCH', fn(2, 3, (args, ctx) => {
-  const lookup = ctx.evalArg(args[0]);
+  const lookup = intersectScalar(ctx.evalArg(args[0]), ctx.currentRow, ctx.currentCol);
   const range = ctx.evalArg(args[1]);
   const matchType = numberArg(args, 2, ctx, 1);
   if (isError(matchType)) return matchType;
