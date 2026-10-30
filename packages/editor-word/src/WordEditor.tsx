@@ -3249,6 +3249,7 @@ function WordPageView({
     .filter((block) => block.type !== 'pageBreak');
   const margins = doc.page.margins;
   const contentWidth = Math.max(120, doc.page.widthPx - margins.left - margins.right);
+  const columnCount = doc.page.columns ?? 1;
   return (
     <div
       data-word-page-wrapper
@@ -3301,39 +3302,51 @@ function WordPageView({
             position: 'absolute',
             left: margins.left,
             top: margins.top,
+            display: columnCount > 1 ? 'flex' : 'block',
             width: contentWidth,
-            columnCount: doc.page.columns && doc.page.columns > 1 ? doc.page.columns : undefined,
-            columnGap: doc.page.columns && doc.page.columns > 1 ? '18px' : undefined,
           }}
         >
-          {blocks.map((block) =>
-            block.type === 'paragraph' ? (
-              locked?.includes(block.id) ? (
-                // 功能：跨页续片段只读，避免编辑落到错误位置；时间：2026-10-30；作者：lq。
-                <StaticParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} />
-              ) : (
-                <EditableParagraph
-                  key={block.id}
-                  paragraph={block}
-                  doc={doc}
-                  pageNumber={pageNumber}
-                  totalPages={total}
-                  readonly={readonly}
-                  handlers={handlers}
-                  headEnd={fragmentEnds?.[block.id]}
-                />
-              )
-            ) : block.type === 'table' ? (
-              <TableGrid
-                key={block.id}
-                table={block}
-                doc={doc}
-                pageNumber={pageNumber}
-                totalPages={total}
-                readonly={readonly || locked?.includes(block.id) === true}
-                handlers={locked?.includes(block.id) ? undefined : handlers}
-              />
-            ) : null,
+          {/* 功能：多栏版式，flex 固定轨道宽，段落按顺序轮询分配到各栏，每栏内部垂直堆叠；时间：2026-10-30；作者：hou0。 */}
+          {columnCount > 1 ? (
+            Array.from({ length: columnCount }, (_, ci) => {
+              const colBlocks = blocks.filter((_b, bi) => bi % columnCount === ci);
+              const colWidth = doc.page.columnWidthsPx?.[ci] ?? contentWidth / columnCount;
+              const colGap = doc.page.columnSpacePx?.[ci];
+              return (
+                <div
+                  key={ci}
+                  style={{
+                    width: colWidth,
+                    minWidth: 0,
+                    marginRight: ci < columnCount - 1 && colGap !== undefined ? `${colGap}px` : undefined,
+                  }}
+                >
+                  {colBlocks.map((block) =>
+                    block.type === 'paragraph' ? (
+                      locked?.includes(block.id) ? (
+                        <StaticParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} />
+                      ) : (
+                        <EditableParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} readonly={readonly} handlers={handlers} headEnd={fragmentEnds?.[block.id]} />
+                      )
+                    ) : block.type === 'table' ? (
+                      <TableGrid key={block.id} table={block} doc={doc} pageNumber={pageNumber} totalPages={total} readonly={readonly || locked?.includes(block.id) === true} handlers={locked?.includes(block.id) ? undefined : handlers} />
+                    ) : null,
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            blocks.map((block) =>
+              block.type === 'paragraph' ? (
+                locked?.includes(block.id) ? (
+                  <StaticParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} />
+                ) : (
+                  <EditableParagraph key={block.id} paragraph={block} doc={doc} pageNumber={pageNumber} totalPages={total} readonly={readonly} handlers={handlers} headEnd={fragmentEnds?.[block.id]} />
+                )
+              ) : block.type === 'table' ? (
+                <TableGrid key={block.id} table={block} doc={doc} pageNumber={pageNumber} totalPages={total} readonly={readonly || locked?.includes(block.id) === true} handlers={locked?.includes(block.id) ? undefined : handlers} />
+              ) : null,
+            )
           )}
         </div>
         {doc.footer ? (

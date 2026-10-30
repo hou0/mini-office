@@ -253,6 +253,12 @@ export interface PageSetup {
   sizeName: string;
   margins: PageMargins;
   columns?: number;
+  /** 每栏宽度（CSS px），w:cols 下每个 w:col 的 w:w；时间：2026-10-30；作者：hou0。 */
+  columnWidthsPx?: number[];
+  /** 每栏间距（CSS px），w:cols 下每个 w:col 的 w:space；时间：2026-10-30；作者：hou0。 */
+  columnSpacePx?: number[];
+  /** 是否等宽栏，w:cols w:equalWidth；时间：2026-10-30；作者：hou0。 */
+  columnEqualWidth?: boolean;
   /** 节分隔类型：'nextPage' 强制新页，'continuous' 同页继续；时间：2026-10-30；作者：hou0。 */
   type?: 'nextPage' | 'continuous';
   /** 文档网格行距（w:docGrid w:linePitch），CSS px，段落行高按此网格对齐；时间：2026-10-30；作者：hou0。 */

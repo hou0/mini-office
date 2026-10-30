@@ -1412,6 +1412,22 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
   // 功能：解析文档网格行距 w:docGrid w:linePitch（twips），段落行高按此网格对齐；时间：2026-10-30；作者：hou0。
   const docGrid = firstChild(sectPr, 'w:docGrid');
   const linePitchTwips = docGrid ? numericAttr(docGrid, 'w:linePitch') : undefined;
+  // 功能：解析每栏宽度与间距，支持不等宽多栏版式；时间：2026-10-30；作者：hou0。
+  const colsElement = firstChild(sectPr, 'w:cols');
+  const columnEqualWidth = colsElement ? attrValue(colsElement, 'w:equalWidth') === 'true' : undefined;
+  const colWidthsPx: number[] = [];
+  const colSpacePx: number[] = [];
+  if (colsElement) {
+    for (const col of Array.from(colsElement.childNodes)) {
+      if (!(col instanceof Element)) continue;
+      if (localName(col) === 'col') {
+        const w = numericAttr(col, 'w:w');
+        const s = numericAttr(col, 'w:space');
+        if (w !== undefined) colWidthsPx.push(twipsToPx(w));
+        if (s !== undefined) colSpacePx.push(twipsToPx(s));
+      }
+    }
+  }
   return {
     widthPx: twipsToPx(widthTwips),
     heightPx: twipsToPx(heightTwips),
@@ -1419,6 +1435,9 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
     sizeName: matched?.name ?? (swapped ? '自定义' : '自定义'),
     margins,
     columns: columns && columns > 1 ? columns : undefined,
+    columnWidthsPx: colWidthsPx.length ? colWidthsPx : undefined,
+    columnSpacePx: colSpacePx.length ? colSpacePx : undefined,
+    columnEqualWidth,
     type: sectType === 'continuous' ? 'continuous' : 'nextPage',
     linePitchPx: linePitchTwips !== undefined ? twipsToPx(linePitchTwips) : undefined,
     // 功能：恢复 DOCX 起始页码；时间：2026-10-24；作者：lq。
