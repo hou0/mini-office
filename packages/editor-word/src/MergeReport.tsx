@@ -28,7 +28,7 @@ export function MergeReport({ doc, renderBlocks, scale = 1, onReady, onError }: 
         const root = measureRef.current;
         if (!root) return;
         await Promise.race([
-          Promise.all([document.fonts.ready, ...Array.from(root.querySelectorAll('img')).map((img) => img.decode())]),
+          Promise.all([(document as { fonts?: { ready?: Promise<unknown> } }).fonts?.ready ?? Promise.resolve(), ...Array.from(root.querySelectorAll('img')).map((img) => img.decode())]),
           new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('字体或图片加载超时，请检查模板资源。')), 15000); }),
         ]);
         clearTimeout(timeout);

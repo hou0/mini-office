@@ -27,12 +27,14 @@ import {
   type OoxmlPackage,
 } from '@mini-office/ooxml';
 import { extensionOf, uid } from '@mini-office/shared';
+import { buildWordMailMergeXml, fileUriTarget, MAIL_MERGE_DATA_REL, MAIL_MERGE_ODSO_REL, MAIL_MERGE_SOURCE_REL, type WordMailMergeInfo } from './mail-merge-ooxml';
 import { documentSections } from './sections';
 // 功能：保存时把文档用到的样式定义写入 styles.xml，Word/WPS 才能显示样式名与标题层级；时间：2026-10-29；作者：lq。
 import { collectUsedStyleDefinitions, resolveStyleRun } from './styles';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const XMLNS_NS = 'http://www.w3.org/2000/xmlns/';
 const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
 const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
 const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
@@ -41,6 +43,8 @@ interface RelationshipInfo {
   id: string;
   type: string;
   target: string;
+  /** 外部数据源关系使用 External，否则省略（内部关系默认 Internal） */
+  targetMode?: 'External' | 'Internal';
 }
 
 interface SerializeState {
@@ -263,6 +267,7 @@ function existingRels(xml: string | undefined): RelationshipInfo[] {
       id: getAttrLocal(element, 'Id') ?? '',
       type: getAttrLocal(element, 'Type') ?? '',
       target: getAttrLocal(element, 'Target') ?? '',
+      targetMode: getAttrLocal(element, 'TargetMode') === 'External' ? 'External' : undefined,
     }));
   } catch {
     return [];
@@ -353,10 +358,33 @@ async function runXml(run: DocRun, state: SerializeState): Promise<string> {
   if (run.text) content += `<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>`;
   if (!content && !properties) content = '<w:t xml:space="preserve"></w:t>';
   const core = `<w:r>${properties}${content}</w:r>`;
-  // 功能：模板字段保存为原生 MERGEFIELD，字段名安全转义；时间：2026-10-24；作者：lq。
+  // 功能：模板字段保存为原生 MERGEFIELD，字段名安全转义；格式串仅由外层 instr 统一转义，避免 &amp;quot; 双重转义；时间：2026-10-24；作者：lq。
   if (run.mergeField) {
     const name = run.mergeField.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    return `<w:fldSimple w:instr="${escapeXml(` MERGEFIELD "${name}" \\* MERGEFORMAT `)}">${core}</w:fldSimple>`;
+    const f = run.mergeFormat ?? {};
+    let instr = ` MERGEFIELD "${name}"`;
+    if (f.num) instr += ` \\# "${f.num}"`;
+    if (f.date) instr += ` \\@ "${f.date}"`;
+    if (f.case) instr += ` \\* ${f.case}`;
+    if (f.before) instr += ` \\b "${f.before}"`;
+    if (f.after) instr += ` \\f "${f.after}"`;
+    instr += ` \\* MERGEFORMAT `;
+    return `<w:fldSimple w:instr="${escapeXml(instr)}">${core}</w:fldSimple>`;
+  }
+  if (run.mergeNext) {
+    return `<w:fldSimple w:instr=" NEXT \* MERGEFORMAT ">${core}</w:fldSimple>`;
+  }
+  if (run.mergeNextIf) {
+    return `<w:fldSimple w:instr="${escapeXml(` NEXTIF ${run.mergeNextIf} \* MERGEFORMAT `)}">${core}</w:fldSimple>`;
+  }
+  if (run.mergeSkipIf) {
+    return `<w:fldSimple w:instr="${escapeXml(` SKIPIF ${run.mergeSkipIf} \* MERGEFORMAT `)}">${core}</w:fldSimple>`;
+  }
+  if (run.mergeRecord) {
+    return `<w:fldSimple w:instr=" MERGEREC \* MERGEFORMAT ">${core}</w:fldSimple>`;
+  }
+  if (run.mergeSeq) {
+    return `<w:fldSimple w:instr=" MERGESEQ \* MERGEFORMAT ">${core}</w:fldSimple>`;
   }
   if (run.field === 'PAGE' || run.field === 'NUMPAGES' || run.field === 'SECTIONPAGES') {
     const instruction = ` ${run.field} \\* MERGEFORMAT `;
@@ -720,7 +748,7 @@ function documentRelsXml(rels: RelationshipInfo[]): string {
   const items = rels
     .map(
       (rel) =>
-        `<Relationship Id="${escapeXml(rel.id)}" Type="${escapeXml(rel.type)}" Target="${escapeXml(rel.target)}"/>`,
+        `<Relationship Id="${escapeXml(rel.id)}" Type="${escapeXml(rel.type)}" Target="${escapeXml(rel.target)}"${rel.targetMode === 'External' ? ' TargetMode="External"' : ''}/>`,
     )
     .join('');
   return `${xmlDeclaration()}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}</Relationships>`;
@@ -781,6 +809,10 @@ export interface SerializeDocxOptions {
   /** 功能：批量报告按节合并，生成结果移除数据源连接；时间：2026-10-24；作者：lq。 */
   sections?: DocModel[];
   materialized?: boolean;
+  /** 邮件合并面板持久化状态（JSON），普通保存时写入 settings.xml 的文档变量，成品输出时移除。 */
+  mailMergeState?: string;
+  /** 模板保存时写给 Word / WPS 的邮件合并数据源与筛选，成品输出时移除。 */
+  mailMerge?: WordMailMergeInfo;
 }
 
 export async function serializeDocx(
@@ -882,6 +914,49 @@ export async function serializeDocx(
     const update = firstChild(settings.documentElement, 'w:updateFields') ?? settings.createElementNS(W_NS, 'w:updateFields');
     update.setAttribute('w:val', 'true');
     if (!update.parentNode) settings.documentElement.appendChild(update);
+    zip.file('word/settings.xml', new XMLSerializer().serializeToString(settings));
+  }
+
+  // 功能：模板保存时写入面板状态与 Word / WPS 兼容的邮件合并信息；成品输出已在前一个分支移除；时间：2026-10-29；作者：lq。
+  else if (options.mailMergeState !== undefined || options.mailMerge) {
+    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml());
+    if (options.mailMergeState !== undefined) {
+      // 普通保存模板：把邮件合并面板状态写入文档变量，下次打开自动恢复
+      const docVars = firstChild(settings.documentElement, 'w:docVars') ?? settings.createElementNS(W_NS, 'w:docVars');
+      if (!docVars.parentNode) settings.documentElement.appendChild(docVars);
+      let target: Element | undefined;
+      for (const element of Array.from(docVars.getElementsByTagName('w:docVar'))) {
+        if (element.getAttribute('w:name') === 'mailMergePanelState') target = element;
+      }
+      if (options.mailMergeState) {
+        if (!target) {
+          target = settings.createElementNS(W_NS, 'w:docVar');
+          target.setAttribute('w:name', 'mailMergePanelState');
+          docVars.appendChild(target);
+        }
+        target.setAttribute('w:val', options.mailMergeState);
+      } else if (target) {
+        target.remove();
+      }
+    }
+    if (options.mailMerge) {
+      // 功能：写出标准 w:mailMerge 与外部数据源关系，让 Word / WPS 能把本模板识别为邮件合并主文档；时间：2026-10-29；作者：lq。
+      Array.from(settings.getElementsByTagName('w:mailMerge')).forEach((element) => element.remove());
+      // 清除 Word 缓存的收件人名单（recipientData），否则 Word 会沿用旧名单而不执行我们的筛选
+      Array.from(settings.getElementsByTagName('w:recipientData')).forEach((element) => element.remove());
+      const wrapper = parseXmlDom(`<w:wrapper xmlns:w="${W_NS}" xmlns:r="${R_NS}">${buildWordMailMergeXml(options.mailMerge)}</w:wrapper>`);
+      const node = wrapper.documentElement.firstElementChild;
+      // w:mailMerge 必须是 w:settings 的靠前子元素（CT_Settings 中排在 defaultTabStop 之前）
+      if (node) settings.documentElement.insertBefore(node, settings.documentElement.firstChild);
+      // r:id 需要关系命名空间前缀，缺失时补在 w:settings 根上
+      if (!settings.documentElement.hasAttributeNS(XMLNS_NS, 'r')) settings.documentElement.setAttributeNS(XMLNS_NS, 'xmlns:r', R_NS);
+      const target = fileUriTarget(options.mailMerge.dataSourcePath);
+      const rels = existingRels(await zip.file('word/_rels/settings.xml.rels')?.async('text')).filter((rel) => rel.type !== MAIL_MERGE_SOURCE_REL && !rel.type.endsWith('/recipientData'));
+      rels.push({ id: MAIL_MERGE_DATA_REL, type: MAIL_MERGE_SOURCE_REL, target, targetMode: 'External' });
+      rels.push({ id: MAIL_MERGE_ODSO_REL, type: MAIL_MERGE_SOURCE_REL, target, targetMode: 'External' });
+      zip.file('word/_rels/settings.xml.rels', documentRelsXml(rels));
+      zip.remove('word/recipientData.xml');
+    }
     zip.file('word/settings.xml', new XMLSerializer().serializeToString(settings));
   }
 

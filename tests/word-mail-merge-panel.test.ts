@@ -24,14 +24,14 @@ it('切换标签重建组件时保留数据快照和记录勾选，StrictMode �
     await mount();
     const select = document.querySelector<HTMLSelectElement>('[aria-label="已打开的数据表"]')!;
     await act(async () => { select.value = sheet.id; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    await click('使用'); await click('选择记录并预览报告');
+    await click('使用'); await click('展开筛选窗口（可调整大小）');
     const first = document.querySelector<HTMLInputElement>('[aria-label="选择第 2 行"]')!;
     expect(first.checked).toBe(true);
     await act(async () => { first.click(); });
     expect(first.checked).toBe(false);
     await act(async () => root.unmount());
     root = createRoot(host);
-    await mount(); await click('选择记录并预览报告');
+    await mount(); await click('展开筛选窗口（可调整大小）');
     expect(document.querySelector<HTMLInputElement>('[aria-label="选择第 2 行"]')?.checked).toBe(false);
     expect(document.querySelector<HTMLInputElement>('[aria-label="选择第 3 行"]')?.checked).toBe(true);
   } finally {

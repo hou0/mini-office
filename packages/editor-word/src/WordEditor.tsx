@@ -74,6 +74,8 @@ import { normalizeWordZoom, useWordZoomShortcuts } from './zoom-shortcuts';
 import { HeaderFooterDialog } from './HeaderFooterDialog';
 // 功能：接入模板字段和批量报告流程；时间：2026-10-24；作者：lq。
 import { MailMergePanel } from './MailMergePanel';
+import { MailMergeCanvas, MergePreviewBar } from './MailMergePreview';
+import { useMailMergeController } from './mail-merge-controller';
 // 功能：接入表格选区与网格编辑工具；时间：2026-10-19；作者：lq。
 import { TableTools } from './TableTools';
 import { editTable, findTable, formatTable, intersects, tableSelectionRect, type TableAction, type TableSelection } from './table-editing';
@@ -891,6 +893,7 @@ export function WordEditor({ session }: { session: WordSession }) {
   const doc = session.data as DocModel;
   const readonly = session.readonly;
   const updateData = useWorkspaceStore((state) => state.updateData);
+  const createDocument = useWorkspaceStore((state) => state.createDocument);
   const updateView = useWorkspaceStore((state) => state.updateView);
   const settings = useWorkspaceStore((state) => state.settings);
   const updateSettings = useWorkspaceStore((state) => state.updateSettings);
@@ -953,6 +956,15 @@ export function WordEditor({ session }: { session: WordSession }) {
   // 功能：按双击区域打开设置，每次打开重建草稿；时间：2026-10-24；作者：lq。
   const [headerFooterRegion, setHeaderFooterRegion] = useState<'header' | 'footer' | null>(null);
   const [mailMergeOpen, setMailMergeOpen] = useState(false);
+  const mailMerge = useMailMergeController({
+    session, doc, renderBlocks: renderMergeBlocks,
+    // 功能：合并 Word 直接在软件窗口显示新文档，不先弹保存框；时间：2026-10-30；作者：lq。
+    onOpenDocument: async (mergedDoc) => {
+      const id = await createDocument('docx');
+      if (!id) return;
+      updateData(id, mergedDoc, { dirty: true });
+    },
+  });
   const [exporting, setExporting] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportRange, setExportRange] = useState('');
@@ -2605,8 +2617,12 @@ export function WordEditor({ session }: { session: WordSession }) {
           onBeforeInteraction={captureSelection}
         />
         ) : null}
+        {mailMerge.previewOn ? <MergePreviewBar controller={mailMerge} /> : null}
         {/* 功能：选中表格自动显示专属工具；时间：2026-10-19；作者：lq。 */}
         {!readonly && activeTable && tableSelection ? <TableTools table={activeTable} selection={tableSelection} onAction={runTableAction} onFormat={(format) => mutateTable(activeTable.id, (table) => formatTable(table, tableSelection, format, metrics.contentWidth))} /> : null}
+        {mailMerge.previewOn ? (
+          <MailMergeCanvas controller={mailMerge} doc={doc} />
+        ) : (
         <div
           ref={scrollRef}
           onScroll={handleScroll}
@@ -2698,6 +2714,7 @@ export function WordEditor({ session }: { session: WordSession }) {
             />
           ) : null}
         </div>
+        )}
 
         <div
           ref={measureRef}
@@ -2738,8 +2755,8 @@ export function WordEditor({ session }: { session: WordSession }) {
       </div>
 
       {/* 功能：侧栏隐藏时保留本次数据快照和选择状态；时间：2026-10-24；作者：lq。 */}
-      <MailMergePanel open={mailMergeOpen && !readonly} session={session} doc={doc} onClose={() => setMailMergeOpen(false)} onInsertField={insertMergeField} renderBlocks={renderMergeBlocks} />
-      {settings.showProperties && !mailMergeOpen ? (
+      <MailMergePanel open={mailMergeOpen && !readonly} session={session} doc={doc} controller={mailMerge} onClose={() => setMailMergeOpen(false)} onInsertField={insertMergeField} renderBlocks={renderMergeBlocks} />
+      {settings.showProperties && !mailMergeOpen && !mailMerge.previewOn ? (
         <PropertiesPanel
           doc={doc}
           session={session}

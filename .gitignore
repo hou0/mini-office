@@ -25,3 +25,6 @@ dist-plugins/
 
 # 功能：忽略本地助手工作区数据，不进入源码仓库；时间：2026-10-29；作者：lq。
 .workbuddy-ai/
+
+# 功能：本地开发计划文档（superpowers），不推送公开仓库；时间：2026-10-29；作者：lq
+docs/superpowers/
