@@ -1,4 +1,4 @@
-import type { DocParagraph, DocRun, ParagraphStyle, RunStyle } from '@mini-office/document-model';
+import type { DocParagraph, DocRun, ParagraphStyle, RunStyle, WordTabStop } from '@mini-office/document-model';
 import { DOC_FONT_STACK, fontStackFor } from '@mini-office/design-system';
 import { escapeHtml } from '@mini-office/shared';
 
@@ -7,6 +7,8 @@ export interface RunRenderContext {
   totalPages?: number;
   /** 功能：SECTIONPAGES 使用当前报告节的总页数；时间：2026-10-24；作者：lq。 */
   sectionPages?: number;
+  /** 功能：段落制表位，供 tab 运行按左右/居中对齐跳转；时间：2026-10-30；作者：hou0。 */
+  tabStops?: WordTabStop[];
 }
 
 function runStyleCss(style: RunStyle): string {
@@ -84,28 +86,87 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
     bufCss = '';
   };
 
+  // 制表位渲染状态：currentX 为已渲染内容的估计横坐标（CSS px）；
+  // pendingAlign 为待渲染段落的对齐方式（center/right 由制表位决定）；
+  // pendingTargetX 为该段落应对齐的目标位置。
+  let currentX = 0;
+  let pendingAlign: 'center' | 'right' | null = null;
+  let pendingTargetX = 0;
+  let pendingParts: string[] = [];
+
+  const charWidthPx = (run: DocRun): number => {
+    const sizePt = run.style.fontSizePt ?? 10.5;
+    // 估算平均字符宽度 ≈ 字号 × 0.55（中英文混合近似），用于制表位位置估算；
+    // pt → px ≈ ×0.75；时间：2026-10-30；作者：hou0。
+    return sizePt * 0.55 * 0.75;
+  };
+
+  const flushPending = () => {
+    if (!pendingParts.length || !pendingAlign) return;
+    const width = Math.max(0, pendingTargetX - currentX);
+    parts.push(`<span style="display:inline-block;width:${width}px;text-align:${pendingAlign}">${pendingParts.join('')}</span>`);
+    currentX = pendingTargetX;
+    pendingAlign = null;
+    pendingTargetX = 0;
+    pendingParts = [];
+  };
+
+  const tabStops = context.tabStops ?? [];
+  const usedTabStops = new Set<number>();
+
+  const findNextTabStop = (afterX: number): WordTabStop | undefined => {
+    return tabStops.find((t, i) => t.posPx > afterX && !usedTabStops.has(i));
+  };
+
+  const markTabStopUsed = (t: WordTabStop) => {
+    const idx = tabStops.findIndex((s) => s.posPx === t.posPx && s.kind === t.kind);
+    if (idx >= 0) usedTabStops.add(idx);
+  };
+
   for (const run of runs) {
     if (run.image) {
+      flushPending();
       flushBuf();
       parts.push(imageHtml(run));
       continue;
     }
     if (run.lineBreak) {
+      flushPending();
       flushBuf();
       parts.push('<br>');
       continue;
     }
     if (run.pageBreak) {
+      flushPending();
       flushBuf();
       parts.push('<span data-page-break="1" contenteditable="false" style="display:inline-block;width:0;height:0;overflow:hidden;"></span>');
       continue;
     }
     if (run.tab) {
+      flushPending();
       flushBuf();
-      parts.push('<span data-tab="1" contenteditable="false">\u2003\u2003</span>');
+      const tabStop = findNextTabStop(currentX);
+      if (!tabStop) {
+        // 无可用制表位：回退为固定宽度；
+        // 时间：2026-10-30；作者：hou0。
+        parts.push('<span data-tab="1" contenteditable="false">\u2003\u2003</span>');
+        currentX += charWidthPx(run) * 2;
+        continue;
+      }
+      markTabStopUsed(tabStop);
+      const gap = Math.max(0, tabStop.posPx - currentX);
+      if (tabStop.kind === 'left' || tabStop.kind === 'decimal') {
+        parts.push(`<span style="display:inline-block;width:${gap}px"></span>`);
+        currentX = tabStop.posPx;
+      } else {
+        // center / right：将后续文本缓冲，在目标位置内按 text-align 对齐；
+        pendingAlign = tabStop.kind;
+        pendingTargetX = tabStop.posPx;
+      }
       continue;
     }
     if (run.mergeField) {
+      flushPending();
       flushBuf();
       parts.push(`<span data-merge-field="${escapeHtml(run.mergeField)}" contenteditable="false" style="${runStyleCss(run.style)}"><span style="background:#e8f1ff;border-radius:3px;color:#245694;">«${escapeHtml(run.mergeField)}»</span></span>`);
       continue;
@@ -129,21 +190,30 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
     if (isPlainText && css) {
       if (!bufCss) bufCss = css;
       bufText += text;
+      currentX += text.length * charWidthPx(run);
     } else {
       flushBuf();
-      let html = css ? `<span style="${css}">${escaped}</span>` : escaped;
-      if (run.style.verticalAlign === 'super') html = `<sup>${html}</sup>`;
-      else if (run.style.verticalAlign === 'sub') html = `<sub>${html}</sub>`;
-      if (run.anchor) {
-        html = `<a data-anchor="${escapeHtml(run.anchor)}" style="color:inherit;text-decoration:none;cursor:pointer;">${html}</a>`;
-      } else if (run.href) {
-        html = `<a href="${escapeHtml(run.href)}" style="color:#0563c1;text-decoration:underline;cursor:pointer;">${html}</a>`;
+      if (pendingAlign) {
+        // center / right 制表位下：缓冲到 pendingParts，等 flushPending 一并对齐；
+        pendingParts.push(css ? `<span style="${css}">${escaped}</span>` : escaped);
+        currentX += text.length * charWidthPx(run);
+      } else {
+        let html = css ? `<span style="${css}">${escaped}</span>` : escaped;
+        if (run.style.verticalAlign === 'super') html = `<sup>${html}</sup>`;
+        else if (run.style.verticalAlign === 'sub') html = `<sub>${html}</sub>`;
+        if (run.anchor) {
+          html = `<a data-anchor="${escapeHtml(run.anchor)}" style="color:inherit;text-decoration:none;cursor:pointer;">${html}</a>`;
+        } else if (run.href) {
+          html = `<a href="${escapeHtml(run.href)}" style="color:#0563c1;text-decoration:underline;cursor:pointer;">${html}</a>`;
+        }
+        parts.push(html);
+        currentX += text.length * charWidthPx(run);
       }
-      parts.push(html);
     }
   }
 
   flushBuf();
+  flushPending();
   return parts.join('');
 }
 
@@ -214,7 +284,7 @@ export function renderParagraphHtml(
   }
   const content = useLeaderLayout(paragraph)
     ? renderLeaderTabHtml(paragraph, context)
-    : renderRunsHtml(paragraph.runs, context);
+    : renderRunsHtml(paragraph.runs, { ...context, tabStops: paragraph.style.tabStops });
   return `${marker}${content || '<br>'}`;
 }
 
