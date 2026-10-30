@@ -29,8 +29,10 @@ export interface DocImage {
   name?: string;
   /** Base64 data URL for newly inserted images. */
   dataUrl?: string;
-  /** 功能：保存图片的文字环绕方式，支持嵌入、左右环绕和上下型；时间：2026-10-24；作者：lq。 */
-  wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom';
+  /** 功能：保存图片的文字环绕方式，支持嵌入、左右环绕、上下型和无环绕（VML rect 浮层）；时间：2026-10-24；作者：lq。 */
+  wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom' | 'none';
+  /** 功能：VML rect 绝对定位浮层（页面坐标系，CSS px），仅 v:rect 带 position:absolute 时存在；时间：2026-10-30；作者：hou0。 */
+  vmlRect?: { left: number; top: number; width: number; height: number };
 }
 
 export interface MergeFieldFormat {

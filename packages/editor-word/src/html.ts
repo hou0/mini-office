@@ -50,6 +50,13 @@ function imageHtml(run: DocRun): string {
   const alt = escapeHtml(image.alt ?? image.name ?? '');
   const imageId = escapeHtml(image.id ?? image.relId ?? '');
   const wrap = image.wrap ?? 'inline';
+
+  // 功能：VML rect 绝对定位浮层（页面坐标系），按 margin-left/margin-top 定位，不占行内空间；时间：2026-10-30；作者：hou0。
+  if (image.vmlRect) {
+    const { left, top, width, height } = image.vmlRect;
+    return `<div data-vml-rect="1" contenteditable="false" style="position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;line-height:0;"><span style="font-size:${Math.min(width, height)}px;line-height:1;">□</span></div>`;
+  }
+
   const layout = wrap === 'square-left'
     ? 'float:left;margin:0 12px 8px 0;'
     : wrap === 'square-right'

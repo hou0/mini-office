@@ -677,6 +677,31 @@ function vmlStyleSize(style: string | undefined): { width: number; height: numbe
   return { width: convert(width), height: convert(height) };
 }
 
+/** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；时间：2026-10-30；作者：hou0。 */
+function parseVmlRectStyle(style: string): { left: number; top: number; width: number; height: number } | undefined {
+  const position = /(?:^|;)\s*position\s*:\s*absolute/i.test(style);
+  if (!position) return undefined;
+  const left = /(?:^|;)\s*margin-left\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
+  const top = /(?:^|;)\s*margin-top\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
+  const width = /(?:^|;)\s*width\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
+  const height = /(?:^|;)\s*height\s*:\s*([\d.]+)(pt|px|in|cm)/i.exec(style);
+  if (!left || !top || !width || !height) return undefined;
+  const convert = (match: RegExpExecArray) => {
+    const value = Number(match[1]);
+    switch (match[2].toLowerCase()) {
+      case 'pt':
+        return value * (4 / 3);
+      case 'in':
+        return value * 96;
+      case 'cm':
+        return (value / 2.54) * 96;
+      default:
+        return value;
+    }
+  };
+  return { left: convert(left), top: convert(top), width: convert(width), height: convert(height) };
+}
+
 async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun[]> {
   const blip = firstDescendant(drawing, 'a:blip');
   const rid = attrValue(blip, 'r:embed') ?? attrValue(blip, 'r:link');
@@ -711,9 +736,28 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
 }
 
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
-  // 功能：VML 复选框（v:rect）解析为方框字符；时间：2026-10-30；作者：hou0。
+  // 功能：VML 复选框（v:rect）按定位信息渲染；时间：2026-10-30；作者：hou0。
   const rect = firstDescendant(pict, 'v:rect');
   if (rect) {
+    const style = attrValue(rect, 'style') ?? '';
+    const rectStyle = parseVmlRectStyle(style);
+    // 有定位信息的 rect 渲染为绝对定位浮层；仅无定位信息的才退化为 □ 字符；
+    if (rectStyle) {
+      return [
+        {
+          text: '',
+          style: {},
+          image: {
+            id: uid('img'),
+            src: '',
+            widthPx: rectStyle.width,
+            heightPx: rectStyle.height,
+            vmlRect: rectStyle,
+            wrap: 'none',
+          },
+        },
+      ];
+    }
     return [{ text: '□', style: {} }];
   }
   const imageData = firstDescendant(pict, 'v:imagedata');
