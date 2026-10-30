@@ -11,6 +11,9 @@ export interface RunRenderContext {
   tabStops?: WordTabStop[];
 }
 
+/** 功能：Word 倍数行距基于字体自然行高（中文字体约 1.2×字号），CSS line-height 单位数是基于字号，需乘此系数对齐 Word 表现；时间：2026-10-30；作者：hou0。 */
+const FONT_LINE_HEIGHT_RATIO = 1.2;
+
 function runStyleCss(style: RunStyle): string {
   const css: string[] = [];
   if (style.fontFamily) {
@@ -314,7 +317,7 @@ export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string,
     lineHeight:
       style.lineHeightExactPx || style.lineHeightAtLeastPx
         ? `${style.lineHeightExactPx ?? style.lineHeightAtLeastPx}px`
-        : style.lineHeight ?? 1.5,
+        : (style.lineHeight ?? 1.5) * FONT_LINE_HEIGHT_RATIO,
     textIndent: style.firstLineIndentPx ? `${style.firstLineIndentPx}px` : undefined,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'break-word',
