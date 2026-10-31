@@ -132,6 +132,8 @@ export interface ParagraphStyle {
   borders?: TableBorders;
   /** 功能：段落是否对齐到文档网格（w:snapToGrid，缺省对齐；仅显式为 false 时存储）；时间：2026-10-30；作者：hou0。 */
   snapToGrid?: boolean;
+  /** 功能：孤寡控制（w:widowControl，Word 默认开启；仅显式为 false 时存储）——跨页断点两侧至少保留两行；时间：2026-10-31；作者：hou0。 */
+  widowControl?: boolean;
   /** 功能：段首分栏符（w:br w:type="column"），多栏节中本段另起一栏；时间：2026-10-30；作者：hou0。 */
   columnBreakBefore?: boolean;
 }

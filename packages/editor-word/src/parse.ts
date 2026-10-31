@@ -321,6 +321,9 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
   // 功能：段落显式关闭「对齐到网格」时记下来，行高不再向上取整到 docGrid 行距；时间：2026-10-30；作者：hou0。
   const snapToGrid = firstChild(pPr, 'w:snapToGrid');
   if (snapToGrid && !toggleValue(snapToGrid)) style.snapToGrid = false;
+  // 功能：段落显式关闭孤寡控制时记下来（Word 默认开启）；时间：2026-10-31；作者：hou0。
+  const widowControl = firstChild(pPr, 'w:widowControl');
+  if (widowControl && !toggleValue(widowControl)) style.widowControl = false;
   const outline = numericAttr(firstChild(pPr, 'w:outlineLvl'), 'w:val');
   if (outline !== undefined) style.outlineLevel = outline;
 

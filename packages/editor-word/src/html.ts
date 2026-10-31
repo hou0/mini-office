@@ -1,6 +1,7 @@
 import type { DocParagraph, DocRun, ParagraphStyle, RunStyle, WordTabStop } from '@mini-office/document-model';
 import { DOC_FONT_STACK, fontStackFor } from '@mini-office/design-system';
 import { escapeHtml } from '@mini-office/shared';
+import { measureNaturalLineHeightPx } from './font-metrics';
 
 export interface RunRenderContext {
   pageNumber?: number;
@@ -395,11 +396,15 @@ export function paragraphWrapperStyle(paragraph: DocParagraph): React.CSSPropert
 
 export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string, defaultFontSizePt: number, linePitchPx?: number): React.CSSProperties {
   const style: ParagraphStyle = paragraph.style;
-  // 功能：计算段落自然行高（CSS px）——Word 未写 w:spacing 时是「单倍行距」（自然行高），
-  // 不是 1.5 倍；按 1.5 倍兜底会让导入文档每行高出约 40%，连带把后续段落顶下去；时间：2026-10-30；作者：hou0。
+  // 功能：计算段落自然行高（CSS px）——优先用逐字体实测的自然行高（与渲染引擎同源、按字体真实度量），
+  // 无 DOM 环境时回退系数近似；Word 未写 w:spacing 时是「单倍行距」（自然行高），不是 1.5 倍；时间：2026-10-31；作者：hou0。
+  const fontStack = fontStackFor(defaultFont) || DOC_FONT_STACK;
+  const naturalSinglePx = measureNaturalLineHeightPx(fontStack, defaultFontSizePt);
   const naturalLineHeightPx = style.lineHeightExactPx || style.lineHeightAtLeastPx
     ? style.lineHeightExactPx ?? style.lineHeightAtLeastPx
-    : (defaultFontSizePt * (style.lineHeight ?? 1) * FONT_LINE_HEIGHT_RATIO) / 0.75;
+    : naturalSinglePx > 0
+      ? naturalSinglePx * (style.lineHeight ?? 1)
+      : (defaultFontSizePt * (style.lineHeight ?? 1) * FONT_LINE_HEIGHT_RATIO) / 0.75;
   // 功能：若文档定义了 w:docGrid w:linePitch，段落行高向上取整到网格行高的整数倍，解决封面空行偏矮、整体上移问题；
   // 固定行距与显式关闭「对齐到网格」的段落不参与取整（与 Word 一致）；时间：2026-10-30；作者：hou0。
   const snapToGrid = style.snapToGrid !== false && style.lineHeightExactPx === undefined;
@@ -407,7 +412,7 @@ export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string,
     ? Math.ceil(naturalLineHeightPx / linePitchPx) * linePitchPx
     : naturalLineHeightPx;
   const base: React.CSSProperties = {
-    fontFamily: fontStackFor(defaultFont) || DOC_FONT_STACK,
+    fontFamily: fontStack,
     fontSize: `${defaultFontSizePt}pt`,
     // 功能：作为 VML 浮层的包含块，让方框按段落相对坐标定位；时间：2026-10-30；作者：hou0。
     position: 'relative',
@@ -423,6 +428,21 @@ export function paragraphTextStyle(paragraph: DocParagraph, defaultFont: string,
     return { ...base, display: 'flex', alignItems: 'baseline' };
   }
   return base;
+}
+
+
+/**
+ * 功能：段落的有效行高（CSS px）——固定值/atLeast 直接用，其余按逐字体自然行高 × 倍数；
+ * 供孤寡控制把断页高度换算成行数；时间：2026-10-31；作者：hou0。
+ */
+export function paragraphLineHeightPx(paragraph: DocParagraph, defaultFont: string, defaultFontSizePt: number): number {
+  if (paragraph.style.lineHeightExactPx) return paragraph.style.lineHeightExactPx;
+  const fontStack = fontStackFor(defaultFont) || DOC_FONT_STACK;
+  const natural = measureNaturalLineHeightPx(fontStack, defaultFontSizePt);
+  const single = natural > 0 ? natural : (defaultFontSizePt * FONT_LINE_HEIGHT_RATIO) / 0.75;
+  const multiple = paragraph.style.lineHeight ?? 1;
+  const value = single * multiple;
+  return paragraph.style.lineHeightAtLeastPx ? Math.max(value, paragraph.style.lineHeightAtLeastPx) : value;
 }
 
 export function paragraphPlainText(paragraph: DocParagraph, context: RunRenderContext = {}): string {

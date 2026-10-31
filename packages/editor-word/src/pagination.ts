@@ -142,6 +142,73 @@ export function paginateDocument(
 }
 
 /**
+ * 功能：keepNext 链检查——把 index 处的块放到当前页 `used` 高度之后，是否会因「与下段同页」
+ * 的连带要求而放不下后续块；是则该块应推到新页。链长超过整页时放弃推页避免死循环；
+ * 时间：2026-10-31；作者：hou0。
+ */
+function keepNextChainOverflows(blocks: DocBlock[], index: number, heights: Map<string, number>, used: number, limit: number): boolean {
+  let sum = 0;
+  let k = index;
+  while (k < blocks.length) {
+    const block = blocks[k];
+    sum += Math.max(0, heights.get(block.id) ?? 0);
+    const keeps = block.type === 'paragraph' && block.style.keepNext === true && k + 1 < blocks.length;
+    if (!keeps) return false;
+    if (sum > limit) return false;
+    k += 1;
+    const nextHeight = Math.max(0, heights.get(blocks[k].id) ?? 0);
+    if (used + sum + nextHeight > limit + 0.5) return true;
+  }
+  return false;
+}
+
+/**
+ * 功能：孤寡控制（Word 默认开启）——跨页断点两侧至少保留两行：
+ * 头部只剩一行时整段移到下页（返回 null）；尾部只剩一行时把断点前移凑足两行；
+ * 时间：2026-10-31；作者：hou0。
+ */
+export interface WidowControlInput {
+  headEnd: number;
+  /** 全段包装高度（含段前/段后 padding，与 measure 同口径）。 */
+  totalHeight: number;
+  /** 测量任意模型偏移处的前缀包装高度（含 padding）。 */
+  measure: (offset: number) => number;
+  /** 段落行高（CSS px）。 */
+  lineHeightPx: number;
+  /** 段前+段后 padding 合计。 */
+  padY: number;
+  /** 本页剩余可用高度（与 measure 同口径）。 */
+  maxHeight: number;
+  /** 段内分页符强制断点：不参与孤寡调整。 */
+  forced?: boolean;
+}
+
+export function applyWidowControl(input: WidowControlInput): number | null {
+  const { headEnd, totalHeight, measure, lineHeightPx, padY, maxHeight, forced } = input;
+  if (forced || lineHeightPx <= 0) return headEnd;
+  const content = (wrapperHeight: number) => Math.max(0, wrapperHeight - padY);
+  const headLines = Math.max(1, Math.round(content(measure(headEnd)) / lineHeightPx));
+  const totalLines = Math.max(1, Math.round(content(totalHeight) / lineHeightPx));
+  if (totalLines < 3) return headEnd;
+  if (headLines < 2) return null;
+  let lo = 0;
+  let hi = headEnd;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const wrapperHeight = measure(mid);
+    if (wrapperHeight <= maxHeight + 0.5 && totalHeight - wrapperHeight >= 2 * lineHeightPx - 0.5) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (best < 0) return null;
+  return best < headEnd ? best : headEnd;
+}
+
+/**
  * 功能：按实测高度把内容装进定高页面；长表格按行切分并重复表头，避免整表被裁掉丢行；
  * 长段落按行断页（首片可编辑、续片只读），段内分页符作为强制断点；
  * 时间：2026-10-29；作者：lq。
@@ -205,6 +272,11 @@ export function paginateBlocks(
       const fits = used + height <= limit + 0.5;
       // 功能：段内分页符是强制断点，即使整段放得下也必须在此断开；时间：2026-10-30；作者：lq。
       const mustBreak = breaker?.needsBreak(block) === true;
+      // 功能：keepNext 链——本块放得下但「与下段同页」的连带要求放不下时，连本块一起推到新页；时间：2026-10-31；作者：hou0。
+      const keepNextPush =
+        fits && !mustBreak && current.length > 0 && i + 1 < blocks.length &&
+        block.style.keepNext === true && keepNextChainOverflows(blocks, i, heights, used, limit);
+      if (keepNextPush) flush();
       if (fits && !mustBreak) {
         current.push(block);
         if (cont) {

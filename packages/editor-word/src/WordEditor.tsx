@@ -49,6 +49,9 @@ import { documentSections } from './sections';
 import { distributeColumns } from './columns';
 import { applyControlPatch, controlChoiceIndex, formatControlDate } from './controls';
 import { useSystemFonts } from './use-system-fonts';
+import { clearFontMetricsCache } from './font-metrics';
+import { applyWidowControl } from './pagination';
+import { paragraphLineHeightPx } from './html';
 import { insertTabAt } from './editing';
 import { mergeIntoPreviousParagraph, pasteMultiline } from './paste';
 import type { RunControl } from '@mini-office/document-model';
@@ -1544,7 +1547,22 @@ export function WordEditor({ session }: { session: WordSession }) {
         }
         // 功能：强制断点处放得下就按它断开；分页符本身归入续页，避免续页再次从同一断点起断；时间：2026-10-30；作者：lq。
         const forcedHit = lo >= limit && forced >= 0 && forced < total;
-        const headEnd = forcedHit ? forced : lo;
+        let headEnd = forcedHit ? forced : lo;
+        // 功能：孤寡控制（Word 默认开启）——跨页断点两侧至少保留两行，头部只剩一行时整段移到下页；时间：2026-10-31；作者：hou0。
+        if (!forcedHit && paragraph.style.widowControl !== false) {
+          const totalOffset = total;
+          const totalHeight = measurePrefix(paragraph, totalOffset, wrapper);
+          const adjusted = applyWidowControl({
+            headEnd,
+            totalHeight,
+            measure: (offset: number) => measurePrefix(paragraph, offset, wrapper),
+            lineHeightPx: paragraphLineHeightPx(paragraph, docRef.current.defaultFont, docRef.current.defaultFontSizePt),
+            padY: (paragraph.style.spaceBeforePx ?? 0) + (paragraph.style.spaceAfterPx ?? 0),
+            maxHeight,
+          });
+          if (adjusted === null) return null;
+          headEnd = adjusted;
+        }
         const tailStart = forcedHit ? forced + 1 : headEnd;
         if (headEnd <= 0 && tailStart <= 0) return null;
         if (tailStart >= total && headEnd <= 0) return null;
@@ -1617,6 +1635,8 @@ export function WordEditor({ session }: { session: WordSession }) {
     if (document.fonts) {
       document.fonts.ready
         .then(() => {
+          // 功能：字体加载完成后清空逐字体行高缓存，重新测量取真实字体度量；时间：2026-10-31；作者：hou0。
+          clearFontMetricsCache();
           if (!cancelled) setLayoutRevision((value) => value + 1);
         })
         .catch(() => {});

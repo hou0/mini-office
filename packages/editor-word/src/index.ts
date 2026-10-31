@@ -3,7 +3,8 @@ export { WordToolbar } from './WordToolbar';
 export { wordFormatHandler } from './handler';
 export { parseDocx, parseDocxPackage } from './parse';
 export { serializeDocx, mergeStyleDefinitions } from './serialize';
-export { paginateBlocks, paginateDocument, pageMetrics } from './pagination';
+export { paginateBlocks, paginateDocument, pageMetrics, applyWidowControl } from './pagination';
+export { paragraphLineHeightPx } from './html';
 export { documentSections } from './sections';
 export { distributeColumns } from './columns';
 export { editTable, findTable, tableSelectionRect } from './table-editing';
@@ -11,6 +12,7 @@ export { applyControlPatch, controlChoiceIndex, formatControlDate } from './cont
 export { useSystemFonts, mergeFontChoices } from './use-system-fonts';
 export { insertTabAt } from './editing';
 export { splitPasteLines, mergeIntoPreviousParagraph, pasteMultiline } from './paste';
+export { measureNaturalLineHeightPx, clearFontMetricsCache } from './font-metrics';
 export { renderParagraphHtml, paragraphTextStyle, renderRunsHtml } from './html';
 export * from './doc-utils';
 export * from './editing';
