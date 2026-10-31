@@ -49,6 +49,7 @@ import { documentSections } from './sections';
 import { distributeColumns } from './columns';
 import { applyControlPatch, controlChoiceIndex, formatControlDate } from './controls';
 import { applyRevisionDecision, attachCommentRange, collectRevisions, gatherCommentText, nextCommentId, stripCommentAnchors } from './review';
+import { renumberListMarkers } from './numbering';
 import { useSystemFonts } from './use-system-fonts';
 import { clearFontMetricsCache } from './font-metrics';
 import { applyWidowControl } from './pagination';
@@ -2037,20 +2038,24 @@ export function WordEditor({ session }: { session: WordSession }) {
       const fallback = baseRunStyle(paragraph, current);
       const [before, after] = splitRunsAtOffset(paragraph.runs, offset, fallback);
       // 功能：回车分段时继承样式关联，保证新段落仍属于同一标题层级；时间：2026-10-29；作者：lq。
+      // 功能：无编号列表（numFmt=none，标记为空）不继承——Word 里这类段落回车后就是普通段落；时间：2026-10-31。
+      const inheritList = paragraph.list && paragraph.list.marker ? { ...paragraph.list } : undefined;
       const nextParagraph = makeParagraph(after, {
         style: { ...paragraph.style },
         styleId: paragraph.styleId,
-        list: paragraph.list ? { ...paragraph.list } : undefined,
+        list: inheritList,
       });
       const updated = updateParagraph(current, paragraphId, (existing) => ({
         ...existing,
         runs: before,
       }));
       const inserted = insertAfterParagraph(updated.blocks, paragraphId, nextParagraph);
-      const next: DocModel = {
+      let next: DocModel = {
         ...updated,
         blocks: inserted.inserted ? inserted.blocks : [...updated.blocks, nextParagraph],
       };
+      // 功能：列表段落分段后重编号（新段落不再继承源段落的静态标记，编号递增）；时间：2026-10-31。
+      if (inheritList) next = renumberListMarkers(next);
       commit(next, { reflow: true });
       focusRequestRef.current = { paragraphId: nextParagraph.id, offset: 0 };
       setActiveParagraphId(nextParagraph.id);
@@ -2093,6 +2098,9 @@ export function WordEditor({ session }: { session: WordSession }) {
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>, paragraphId: string, element: HTMLDivElement) => {
       if (readonly) return;
+      // 功能：中文输入法组词期间（isComposing / keyCode 229）不拦截任何按键——
+      // 回车是输入法的上屏/取消操作，不是分段，拦截会打断组词并产生乱字符；时间：2026-10-31；作者：hou0。
+      if ((event.nativeEvent as KeyboardEvent).isComposing || event.keyCode === 229) return;
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === 'z') {
         event.preventDefault();
@@ -2237,7 +2245,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
       execCommand('insertText', text);
       return;
     }
-    commit({ ...current, blocks: result.blocks }, { reflow: true, key: 'paste' });
+    commit({ ...current, blocks: renumberListMarkers({ ...current, blocks: result.blocks }).blocks }, { reflow: true, key: 'paste' });
     focusRequestRef.current = { paragraphId: result.lastParagraphId, offset: result.caretOffset };
     setSyncToken((value) => value + 1);
   }, [commit, execCommand, latestDoc, replaceCrossSelection]);
@@ -2246,6 +2254,8 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
   const handleDocumentKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     const root = pagesRef.current;
     if (!root) return;
+    // 功能：输入法组词期间不拦截（同 handleKeyDown）；时间：2026-10-31；作者：hou0。
+    if ((event.nativeEvent as KeyboardEvent).isComposing || event.keyCode === 229) return;
     // 功能：Esc 退出格式刷，避免误把后续选择都套上同一格式；时间：2026-10-29；作者：lq。
     if (event.key === 'Escape' && formatPainter) {
       event.preventDefault();
@@ -2449,6 +2459,8 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
   const handleStyleShortcuts = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (readonly) return;
+      // 功能：输入法组词期间不拦截样式快捷键；时间：2026-10-31；作者：hou0。
+      if ((event.nativeEvent as KeyboardEvent).isComposing || event.keyCode === 229) return;
       const mod = event.metaKey || event.ctrlKey;
       if (!mod) return;
       if (event.altKey && /^[1-4]$/.test(event.key)) {

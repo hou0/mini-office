@@ -609,6 +609,10 @@ function listInfoFor(ctx: ParseContext, numId: string, ilvl: number): ListInfo |
     values.set(item.ilvl, counters.get(item.ilvl) ?? item.start);
   }
   values.set(ilvl, current);
+  // 功能：numFmt="none" 的编号定义在 Word 里显示为无编号——标记置空，渲染与分段都不再产生数字；时间：2026-10-31。
+  if (level.numFmt === 'none') {
+    return { numId, level: ilvl, marker: '', ordered: false };
+  }
   let marker = level.lvlText;
   if (level.numFmt === 'bullet') {
     marker = marker || '•';

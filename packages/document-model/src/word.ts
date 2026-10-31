@@ -1,5 +1,15 @@
 export type WordAlignment = 'left' | 'center' | 'right' | 'justify';
 
+/** 功能：编号层级定义（numbering.xml 的 w:lvl），编辑期重编号使用；时间：2026-10-31。 */
+export interface NumberingLevel {
+  ilvl: number;
+  numFmt: string;
+  lvlText: string;
+  start: number;
+  indentLeftPx?: number;
+  firstLineIndentPx?: number;
+}
+
 export interface RunStyle {
   fontFamily?: string;
   /** 功能：中文字体（Word w:rFonts 的 w:eastAsia 槽），与西文 fontFamily 分开记录，避免中文样式被西文覆盖；时间：2026-10-30。 */
@@ -383,6 +393,8 @@ export interface DocModel {
   sectionPageCount?: number;
   /** 功能：本文档自定义/导入的样式，与内置预设合并后供样式库使用；时间：2026-10-29；作者：lq。 */
   styles?: DocStyleDefinition[];
+  /** 功能：编号定义（numbering.xml 的 numId → 层级），供编辑期列表重编号使用；时间：2026-10-31。 */
+  numberingLevels?: Record<string, NumberingLevel[]>;
   /** 功能：文档批注（word/comments.xml），正文 run 以 commentIds 关联；时间：2026-10-31。 */
   comments?: DocComment[];
   /** 功能：默认制表位间距（settings.xml 的 w:defaultTabStop，CSS px）；无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30。 */

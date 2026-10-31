@@ -384,7 +384,8 @@ export function renderParagraphHtml(
   context: RunRenderContext = {},
 ): string {
   let marker = '';
-  if (paragraph.list) {
+  // 功能：空标记（numFmt="none" 的无编号列表）不渲染占位 span；时间：2026-10-31。
+  if (paragraph.list && paragraph.list.marker) {
     marker = `<span data-list-marker="1" contenteditable="false" style="display:inline-block;min-width:1.5em;white-space:nowrap;">${escapeHtml(
       paragraph.list.marker,
     )}</span>`;

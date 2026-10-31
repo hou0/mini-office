@@ -13,6 +13,7 @@ export { useSystemFonts, mergeFontChoices } from './use-system-fonts';
 export { insertTabAt } from './editing';
 export { splitPasteLines, mergeIntoPreviousParagraph, pasteMultiline } from './paste';
 export { measureNaturalLineHeightPx, clearFontMetricsCache } from './font-metrics';
+export { renumberListMarkers, computeListMarker, formatListNumber } from './numbering';
 export { attachCommentRange, stripCommentAnchors, gatherCommentText, nextCommentId, applyRevisionDecision, collectRevisions } from './review';
 export { renderParagraphHtml, paragraphTextStyle, renderRunsHtml } from './html';
 export * from './doc-utils';
