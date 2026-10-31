@@ -106,13 +106,16 @@ function mergeTextRuns(runs: DocRun[]): DocRun[] {
       !previous.tab &&
       !previous.lineBreak &&
       !previous.field && !previous.mergeField &&
-      // 功能：内容控件是独立整体，不能被相邻同样式文本合并掉；时间：2026-10-30；作者：hou0。
+      // 功能：内容控件是独立整体，不能被相邻同样式文本合并掉；时间：2026-10-30。
       !previous.control &&
       !run.image &&
       !run.tab &&
       !run.lineBreak &&
       !run.field && !run.mergeField &&
       !run.control &&
+      // 功能：批注范围与修订边界不能被合并掉（高亮与接受/拒绝依赖 run 边界）；时间：2026-10-31。
+      (previous.commentIds?.join(',') ?? '') === (run.commentIds?.join(',') ?? '') &&
+      previous.revision?.type === run.revision?.type &&
       styleIsEqual(previous.style, run.style)
     ) {
       previous.text = (previous.text ?? '') + (run.text ?? '');
@@ -123,7 +126,7 @@ function mergeTextRuns(runs: DocRun[]): DocRun[] {
   return result;
 }
 
-/** 功能：从 DOM 属性还原候选列表（JSON），解析失败时退回按分隔符拆分；时间：2026-10-30；作者：hou0。 */
+/** 功能：从 DOM 属性还原候选列表（JSON），解析失败时退回按分隔符拆分；时间：2026-10-30。 */
 function parseControlChoices(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw);
@@ -136,7 +139,7 @@ function parseControlChoices(raw: string): string[] {
 
 /**
  * 功能：在 [start,end) 处插入一个制表符 run——折叠光标即插入，选区则整体替换为一个 Tab；
- * Word 标准：正文 Tab 跳到下一个制表位而不是插入空格；时间：2026-10-30；作者：hou0。
+ * Word 标准：正文 Tab 跳到下一个制表位而不是插入空格；时间：2026-10-30。
  */
 export function insertTabAt(runs: DocRun[], start: number, end: number, style: RunStyle): DocRun[] {
   const total = runs.reduce((sum, run) => sum + (run.tab || run.image || run.lineBreak || run.mergeField ? 1 : (run.text ?? '').length), 0);
@@ -150,7 +153,7 @@ export function insertTabAt(runs: DocRun[], start: number, end: number, style: R
   for (const run of runs) {
     const runEnd = position + consumed(run);
     if (!inserted && runEnd > safeStart) {
-      // 功能：插入点落在本 run 内或起点——保留删除区间前的尾部，插入 Tab，再保留删除区间后的头部；时间：2026-10-30；作者：hou0。
+      // 功能：插入点落在本 run 内或起点——保留删除区间前的尾部，插入 Tab，再保留删除区间后的头部；时间：2026-10-30。
       if (position < safeStart) output.push(sliceRunText(run, 0, safeStart - position));
       output.push(tabRun);
       inserted = true;
@@ -169,7 +172,7 @@ export function insertTabAt(runs: DocRun[], start: number, end: number, style: R
   return output;
 }
 
-/** 功能：按文本区间截取 run；原子 run（tab/图片/换行）原样返回；时间：2026-10-30；作者：hou0。 */
+/** 功能：按文本区间截取 run；原子 run（tab/图片/换行）原样返回；时间：2026-10-30。 */
 function sliceRunText(run: DocRun, from: number, to: number): DocRun {
   if (run.tab || run.image || run.lineBreak || run.mergeField) return { ...run };
   return { ...run, text: (run.text ?? '').slice(from, to) };
@@ -192,15 +195,23 @@ export function serializeDomRuns(
 ): DocRun[] {
   const runs: DocRun[] = [];
 
-  const walk = (node: Node, style: RunStyle) => {
+  const walk = (node: Node, style: RunStyle, commentIds?: string[], revision?: DocRun['revision']) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent ?? '';
-      if (text) runs.push({ text, style: { ...style } });
+      if (text) runs.push({ text, style: { ...style }, ...(commentIds?.length ? { commentIds } : {}), ...(revision ? { revision } : {}) });
       return;
     }
     if (!(node instanceof Element)) return;
+    // 功能：批注范围与修订标记沿 DOM 继承到子文本；时间：2026-10-31。
+    const nodeComments = node.getAttribute('data-comment-ids');
+    const nodeRevision = node.getAttribute('data-revision');
+    const nextComments = nodeComments ? nodeComments.split(',') : commentIds;
+    let nextRevision = revision;
+    if (nodeRevision === 'insert' || nodeRevision === 'delete') {
+      nextRevision = { type: nodeRevision, ...(node.getAttribute('data-revision-author') ? { author: node.getAttribute('data-revision-author') as string } : {}) };
+    }
     if (node.getAttribute('data-list-marker') === '1') return;
-    // 功能：VML 浮层方框在编辑回读时还原为图片 run（含勾选状态），避免编辑段落时丢失复选框；时间：2026-10-30；作者：hou0。
+    // 功能：VML 浮层方框在编辑回读时还原为图片 run（含勾选状态），避免编辑段落时丢失复选框；时间：2026-10-30。
     if (node.hasAttribute('data-vml-rect')) {
       const number = (name: string, fallback: number) => {
         const value = Number(node.getAttribute(name));
@@ -232,7 +243,7 @@ export function serializeDomRuns(
       });
       return;
     }
-    // 功能：文本框在编辑回读时还原为带 textbox 的 run，内层段落按块重建；时间：2026-10-31；作者：hou0。
+    // 功能：文本框在编辑回读时还原为带 textbox 的 run，内层段落按块重建；时间：2026-10-31。
     if (node.hasAttribute('data-textbox')) {
       const number = (name: string): number => {
         const value = Number(node.getAttribute(name));
@@ -259,7 +270,7 @@ export function serializeDomRuns(
       });
       return;
     }
-    // 功能：内容控件 chip 在编辑回读时还原为带 control 的 run，保存后仍是可交互控件；时间：2026-10-30；作者：hou0。
+    // 功能：内容控件 chip 在编辑回读时还原为带 control 的 run，保存后仍是可交互控件；时间：2026-10-30。
     const controlKind = node.getAttribute('data-control');
     if (controlKind) {
       const kind = controlKind as NonNullable<DocRun['control']>['kind'];
@@ -374,7 +385,7 @@ export function serializeDomRuns(
       runs.push({ text: '', style: next, pageBreak: true });
       return;
     }
-    for (const child of Array.from(node.childNodes)) walk(child, next);
+    for (const child of Array.from(node.childNodes)) walk(child, next, nextComments, nextRevision);
   };
 
   for (const child of Array.from(root.childNodes)) walk(child, fallback);

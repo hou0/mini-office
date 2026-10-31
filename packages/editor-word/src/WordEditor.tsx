@@ -44,10 +44,11 @@ import {
 } from './html';
 import { replaceDocumentSelection, selectionHtml, selectionText } from './document-selection';
 import { pageMetrics, paginateDocument, type ColumnGroup, type PageSlice, type ParagraphBreaker, type TableLayout } from './pagination';
-// 功能：分栏块的测量宽度按所在栏计算，避免整页宽测量导致栏内换行数偏差；时间：2026-10-30；作者：hou0。
+// 功能：分栏块的测量宽度按所在栏计算，避免整页宽测量导致栏内换行数偏差；时间：2026-10-30。
 import { documentSections } from './sections';
 import { distributeColumns } from './columns';
 import { applyControlPatch, controlChoiceIndex, formatControlDate } from './controls';
+import { applyRevisionDecision, attachCommentRange, collectRevisions, gatherCommentText, nextCommentId, stripCommentAnchors } from './review';
 import { useSystemFonts } from './use-system-fonts';
 import { clearFontMetricsCache } from './font-metrics';
 import { applyWidowControl } from './pagination';
@@ -56,7 +57,7 @@ import { insertTabAt } from './editing';
 import { mergeIntoPreviousParagraph, pasteMultiline } from './paste';
 import type { RunControl } from '@mini-office/document-model';
 import { WordToolbar } from './WordToolbar';
-// 功能：Word 标尺（段落缩进可视化拖拽）；时间：2026-10-30；作者：hou0。
+// 功能：Word 标尺（段落缩进可视化拖拽）；时间：2026-10-30。
 import { WordRuler } from './WordRuler';
 import { type RulerIndents, type RulerMetrics } from './word-ruler';
 // 功能：接入段落对话框与格式刷所需的排版工具；时间：2026-10-29；作者：lq。
@@ -100,6 +101,7 @@ import { useWorkspaceStore, type WordSession } from '@mini-office/document-model
 import { clearPrintRoots, printPages, renderPrintPreview } from '@mini-office/platform-adapter';
 import type {
   DocBlock,
+  DocComment,
   DocImage,
   DocModel,
   DocParagraph,
@@ -356,16 +358,16 @@ interface ParagraphHandlers {
   /** 功能：将图片环绕与对象操作入口放入图片右键菜单；时间：2026-10-24；作者：lq。 */
   onImageContextMenu?: (event: React.MouseEvent, imageId: string) => void;
   selectedImageId?: string;
-  /** 功能：正文区委托点击——勾选 VML 方框、操作内容控件；时间：2026-10-30；作者：hou0。 */
+  /** 功能：正文区委托点击——勾选 VML 方框、操作内容控件；时间：2026-10-30。 */
   onContentClick?: (event: React.MouseEvent) => void;
-  /** 功能：表格左上角拖柄一键选中整表；时间：2026-10-30；作者：hou0。 */
+  /** 功能：表格左上角拖柄一键选中整表；时间：2026-10-30。 */
   onTableSelectAll?: (tableId: string) => void;
-  /** 功能：表格右侧/底部边栏加号——在末尾追加一列或一行；时间：2026-10-30；作者：hou0。 */
+  /** 功能：表格右侧/底部边栏加号——在末尾追加一列或一行；时间：2026-10-30。 */
   onTableAdd?: (tableId: string, axis: 'row' | 'column') => void;
 }
 
 /**
- * 功能：转义 CSS 选择器中的特殊字符，用于按书签名定位目录跳转目标；时间：2026-10-30；作者：hou0。
+ * 功能：转义 CSS 选择器中的特殊字符，用于按书签名定位目录跳转目标；时间：2026-10-30。
  */
 function cssEscape(value: string): string {
   if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
@@ -374,7 +376,7 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, '\\$&');
 }
 
-/** 功能：点击目录项（data-anchor）滚动到对应书签标题，编辑态与只读态共用；时间：2026-10-30；作者：hou0。 */
+/** 功能：点击目录项（data-anchor）滚动到对应书签标题，编辑态与只读态共用；时间：2026-10-30。 */
 function scrollToAnchor(currentTarget: HTMLElement, link: HTMLElement): void {
   const name = link.getAttribute('data-anchor');
   if (!name) return;
@@ -387,7 +389,7 @@ function scrollToAnchor(currentTarget: HTMLElement, link: HTMLElement): void {
 /**
  * 功能：段落组件只依赖 DocModel 的少数排版字段——整篇 commit 会换 doc 引用，若按引用比较会让
  * 几百个段落全部重渲染并逐段读 innerHTML，点击表格加号等编辑要等很久；这里按实际字段比较；
- * 时间：2026-10-30；作者：hou0。
+ * 时间：2026-10-30。
  */
 function sameDocLayout(a: DocModel, b: DocModel): boolean {
   return (
@@ -412,7 +414,7 @@ const StaticParagraph = memo(function StaticParagraph({
   doc: DocModel;
   pageNumber: number;
   totalPages: number;
-  /** 功能：本段所在栏左缘的页面横坐标，供 VML 浮层换算段落内偏移；时间：2026-10-30；作者：hou0。 */
+  /** 功能：本段所在栏左缘的页面横坐标，供 VML 浮层换算段落内偏移；时间：2026-10-30。 */
   columnLeftPx?: number;
 }) {
   const html = useMemo(
@@ -426,7 +428,7 @@ const StaticParagraph = memo(function StaticParagraph({
         data-vml-anchor={paragraph.id}
         style={paragraphTextStyle(paragraph, doc.defaultFont, doc.defaultFontSizePt, doc.page.linePitchPx)}
         onClick={(event) => {
-          // 功能：只读段落同样支持点击目录项跳转；时间：2026-10-30；作者：hou0。
+          // 功能：只读段落同样支持点击目录项跳转；时间：2026-10-30。
           const link = (event.target as HTMLElement).closest<HTMLElement>('[data-anchor]');
           if (link) {
             event.preventDefault();
@@ -462,7 +464,7 @@ const EditableParagraph = memo(function EditableParagraph({
   handlers: ParagraphHandlers;
   /** 功能：跨页首片在模型段落中的结束偏移，编辑回写时据此保留续页尾部；时间：2026-10-30；作者：lq。 */
   headEnd?: number;
-  /** 功能：本段所在栏左缘的页面横坐标，供 VML 浮层换算段落内偏移；时间：2026-10-30；作者：hou0。 */
+  /** 功能：本段所在栏左缘的页面横坐标，供 VML 浮层换算段落内偏移；时间：2026-10-30。 */
   columnLeftPx?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -533,7 +535,7 @@ const EditableParagraph = memo(function EditableParagraph({
         }}
         // 功能：点击图片进入图片上下文工具，避免把图片当作普通文本处理；时间：2026-10-24；作者：lq。
         onClick={(event) => {
-          // 功能：点击目录项（data-anchor）滚动到对应书签标题；时间：2026-10-30；作者：hou0。
+          // 功能：点击目录项（data-anchor）滚动到对应书签标题；时间：2026-10-30。
           const link = (event.target as HTMLElement).closest<HTMLElement>('[data-anchor]');
           if (link) {
             event.preventDefault();
@@ -603,7 +605,7 @@ export function TableGrid({
   // 功能：高亮矩形单元格选区，不影响打印和 PDF；时间：2026-10-19；作者：lq。
   const selectionRect = !readonly && !staticMode && handlers?.tableSelection?.tableId === table.id ? tableSelectionRect(table, handlers.tableSelection) : undefined;
   // 功能：单元格不再画蓝色框——只选中一个单元格时没有任何高亮；多选时用淡底纹提示受影响范围；
-  // 时间：2026-10-30；作者：hou0。
+  // 时间：2026-10-30。
   const multiCellSelection = !!selectionRect && (selectionRect.bottom - selectionRect.top > 1 || selectionRect.right - selectionRect.left > 1);
   return (
     <div
@@ -616,7 +618,7 @@ export function TableGrid({
         marginRight: table.alignment === 'right' ? 0 : table.alignment === 'center' ? 'auto' : undefined,
       }}
     >
-      {/* 功能：整表控制柄——WPS/Word 风格的表左上角方块，点一下选中整表并弹出表格工具；时间：2026-10-30；作者：hou0。 */}
+      {/* 功能：整表控制柄——WPS/Word 风格的表左上角方块，点一下选中整表并弹出表格工具；时间：2026-10-30。 */}
       {!readonly && !staticMode && handlers?.onTableSelectAll ? (
         <button
           type="button"
@@ -625,7 +627,7 @@ export function TableGrid({
           title="选中整个表格（随后可用表格工具批量操作）"
           aria-label="选中整个表格"
           onMouseDown={(event) => {
-            // 功能：同加号，用 mousedown 拦默认行为以免 click 被抑制；时间：2026-10-30；作者：hou0。
+            // 功能：同加号，用 mousedown 拦默认行为以免 click 被抑制；时间：2026-10-30。
             event.preventDefault();
             event.stopPropagation();
           }}
@@ -654,7 +656,7 @@ export function TableGrid({
           ⠿
         </button>
       ) : null}
-      {/* 功能：边缘加号——平时隐藏，鼠标移到表格右/下边缘的悬停带才显示；条带贴在表格外侧，不挡单元格；时间：2026-10-30；作者：hou0。 */}
+      {/* 功能：边缘加号——平时隐藏，鼠标移到表格右/下边缘的悬停带才显示；条带贴在表格外侧，不挡单元格；时间：2026-10-30。 */}
       {!readonly && !staticMode && handlers?.onTableAdd ? (
         <>
           <div
@@ -669,7 +671,7 @@ export function TableGrid({
               title="在右侧添加一列"
               aria-label="在右侧添加一列"
               onMouseDown={(event) => {
-                // 功能：只拦默认行为（避免抢焦点/划词），不能用 pointerdown+preventDefault，否则 Chrome 不再派发 click；时间：2026-10-30；作者：hou0。
+                // 功能：只拦默认行为（避免抢焦点/划词），不能用 pointerdown+preventDefault，否则 Chrome 不再派发 click；时间：2026-10-30。
                 event.preventDefault();
                 event.stopPropagation();
               }}
@@ -1151,10 +1153,10 @@ export function WordEditor({ session }: { session: WordSession }) {
   docRef.current = doc;
 
   const [layoutRevision, setLayoutRevision] = useState(0);
-  // 功能：记录本次重排时间——自身引起的尺寸变化不必再触发第二轮测量；时间：2026-10-30；作者：hou0。
+  // 功能：记录本次重排时间——自身引起的尺寸变化不必再触发第二轮测量；时间：2026-10-30。
   const lastReflowAtRef = useRef(0);
   // 功能：重排去抖——测量+分页是整篇文档级操作（长文档上百毫秒），推迟到本帧绘制之后，
-  // 点击加号/勾选等操作先看到内容变化，页码边界随后稳定；时间：2026-10-30；作者：hou0。
+  // 点击加号/勾选等操作先看到内容变化，页码边界随后稳定；时间：2026-10-30。
   const reflowTimerRef = useRef(0);
   const [pages, setPages] = useState<PageSlice[]>([{ index: 0, blocks: doc.blocks }]);
   // 功能：前置打印预览状态，与 Excel 保持一致的分页列表体验；时间：2026-10-29；作者：lq。
@@ -1166,7 +1168,7 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [zoom, setZoom] = useState(() => session.view.zoom ?? 1);
   const [currentPage, setCurrentPage] = useState(1);
   const [activeParagraphId, setActiveParagraphId] = useState<string>();
-  // 功能：Word 标尺——段落缩进拖拽，默认显示，工具栏可开关；时间：2026-10-30；作者：hou0。
+  // 功能：Word 标尺——段落缩进拖拽，默认显示，工具栏可开关；时间：2026-10-30。
   const [showRuler, setShowRuler] = useState(true);
   const [rulerMetrics, setRulerMetrics] = useState<RulerMetrics | null>(null);
   const rulerHostRef = useRef<HTMLDivElement>(null);
@@ -1178,7 +1180,7 @@ export function WordEditor({ session }: { session: WordSession }) {
   });
   const [historyVersion, setHistoryVersion] = useState(0);
   const [syncToken, setSyncToken] = useState(0);
-  // 功能：系统字体枚举（桌面 list_fonts / Web canvas 探测），供工具栏字体下拉；时间：2026-10-30；作者：hou0。
+  // 功能：系统字体枚举（桌面 list_fonts / Web canvas 探测），供工具栏字体下拉；时间：2026-10-30。
   const systemFonts = useSystemFonts();
   const savedSelectionRef = useRef<{ paragraphId: string; start: number; end: number } | null>(null);
   const savedRangeRef = useRef<Range | null>(null);
@@ -1198,12 +1200,15 @@ export function WordEditor({ session }: { session: WordSession }) {
   const [findActive, setFindActive] = useState(0);
   // 功能：保存独立于文本焦点的表格矩形选区；时间：2026-10-19；作者：lq。
   const explicitTableSelectionRef = useRef(false);
-  // 功能：记录本次按下是否落在表格内——松手后把选区固定下来，避免随后移动光标/输入就取消蓝框；时间：2026-10-30；作者：hou0。
+  // 功能：记录本次按下是否落在表格内——松手后把选区固定下来，避免随后移动光标/输入就取消蓝框；时间：2026-10-30。
   const tablePointerRef = useRef(false);
   const [tableSelection, setTableSelection] = useState<TableSelection | null>(null);
   const [tableMenu, setTableMenu] = useState<TableMenuState | null>(null);
-  // 功能：内容控件弹层（下拉候选 / 日期选择），记录段落、run 序号与屏幕位置；时间：2026-10-30；作者：hou0。
+  // 功能：内容控件弹层（下拉候选 / 日期选择），记录段落、run 序号与屏幕位置；时间：2026-10-30。
   const [controlMenu, setControlMenu] = useState<{ paragraphId: string; runIndex: number; kind: RunControl['kind']; choices?: string[]; dateFormat?: string; value: string; x: number; y: number } | null>(null);
+  // 功能：审阅面板（批注 + 修订）开关；时间：2026-10-31。
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewChanges = useMemo(() => collectRevisions(doc.blocks), [doc.blocks]);
   // 功能：保存图片右键菜单位置与目标对象；时间：2026-10-24；作者：lq。
   const [imageMenu, setImageMenu] = useState<ImageMenuState | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -1373,7 +1378,7 @@ export function WordEditor({ session }: { session: WordSession }) {
   const metrics = useMemo(() => pageMetrics(doc.page), [doc.page]);
   const effectiveZoom = exporting ? 1 : zoom;
 
-  // 功能：Word 标尺——缩进标记取值、页面内容盒测量与拖拽提交；时间：2026-10-30；作者：hou0。
+  // 功能：Word 标尺——缩进标记取值、页面内容盒测量与拖拽提交；时间：2026-10-30。
   const rulerIndents: RulerIndents = {
     left: activeParagraph?.style?.indentLeftPx ?? 0,
     firstLine: activeParagraph?.style?.firstLineIndentPx ?? 0,
@@ -1442,14 +1447,14 @@ export function WordEditor({ session }: { session: WordSession }) {
 
   const blockMap = useMemo(() => new Map(doc.blocks.map((block) => [block.id, block])), [doc.blocks]);
 
-  // 功能：多栏节内的块按各自栏宽测量高度，否则按整页宽测得的高度偏小、断页位置错误；时间：2026-10-30；作者：hou0。
+  // 功能：多栏节内的块按各自栏宽测量高度，否则按整页宽测得的高度偏小、断页位置错误；时间：2026-10-30。
   const measureWidths = useMemo(() => {
     const widths = new Map<string, number>();
     for (const section of documentSections(doc)) {
       const count = section.page.columns ?? 1;
       const columnWidths = section.page.columnWidthsPx;
       if (count <= 1 || !columnWidths?.length) continue;
-      // 功能：与渲染同一套分配规则（columns.ts），保证测量宽度与实际栏宽一致；时间：2026-10-30；作者：hou0。
+      // 功能：与渲染同一套分配规则（columns.ts），保证测量宽度与实际栏宽一致；时间：2026-10-30。
       const columnMap = distributeColumns(section.blocks, count);
       columnMap.forEach((column, columnIndex) => {
         const width = columnWidths[Math.min(columnIndex, columnWidths.length - 1)];
@@ -1548,7 +1553,7 @@ export function WordEditor({ session }: { session: WordSession }) {
         // 功能：强制断点处放得下就按它断开；分页符本身归入续页，避免续页再次从同一断点起断；时间：2026-10-30；作者：lq。
         const forcedHit = lo >= limit && forced >= 0 && forced < total;
         let headEnd = forcedHit ? forced : lo;
-        // 功能：孤寡控制（Word 默认开启）——跨页断点两侧至少保留两行，头部只剩一行时整段移到下页；时间：2026-10-31；作者：hou0。
+        // 功能：孤寡控制（Word 默认开启）——跨页断点两侧至少保留两行，头部只剩一行时整段移到下页；时间：2026-10-31。
         if (!forcedHit && paragraph.style.widowControl !== false) {
           const totalOffset = total;
           const totalHeight = measurePrefix(paragraph, totalOffset, wrapper);
@@ -1614,7 +1619,7 @@ export function WordEditor({ session }: { session: WordSession }) {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const observer = new ResizeObserver(() => {
       // 功能：编辑本身已经触发过重排（commit reflow），测量容器的尺寸变化是它的结果；
-      // 240ms 内不再排第二轮，避免每次插入行/列都做两遍全量测量与分页；时间：2026-10-30；作者：hou0。
+      // 240ms 内不再排第二轮，避免每次插入行/列都做两遍全量测量与分页；时间：2026-10-30。
       if (Date.now() - lastReflowAtRef.current < 600) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => setLayoutRevision((value) => value + 1), 240);
@@ -1635,7 +1640,7 @@ export function WordEditor({ session }: { session: WordSession }) {
     if (document.fonts) {
       document.fonts.ready
         .then(() => {
-          // 功能：字体加载完成后清空逐字体行高缓存，重新测量取真实字体度量；时间：2026-10-31；作者：hou0。
+          // 功能：字体加载完成后清空逐字体行高缓存，重新测量取真实字体度量；时间：2026-10-31。
           clearFontMetricsCache();
           if (!cancelled) setLayoutRevision((value) => value + 1);
         })
@@ -1671,7 +1676,7 @@ export function WordEditor({ session }: { session: WordSession }) {
         paper.style.margin = '0';
       }
       clone.querySelectorAll<HTMLElement>('[contenteditable]').forEach((element) => element.removeAttribute('contenteditable'));
-      // 功能：导出/打印页去掉整表拖柄等编辑期控件，保持与纸张输出一致；时间：2026-10-30；作者：hou0。
+      // 功能：导出/打印页去掉整表拖柄等编辑期控件，保持与纸张输出一致；时间：2026-10-30。
       clone.querySelectorAll<HTMLElement>('[data-table-grab], [data-table-add]').forEach((element) => element.remove());
       clone.querySelectorAll<HTMLElement>('[data-table-edge]').forEach((element) => element.remove());
       return clone;
@@ -2128,7 +2133,7 @@ export function WordEditor({ session }: { session: WordSession }) {
       if (event.key === 'Backspace') {
         if (getCaretOffset(element) === 0) {
           // 功能：单元格内段首退格只并回同一单元格的上一段，不跨单元格（与 Word 一致）；
-          // 顶层段首是表格时退格为空操作，避免浏览器默认行为把正文并进单元格；时间：2026-10-30；作者：hou0。
+          // 顶层段首是表格时退格为空操作，避免浏览器默认行为把正文并进单元格；时间：2026-10-30。
           const inCell = !!element.closest('[data-cell-id]');
           if (inCell) {
             event.preventDefault();
@@ -2151,10 +2156,10 @@ export function WordEditor({ session }: { session: WordSession }) {
         return;
       }
       if (event.key === 'Tab') {
-        // 功能：表格内 Tab 由文档级处理器导航到下一格，段落级不再插入空格；时间：2026-10-30；作者：hou0。
+        // 功能：表格内 Tab 由文档级处理器导航到下一格，段落级不再插入空格；时间：2026-10-30。
         if (element.closest('[data-cell-id]')) return;
         event.preventDefault();
-        // 功能：Word 标准——正文 Shift+Tab 不插入内容；普通 Tab 插入真制表符（跳到下一制表位）；时间：2026-10-30；作者：hou0。
+        // 功能：Word 标准——正文 Shift+Tab 不插入内容；普通 Tab 插入真制表符（跳到下一制表位）；时间：2026-10-30。
         if (event.shiftKey) return;
         const offsets = getSelectionOffsets(element);
         const selection = window.getSelection();
@@ -2201,7 +2206,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     const text = event.clipboardData.getData('text/plain');
     if (!text) return;
     event.preventDefault();
-    // 功能：跨段选区沿用模型替换（换行转段内换行）；时间：2026-10-30；作者：hou0。
+    // 功能：跨段选区沿用模型替换（换行转段内换行）；时间：2026-10-30。
     if (replaceCrossSelection(text)) {
       setSyncToken((value) => value + 1);
       return;
@@ -2218,7 +2223,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     const anchor = findParagraph(current, paragraphId);
     if (!anchor) return;
     const offsets = getSelectionOffsets(paragraphEl) ?? { start: getCaretOffset(paragraphEl), end: getCaretOffset(paragraphEl) };
-    // 功能：多行文本按 Word 标准拆成独立段落（继承当前段落样式与列表），不再压成一格空格；时间：2026-10-30；作者：hou0。
+    // 功能：多行文本按 Word 标准拆成独立段落（继承当前段落样式与列表），不再压成一格空格；时间：2026-10-30。
     const result = pasteMultiline(
       current.blocks,
       anchor,
@@ -2847,7 +2852,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     [commit, latestDoc, notify, readonly, selectedParagraphIds],
   );
 
-  // 功能：勾选 VML 方框——点一下切换勾选并存回模型，随文档一起保存；时间：2026-10-30；作者：hou0。
+  // 功能：勾选 VML 方框——点一下切换勾选并存回模型，随文档一起保存；时间：2026-10-30。
   const handleContentClick = useCallback(
     (event: React.MouseEvent) => {
       if (readonly) return;
@@ -2895,7 +2900,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     [commit, latestDoc, readonly, updateImage],
   );
 
-  // 功能：写入控件取值（下拉项 / 日期 / 文本），同时清掉占位提示；时间：2026-10-30；作者：hou0。
+  // 功能：写入控件取值（下拉项 / 日期 / 文本），同时清掉占位提示；时间：2026-10-30。
   const applyControlValue = useCallback(
     (value: string) => {
       if (!controlMenu) return;
@@ -2909,7 +2914,107 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     [commit, controlMenu, latestDoc],
   );
 
-  // 功能：整表选中——拖柄点击后选中全部单元格，供表格工具与右键菜单操作；时间：2026-10-30；作者：hou0。
+  // 功能：对当前选区新建批注；时间：2026-10-31。
+  const addComment = useCallback(() => {
+    if (readonly) return;
+    const selection = window.getSelection();
+    const node = selection?.anchorNode;
+    const paragraphEl = (node instanceof Element ? node : node?.parentElement)?.closest<HTMLElement>('[data-paragraph-id]');
+    if (!selection || !paragraphEl || !pagesRef.current?.contains(paragraphEl)) {
+      notify('info', '请先选中要批注的文字');
+      return;
+    }
+    const paragraphId = paragraphEl.dataset.paragraphId!;
+    const offsets = getSelectionOffsets(paragraphEl);
+    if (!offsets || offsets.start === offsets.end) {
+      notify('info', '请先选中要批注的文字');
+      return;
+    }
+    const text = window.prompt('批注内容：');
+    if (!text?.trim()) return;
+    const current = latestDoc();
+    const id = nextCommentId(current);
+    const comment: DocComment = {
+      id,
+      author: current.meta.author ?? '用户',
+      ...((() => { try { return { date: new Date().toISOString() }; } catch { return {}; } })()),
+      text: text.trim(),
+    };
+    commit(
+      {
+        ...current,
+        comments: [...(current.comments ?? []), comment],
+        blocks: attachCommentRange(current.blocks, paragraphId, offsets.start, offsets.end, id),
+      },
+      { reflow: true, key: `comment:${id}` },
+    );
+    setReviewOpen(true);
+    setSyncToken((value) => value + 1);
+  }, [commit, latestDoc, notify, readonly]);
+
+  // 功能：删除批注（连同正文锚点）；时间：2026-10-31。
+  const deleteComment = useCallback(
+    (commentId: string) => {
+      if (readonly) return;
+      const current = latestDoc();
+      commit(
+        {
+          ...current,
+          comments: (current.comments ?? []).filter((item) => item.id !== commentId),
+          blocks: stripCommentAnchors(current.blocks, commentId),
+        },
+        { reflow: true, key: `comment-del:${commentId}` },
+      );
+    },
+    [commit, latestDoc, readonly],
+  );
+
+  // 功能：解决/恢复批注（resolved 标记随文档保存）；时间：2026-10-31。
+  const toggleCommentResolved = useCallback(
+    (commentId: string) => {
+      if (readonly) return;
+      const current = latestDoc();
+      commit(
+        {
+          ...current,
+          comments: (current.comments ?? []).map((item) => (item.id === commentId ? { ...item, resolved: !item.resolved } : item)),
+        },
+        { key: `comment-res:${commentId}` },
+      );
+    },
+    [commit, latestDoc, readonly],
+  );
+
+  // 功能：接受/拒绝一处修订；时间：2026-10-31。
+  const decideRevision = useCallback(
+    (paragraphId: string, runIndex: number, accept: boolean) => {
+      if (readonly) return;
+      const current = latestDoc();
+      commit({ ...current, blocks: applyRevisionDecision(current.blocks, paragraphId, runIndex, accept) }, { reflow: true, key: `rev:${paragraphId}:${runIndex}` });
+      setSyncToken((value) => value + 1);
+    },
+    [commit, latestDoc, readonly],
+  );
+
+  // 功能：接受/拒绝全部修订；时间：2026-10-31。
+  const decideAllRevisions = useCallback(
+    (accept: boolean) => {
+      if (readonly) return;
+      let current = latestDoc();
+      let guard = 0;
+      while (guard < 10000) {
+        const change = collectRevisions(current.blocks)[0];
+        if (!change) break;
+        current = { ...current, blocks: applyRevisionDecision(current.blocks, change.paragraphId, change.runIndex, accept) };
+        guard += 1;
+      }
+      commit(current, { reflow: true, key: `rev-all:${accept}` });
+      setSyncToken((value) => value + 1);
+    },
+    [commit, latestDoc, readonly],
+  );
+
+  // 功能：整表选中——拖柄点击后选中全部单元格，供表格工具与右键菜单操作；时间：2026-10-30。
   const handleTableSelectAll = useCallback(
     (tableId: string) => {
       if (readonly) return;
@@ -2944,7 +3049,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
       options: {
         /**
          * 功能：是否强制重建所有段落 DOM。合并/拆分/删除会搬动单元格内容，需要重建；
-         * 追加行列不动已有内容，重建会让整篇（几百段）重写 innerHTML，点击要等很久；时间：2026-10-30；作者：hou0。
+         * 追加行列不动已有内容，重建会让整篇（几百段）重写 innerHTML，点击要等很久；时间：2026-10-30。
          */
         refreshParagraphs?: boolean;
       } = {},
@@ -2958,7 +3063,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
     [commit, latestDoc],
   );
 
-  // 功能：表格边缘加号——按整表矩形复用表格编辑逻辑，在末尾插入一列或一行；时间：2026-10-30；作者：hou0。
+  // 功能：表格边缘加号——按整表矩形复用表格编辑逻辑，在末尾插入一列或一行；时间：2026-10-30。
   const handleTableAdd = useCallback(
     (tableId: string, axis: 'row' | 'column') => {
       if (readonly) return;
@@ -2967,7 +3072,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
       const placements = tableCellPlacements(table);
       if (!placements.length) return;
       const selection = { tableId, anchorId: placements[0].cell.id, focusId: placements[placements.length - 1].cell.id };
-      // 功能：追加行列只新增/搬运单元格结构，已有段落内容不变，跳过全文段落重建以免点击卡顿；时间：2026-10-30；作者：hou0。
+      // 功能：追加行列只新增/搬运单元格结构，已有段落内容不变，跳过全文段落重建以免点击卡顿；时间：2026-10-30。
       mutateTable(
         tableId,
         (current) => editTable(current, selection, axis === 'row' ? 'row-below' : 'column-after', metrics.contentWidth),
@@ -3220,6 +3325,9 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
           onToggleProperties={() => updateSettings({ showProperties: !settings.showProperties })}
           showRuler={showRuler}
           onToggleRuler={() => setShowRuler((visible) => !visible)}
+          reviewOpen={reviewOpen}
+          onToggleReview={() => setReviewOpen((open) => !open)}
+          onAddComment={addComment}
           onExport={() => {
             setExportName(`${stripExtension(session.displayName)}.pdf`);
             setExportRange('');
@@ -3264,7 +3372,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
         {mailMerge.previewOn ? <MergePreviewBar controller={mailMerge} /> : null}
         {/* 功能：选中表格自动显示专属工具；时间：2026-10-19；作者：lq。 */}
         {!readonly && activeTable && tableSelection ? <TableTools table={activeTable} selection={tableSelection} onAction={runTableAction} onFormat={(format) => mutateTable(activeTable.id, (table) => formatTable(table, tableSelection, format, metrics.contentWidth))} /> : null}
-        {/* 功能：Word 标尺——对齐页面内容盒，拖拽调整当前段落缩进；时间：2026-10-30；作者：hou0。 */}
+        {/* 功能：Word 标尺——对齐页面内容盒，拖拽调整当前段落缩进；时间：2026-10-30。 */}
         {!readonly && !mailMerge.previewOn && showRuler ? (
           <div ref={rulerHostRef} className="relative">
             {rulerMetrics ? <WordRuler metrics={rulerMetrics} indents={rulerIndents} onChange={onRulerChange} tabStops={activeParagraph?.style?.tabStops ?? []} onTabStopsChange={onTabStopsChange} /> : null}
@@ -3293,7 +3401,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
               const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell-id]');
               const table = cell?.closest<HTMLElement>('[data-table-id]');
               if (!cell || !table) {
-                // 功能：只有点到表格之外才取消单元格蓝框；时间：2026-10-30；作者：hou0。
+                // 功能：只有点到表格之外才取消单元格蓝框；时间：2026-10-30。
                 tablePointerRef.current = false;
                 explicitTableSelectionRef.current = false;
                 setTableSelection(null);
@@ -3306,7 +3414,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
                 window.getSelection()?.removeAllRanges();
                 setTableSelection({ ...tableSelection, focusId: cell.dataset.cellId! });
               } else {
-                // 功能：按下时先不固定，允许继续拖动扩大选区；松手后再固定；时间：2026-10-30；作者：hou0。
+                // 功能：按下时先不固定，允许继续拖动扩大选区；松手后再固定；时间：2026-10-30。
                 explicitTableSelectionRef.current = false;
                 setTableSelection({ tableId: table.dataset.tableId!, anchorId: cell.dataset.cellId!, focusId: cell.dataset.cellId! });
               }
@@ -3316,7 +3424,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
             onKeyDownCapture={handleStyleShortcuts}
             // 功能：格式刷激活时，拖选结束即套用复制的格式；时间：2026-10-29；作者：lq。
             onPointerUp={() => {
-              // 功能：表格内松手即固定选区——之后在单元格里打字、移动光标都不取消蓝框；时间：2026-10-30；作者：hou0。
+              // 功能：表格内松手即固定选区——之后在单元格里打字、移动光标都不取消蓝框；时间：2026-10-30。
               if (tablePointerRef.current) explicitTableSelectionRef.current = true;
               tablePointerRef.current = false;
               if (formatPainter) applyFormatPainter();
@@ -3459,6 +3567,84 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
           onClose={() => setTableMenu(null)}
         />
       ) : null}
+      {/* 功能：审阅面板——批注列表（新建/解决/删除）与修订列表（接受/拒绝/全部）；时间：2026-10-31。 */}
+      {reviewOpen ? (
+        <div
+          data-review-panel
+          style={{
+            position: 'fixed',
+            top: 56,
+            right: 16,
+            width: 300,
+            maxHeight: '70%',
+            overflowY: 'auto',
+            zIndex: 50,
+            background: '#fff',
+            border: '1px solid #dcdcdc',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.16)',
+            padding: 12,
+            fontSize: 12,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <strong>审阅</strong>
+            <button type="button" onClick={() => setReviewOpen(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 14 }}>×</button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+            {!readonly ? (
+              <button type="button" onClick={addComment} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #3478f6', background: '#3478f6', color: '#fff', cursor: 'pointer' }}>新建批注</button>
+            ) : null}
+            {!readonly && reviewChanges.length ? (
+              <>
+                <button type="button" onClick={() => decideAllRevisions(true)} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer' }}>接受全部修订</button>
+                <button type="button" onClick={() => decideAllRevisions(false)} style={{ padding: '3px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer' }}>拒绝全部修订</button>
+              </>
+            ) : null}
+          </div>
+          {(doc.comments ?? []).length ? (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, margin: '4px 0' }}>批注（{(doc.comments ?? []).length}）</div>
+              {(doc.comments ?? []).map((comment) => (
+                <div key={comment.id} style={{ border: '1px solid #ececec', borderRadius: 6, padding: 8, marginBottom: 6, background: comment.resolved ? '#f6f6f6' : '#fffdf5' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#666' }}>
+                    <span>{comment.author || '用户'}</span>
+                    <span>{comment.date ? comment.date.slice(0, 10) : ''}</span>
+                  </div>
+                  <div style={{ margin: '4px 0', whiteSpace: 'pre-wrap', color: comment.resolved ? '#999' : '#222', textDecoration: comment.resolved ? 'line-through' : undefined }}>{comment.text}</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {!readonly ? (
+                      <>
+                        <button type="button" onClick={() => toggleCommentResolved(comment.id)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer' }}>{comment.resolved ? '恢复' : '解决'}</button>
+                        <button type="button" onClick={() => deleteComment(comment.id)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer', color: '#c0392b' }}>删除</button>
+                      </>
+                    ) : null}
+                    <span style={{ color: '#bbb', alignSelf: 'center' }}>#{comment.id}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {reviewChanges.length ? (
+            <div>
+              <div style={{ fontWeight: 600, margin: '4px 0' }}>修订（{reviewChanges.length}）</div>
+              {reviewChanges.slice(0, 200).map((change, index) => (
+                <div key={`${change.paragraphId}:${change.runIndex}:${index}`} style={{ border: '1px solid #ececec', borderRadius: 6, padding: 8, marginBottom: 6, background: change.type === 'insert' ? '#f4fbf0' : '#fdf3f3' }}>
+                  <div style={{ color: '#666' }}>{change.type === 'insert' ? '插入' : '删除'}{change.author ? ` · ${change.author}` : ''}</div>
+                  <div style={{ margin: '4px 0', whiteSpace: 'pre-wrap' }}>{change.text || '（空）'}</div>
+                  {!readonly ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => decideRevision(change.paragraphId, change.runIndex, true)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer' }}>接受</button>
+                      <button type="button" onClick={() => decideRevision(change.paragraphId, change.runIndex, false)} style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid #d0d0d0', background: '#fff', cursor: 'pointer' }}>拒绝</button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {!(doc.comments ?? []).length && !reviewChanges.length ? <div style={{ color: '#999' }}>没有批注或修订</div> : null}
+        </div>
+      ) : null}
       {imageMenu ? (
         <ContextMenu
           x={imageMenu.x}
@@ -3467,7 +3653,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
           onClose={() => setImageMenu(null)}
         />
       ) : null}
-      {/* 功能：内容控件取值弹层——下拉/组合框列出候选，日期与文本用输入面板；时间：2026-10-30；作者：hou0。 */}
+      {/* 功能：内容控件取值弹层——下拉/组合框列出候选，日期与文本用输入面板；时间：2026-10-30。 */}
       {controlMenu && (controlMenu.kind === 'dropdown' || controlMenu.kind === 'comboBox') ? (
         <ContextMenu
           x={controlMenu.x}
@@ -3682,19 +3868,19 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
 
       {/* 功能：打印样式统一由打印模块注入，避免与页面级 @media print 规则互相覆盖；时间：2026-10-29；作者：lq。 */}
       <style>{`
-        /* 功能：整表拖柄悬停高亮，明确它是可点的按钮；时间：2026-10-30；作者：hou0。 */
+        /* 功能：整表拖柄悬停高亮，明确它是可点的按钮；时间：2026-10-30。 */
         [data-table-grab] { transition: background 120ms ease, border-color 120ms ease; }
         [data-table-grab]:hover { background: #eef3ff !important; border-color: #7d9be8 !important; color: #3f6fd8 !important; }
-        /* 功能：边缘加号平时隐藏，鼠标移到表格右/下边缘的悬停带才出现；键盘聚焦时也可见；时间：2026-10-30；作者：hou0。 */
+        /* 功能：边缘加号平时隐藏，鼠标移到表格右/下边缘的悬停带才出现；键盘聚焦时也可见；时间：2026-10-30。 */
         [data-table-add] { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
         [data-table-edge]:hover [data-table-add], [data-table-add]:focus-visible { opacity: 1; pointer-events: auto; }
-        /* 功能：整表拖柄悬停时高亮，点一下选中整表并弹出表格工具；时间：2026-10-30；作者：hou0。 */
+        /* 功能：整表拖柄悬停时高亮，点一下选中整表并弹出表格工具；时间：2026-10-30。 */
         [data-table-grab]:hover, [data-table-grab]:focus-visible { background: #eef3ff; border-color: #7f9fe8; color: #3f6fd8; }
         @media print {
           /* 功能：强制打印引擎保留段落高亮、表格底纹和文字背景色；时间：2026-10-25；作者：lq。 */
           *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           [data-table-resize] { display: none !important; }
-          /* 功能：整表拖柄与控件弹层不进入打印/导出；时间：2026-10-30；作者：hou0。 */
+          /* 功能：整表拖柄与控件弹层不进入打印/导出；时间：2026-10-30。 */
           [data-table-grab] { display: none !important; }
           [data-table-add], [data-table-edge] { display: none !important; }
           [data-control-popover] { display: none !important; }
@@ -3739,7 +3925,7 @@ function WordPageView({
   const margins = doc.page.margins;
   const contentWidth = Math.max(120, doc.page.widthPx - margins.left - margins.right);
   const columnCount = doc.page.columns ?? 1;
-  // 功能：页眉页脚变体——首页不同（w:titlePg）与奇偶页不同（w:evenAndOddHeaders）；时间：2026-10-31；作者：hou0。
+  // 功能：页眉页脚变体——首页不同（w:titlePg）与奇偶页不同（w:evenAndOddHeaders）；时间：2026-10-31。
   const sectionPage0 = page.sectionPage ?? 0;
   const headerVariant = doc.page.titlePage && sectionPage0 === 0 && doc.headerFirst
     ? doc.headerFirst
@@ -3781,7 +3967,7 @@ function WordPageView({
       />
     ) : null;
 
-  // 功能：栏内分配（分栏符优先、否则均衡均分）与栏宽固定轨道；时间：2026-10-30；作者：hou0。
+  // 功能：栏内分配（分栏符优先、否则均衡均分）与栏宽固定轨道；时间：2026-10-30。
   const renderColumns = (key: string, members: DocBlock[], group: ColumnGroup) => {
     const count = Math.max(1, group.count);
     const columns = distributeColumns(members, count);
@@ -3791,7 +3977,7 @@ function WordPageView({
           const chunk = columns[ci] ?? [];
           const width = group.widthsPx?.[ci] ?? contentWidth / count;
           const space = group.spacesPx?.[ci];
-          // 功能：本栏左缘的页面横坐标 = 左边距 + 前面各栏宽度与间距之和；供 VML 浮层换算段落内偏移；时间：2026-10-30；作者：hou0。
+          // 功能：本栏左缘的页面横坐标 = 左边距 + 前面各栏宽度与间距之和；供 VML 浮层换算段落内偏移；时间：2026-10-30。
           const columnLeft = margins.left + Array.from({ length: ci }, (_, index) => {
             const previousWidth = group.widthsPx?.[index] ?? contentWidth / count;
             return previousWidth + (group.spacesPx?.[index] ?? 0);
@@ -3813,7 +3999,7 @@ function WordPageView({
     );
   };
 
-  // 功能：按页内栏分组顺序渲染——单栏块照常堆叠，多栏分节块整体包进 flex 栏轨道；时间：2026-10-30；作者：hou0。
+  // 功能：按页内栏分组顺序渲染——单栏块照常堆叠，多栏分节块整体包进 flex 栏轨道；时间：2026-10-30。
   const contentNodes = (() => {
     const groups = page.columnGroups ?? [];
     if (groups.length === 0) {
@@ -3850,7 +4036,7 @@ function WordPageView({
     >
       <div
         data-word-page={index + 1}
-        // 功能：正文点击委托——勾选方框或打开内容控件；只拦截这两类目标，不影响正常选字；时间：2026-10-30；作者：hou0。
+        // 功能：正文点击委托——勾选方框或打开内容控件；只拦截这两类目标，不影响正常选字；时间：2026-10-30。
         onClick={(event) => handlers.onContentClick?.(event)}
         onDoubleClick={(event) => {
           // 功能：保留正文双击选词，仅在上下页边距打开设置；时间：2026-10-24；作者：lq。
@@ -3926,7 +4112,7 @@ function WordPageView({
   );
 }
 
-/** 功能：日期/文本内容控件的取值面板，点确定把值写回控件；时间：2026-10-30；作者：hou0。 */
+/** 功能：日期/文本内容控件的取值面板，点确定把值写回控件；时间：2026-10-30。 */
 function ControlValuePopover({
   x,
   y,

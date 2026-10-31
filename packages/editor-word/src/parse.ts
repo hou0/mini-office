@@ -1,5 +1,6 @@
 import {
   type DocBlock,
+  type DocComment,
   type DocImage,
   type DocModel,
   type DocParagraph,
@@ -118,9 +119,9 @@ interface ParseContext {
   blockCounter: number;
   hasTrackedChanges: boolean;
   hasContentControls: boolean;
-  /** 功能：文档级复杂域栈——TOC 等域的 begin/end 常跨段落，靠它串联；时间：2026-10-30；作者：hou0。 */
+  /** 功能：文档级复杂域栈——TOC 等域的 begin/end 常跨段落，靠它串联；时间：2026-10-30。 */
   fieldStack: FieldStackEntry[];
-  /** 功能：页眉页脚按内容去重缓存——重模板的 125 个部件往往只有十几种内容；时间：2026-10-31；作者：hou0。 */
+  /** 功能：页眉页脚按内容去重缓存——重模板的 125 个部件往往只有十几种内容；时间：2026-10-31。 */
   headerFooterCache?: Map<string, HeaderFooter>;
 }
 
@@ -190,7 +191,7 @@ function applyRunStyle(base: RunStyle, rPr: Element | null, ctx: ParseContext): 
   if (!rPr) return { ...base };
   const style: RunStyle = { ...base };
   const fonts = firstChild(rPr, 'w:rFonts');
-  // 功能：Word 中西文字体分槽（w:ascii / w:eastAsia），分别记录避免中文样式被西文覆盖；时间：2026-10-30；作者：hou0。
+  // 功能：Word 中西文字体分槽（w:ascii / w:eastAsia），分别记录避免中文样式被西文覆盖；时间：2026-10-30。
   const asciiFont =
     attrValue(fonts, 'w:ascii') ?? attrValue(fonts, 'w:hAnsi') ?? attrValue(fonts, 'w:cs');
   const eastAsiaAttr = attrValue(fonts, 'w:eastAsia');
@@ -265,7 +266,7 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
     const right = numericAttr(indent, 'w:right') ?? numericAttr(indent, 'w:end');
     const firstLine = numericAttr(indent, 'w:firstLine');
     const hanging = numericAttr(indent, 'w:hanging');
-    // 功能：WPS/中文模板常用字符单位缩进（leftChars/firstLineChars/hangingChars），按字号换算为 px，避免缩进丢失；时间：2026-10-30；作者：hou0。
+    // 功能：WPS/中文模板常用字符单位缩进（leftChars/firstLineChars/hangingChars），按字号换算为 px，避免缩进丢失；时间：2026-10-30。
     const charPx = (ctx.defaultSizePt ?? 10.5) * (96 / 72);
     const leftChars = numericAttr(indent, 'w:leftChars') ?? numericAttr(indent, 'w:startChars');
     const rightChars = numericAttr(indent, 'w:rightChars') ?? numericAttr(indent, 'w:endChars');
@@ -291,7 +292,7 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
       const val = attrValue(child, 'w:val');
       const kind: WordTabStop['kind'] =
         val === 'center' || val === 'right' || val === 'decimal' ? val : 'left';
-      // 功能：解析制表符前导符（dot/hyphen/underline…），供目录等场景渲染「标题…页码」；时间：2026-10-30；作者：hou0。
+      // 功能：解析制表符前导符（dot/hyphen/underline…），供目录等场景渲染「标题…页码」；时间：2026-10-30。
       const leader = attrValue(child, 'w:leader') as WordTabStop['leader'] | undefined;
       const tabStop: WordTabStop = { posPx: twipsToPx(pos), kind };
       if (leader) tabStop.leader = leader;
@@ -319,10 +320,10 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
   if (keepNext) style.keepNext = toggleValue(keepNext);
   const pageBreakBefore = firstChild(pPr, 'w:pageBreakBefore');
   if (pageBreakBefore) style.pageBreakBefore = toggleValue(pageBreakBefore);
-  // 功能：段落显式关闭「对齐到网格」时记下来，行高不再向上取整到 docGrid 行距；时间：2026-10-30；作者：hou0。
+  // 功能：段落显式关闭「对齐到网格」时记下来，行高不再向上取整到 docGrid 行距；时间：2026-10-30。
   const snapToGrid = firstChild(pPr, 'w:snapToGrid');
   if (snapToGrid && !toggleValue(snapToGrid)) style.snapToGrid = false;
-  // 功能：段落显式关闭孤寡控制时记下来（Word 默认开启）；时间：2026-10-31；作者：hou0。
+  // 功能：段落显式关闭孤寡控制时记下来（Word 默认开启）；时间：2026-10-31。
   const widowControl = firstChild(pPr, 'w:widowControl');
   if (widowControl && !toggleValue(widowControl)) style.widowControl = false;
   const outline = numericAttr(firstChild(pPr, 'w:outlineLvl'), 'w:val');
@@ -697,7 +698,7 @@ function vmlStyleSize(style: string | undefined): { width: number; height: numbe
   return { width: convert(width), height: convert(height) };
 }
 
-/** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；支持负值 margin；时间：2026-10-30；作者：hou0。 */
+/** 功能：解析 VML rect 的绝对定位信息（margin-left/margin-top/width/height），单位 CSS px；支持负值 margin；时间：2026-10-30。 */
 function parseVmlRectStyle(style: string): { left: number; top: number; width: number; height: number; xRelative: 'page' | 'text' } | undefined {
   const position = /(?:^|;)\s*position\s*:\s*absolute/i.test(style);
   if (!position) return undefined;
@@ -719,7 +720,7 @@ function parseVmlRectStyle(style: string): { left: number; top: number; width: n
         return value;
     }
   };
-  // 功能：mso-position-horizontal-relative:page 表示横坐标相对页面左缘，缺省相对内容区左缘；时间：2026-10-30；作者：hou0。
+  // 功能：mso-position-horizontal-relative:page 表示横坐标相对页面左缘，缺省相对内容区左缘；时间：2026-10-30。
   const horizontalRelative = /mso-position-horizontal-relative\s*:\s*([a-z]+)/i.exec(style)?.[1]?.toLowerCase();
   return {
     left: convert(left),
@@ -731,7 +732,7 @@ function parseVmlRectStyle(style: string): { left: number; top: number; width: n
 }
 
 async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun[]> {
-  // 功能：DrawingML 文本框（wps:txbx）——提取内容段落与锚定几何，只读渲染；时间：2026-10-31；作者：hou0。
+  // 功能：DrawingML 文本框（wps:txbx）——提取内容段落与锚定几何，只读渲染；时间：2026-10-31。
   const txbx = firstDescendant(drawing, 'wps:txbx') ?? firstDescendant(drawing, 'w:txbxContent');
   if (txbx || firstDescendant(drawing, 'w:txbxContent')) {
     const content = firstDescendant(drawing, 'w:txbxContent');
@@ -743,7 +744,7 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
       const positionH = firstDescendant(drawing, 'wp:positionH');
       const positionV = firstDescendant(drawing, 'wp:positionV');
       const hRelative = attrValue(positionH, 'relativeFrom');
-      // 功能：wp:posOffset 的偏移是元素文本（EMU），不是属性；时间：2026-10-31；作者：hou0。
+      // 功能：wp:posOffset 的偏移是元素文本（EMU），不是属性；时间：2026-10-31。
       const leftEmu = numericAttr(positionH, 'x') ?? (Number.parseInt(elementText(firstDescendant(positionH ?? null, 'wp:posOffset')) || '0', 10) || 0);
       const topEmu = numericAttr(positionV, 'y') ?? (Number.parseInt(elementText(firstDescendant(positionV ?? null, 'wp:posOffset')) || '0', 10) || 0);
       return [{
@@ -794,7 +795,7 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
 
 /**
  * 功能：从 w:sdtPr 读出内容控件语义——复选框勾选状态、下拉/组合框候选、日期格式与别名；
- * 未识别的控件按普通文本处理；时间：2026-10-30；作者：hou0。
+ * 未识别的控件按普通文本处理；时间：2026-10-30。
  */
 function parseSdtControl(sdt: Element): RunControl | undefined {
   const pr = firstChild(sdt, 'w:sdtPr');
@@ -808,7 +809,7 @@ function parseSdtControl(sdt: Element): RunControl | undefined {
     ...(tag ? { tag } : {}),
     ...(locked ? { locked } : {}),
   };
-  // 功能：复选框控件（w14:checkbox）读取 w14:checked；时间：2026-10-30；作者：hou0。
+  // 功能：复选框控件（w14:checkbox）读取 w14:checked；时间：2026-10-30。
   const checkbox = firstDescendant(pr, 'checkbox') ?? firstChild(pr, 'w:checkBox');
   if (checkbox) {
     const checkedNode =
@@ -842,7 +843,7 @@ function parseSdtControl(sdt: Element): RunControl | undefined {
   return base;
 }
 
-/** 功能：VML 方框内是否已画勾（v:textbox 内的 ✓），用于恢复勾选状态；时间：2026-10-30；作者：hou0。 */
+/** 功能：VML 方框内是否已画勾（v:textbox 内的 ✓），用于恢复勾选状态；时间：2026-10-30。 */
 function vmlRectChecked(rect: Element): boolean {
   const textbox = firstDescendant(rect, 'v:textbox');
   if (!textbox) return false;
@@ -852,7 +853,7 @@ function vmlRectChecked(rect: Element): boolean {
 
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
   // 功能：VML 文本框（v:shape 或无定位的 v:rect 内嵌 v:textbox）——解析内容与几何，只读渲染；
-  // 带定位的 v:rect 是复选框语义（勾选态存在 v:textbox 里），走下方 vmlRect 分支；时间：2026-10-31；作者：hou0。
+  // 带定位的 v:rect 是复选框语义（勾选态存在 v:textbox 里），走下方 vmlRect 分支；时间：2026-10-31。
   const rectForTextbox = firstDescendant(pict, 'v:rect');
   const rectIsCheckbox = rectForTextbox ? !!parseVmlRectStyle(attrValue(rectForTextbox, 'style') ?? '') : false;
   const textShape = firstDescendant(pict, 'v:shape');
@@ -878,7 +879,7 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
       }];
     }
   }
-  // 功能：VML 复选框（v:rect）按定位信息渲染；时间：2026-10-30；作者：hou0。
+  // 功能：VML 复选框（v:rect）按定位信息渲染；时间：2026-10-30。
   const rect = firstDescendant(pict, 'v:rect');
   if (rect) {
     const style = attrValue(rect, 'style') ?? '';
@@ -900,7 +901,7 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
             strokeColor: strokeColor && /^#?[0-9a-fA-F]{6}$/.test(strokeColor)
               ? `#${strokeColor.replace('#', '').toUpperCase()}`
               : undefined,
-            // 功能：描边粗细按 strokeweight 换算 px（pt→px 乘 4/3），缺省 0.72pt；时间：2026-10-30；作者：hou0。
+            // 功能：描边粗细按 strokeweight 换算 px（pt→px 乘 4/3），缺省 0.72pt；时间：2026-10-30。
             strokeWidthPx: strokeWeight
               ? Number(strokeWeight[1]) * (strokeWeight[2].toLowerCase() === 'pt' ? 4 / 3 : 1)
               : 1,
@@ -935,28 +936,34 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
 }
 
 interface ParseInlineState {
-  /** 功能：文档级复杂域栈，跨段落串联 TOC 等域的 begin/end；时间：2026-10-30；作者：hou0。 */
+  /** 功能：文档级复杂域栈，跨段落串联 TOC 等域的 begin/end；时间：2026-10-30。 */
   fieldStack: FieldStackEntry[];
-  /** 功能：本段落已产出的 run 数，用于把域标记定位到段内位置；时间：2026-10-30；作者：hou0。 */
+  /** 功能：本段落已产出的 run 数，用于把域标记定位到段内位置；时间：2026-10-30。 */
   runCount?: number;
-  /** 功能：本段落的域字符标记，保存时写回 fldChar/instrText；时间：2026-10-30；作者：hou0。 */
+  /** 功能：本段落的域字符标记，保存时写回 fldChar/instrText；时间：2026-10-30。 */
   markers?: FieldMarker[];
-  /** 功能：累积本段落内出现的书签名（w:bookmarkStart），解析完挂到 DocParagraph.bookmarks；时间：2026-10-30；作者：hou0。 */
+  /** 功能：累积本段落内出现的书签名（w:bookmarkStart），解析完挂到 DocParagraph.bookmarks；时间：2026-10-30。 */
   bookmarks?: string[];
+  /** 功能：当前打开的批注范围 id（w:commentRangeStart/End 之间）；时间：2026-10-31。 */
+  activeComments?: Set<string>;
+  /** 功能：是否处于 w:del 删除修订内（run 标记为删除）；时间：2026-10-31。 */
+  deletedRevision?: { author?: string; date?: string } | null;
+  /** 功能：是否处于 w:ins 插入修订内；时间：2026-10-31。 */
+  insertedRevision?: { author?: string; date?: string } | null;
 }
 
-/** 功能：文档级复杂域的栈项，记录指令文本与已登记的域标记；时间：2026-10-30；作者：hou0。 */
+/** 功能：文档级复杂域的栈项，记录指令文本与已登记的域标记；时间：2026-10-30。 */
 interface FieldStackEntry {
   instr: string;
   phase: 'instr' | 'result';
   mergeEmitted?: boolean;
-  /** 功能：begin 标记对象——指令文本在 separate/end 时才完整，届时回填；时间：2026-10-30；作者：hou0。 */
+  /** 功能：begin 标记对象——指令文本在 separate/end 时才完整，届时回填；时间：2026-10-30。 */
   beginMarker?: FieldMarker;
-  /** 功能：本域已登记的标记（begin/separate），命中自表达域时整体跳过写回；时间：2026-10-30；作者：hou0。 */
+  /** 功能：本域已登记的标记（begin/separate），命中自表达域时整体跳过写回；时间：2026-10-30。 */
   markers?: FieldMarker[];
 }
 
-/** 功能：判断域指令是否已由 fldSimple 自表达（合并域、页码域），这类域不再写回复杂域结构；时间：2026-10-30；作者：hou0。 */
+/** 功能：判断域指令是否已由 fldSimple 自表达（合并域、页码域），这类域不再写回复杂域结构；时间：2026-10-30。 */
 function isSelfExpressedField(instr: string): boolean {
   if (parseMergeField(instr) || parseMergeDirective(instr)) return true;
   return /\bPAGE\b/i.test(instr) || /\bNUMPAGES\b/i.test(instr) || /\bSECTIONPAGES\b/i.test(instr);
@@ -1044,6 +1051,11 @@ async function parseRunElement(
       case 'tab':
         runs.push({ text: '', style, tab: true });
         break;
+      case 'delText': {
+        const delText = child.textContent ?? '';
+        if (delText) runs.push({ text: delText, style, revision: { type: 'delete', ...(state.deletedRevision?.author ? { author: state.deletedRevision.author } : {}), ...(state.deletedRevision?.date ? { date: state.deletedRevision.date } : {}) } });
+        break;
+      }
       case 'br': {
         const type = attrValue(child, 'w:type');
         // 功能：分页符强制断页、分栏符切到下一栏，其余按普通换行；时间：2026-10-30；作者：lq。
@@ -1082,7 +1094,7 @@ async function parseRunElement(
         break;
       }
       case 'AlternateContent': {
-        // 功能：mc:AlternateContent——优先 mc:Choice 的现代绘图（drawing/pict），无产出时回退 mc:Fallback；时间：2026-10-31；作者：hou0。
+        // 功能：mc:AlternateContent——优先 mc:Choice 的现代绘图（drawing/pict），无产出时回退 mc:Fallback；时间：2026-10-31。
         const parseBranch = async (branch: Element | null): Promise<DocRun[]> => {
           const produced: DocRun[] = [];
           for (const sub of Array.from(branch?.childNodes ?? [])) {
@@ -1103,7 +1115,7 @@ async function parseRunElement(
       case 'fldChar': {
         const type = attrValue(child, 'w:fldCharType');
         if (type === 'begin') {
-          // 功能：登记复杂域的 begin 标记，保存时写回 fldChar+instrText，避免目录等域退化成死文本；时间：2026-10-30；作者：hou0。
+          // 功能：登记复杂域的 begin 标记，保存时写回 fldChar+instrText，避免目录等域退化成死文本；时间：2026-10-30。
           const marker: FieldMarker = { role: 'begin', afterRun: state.runCount ?? 0 };
           state.fieldStack.push({ instr: '', phase: 'instr', beginMarker: marker, markers: [marker] });
           state.markers?.push(marker);
@@ -1134,7 +1146,7 @@ async function parseRunElement(
                 pushControlFieldRun(runs, directive, style);
               }
             }
-            // 功能：合并域/页码域由 fldSimple 自表达，复杂域结构不再写回以免重复；时间：2026-10-30；作者：hou0。
+            // 功能：合并域/页码域由 fldSimple 自表达，复杂域结构不再写回以免重复；时间：2026-10-30。
             if (isSelfExpressedField(field.instr)) {
               for (const marker of field.markers ?? []) marker.skip = true;
             } else if (field.beginMarker) {
@@ -1159,6 +1171,13 @@ async function parseRunElement(
         break;
     }
   }
+  // 功能：把当前打开的批注范围与修订标记附加到本 run 的所有产出；时间：2026-10-31。
+  for (const run of runs) {
+    if (state.activeComments?.size) run.commentIds = [...state.activeComments];
+    if (state.insertedRevision) run.revision = { type: 'insert', ...(state.insertedRevision.author ? { author: state.insertedRevision.author } : {}), ...(state.insertedRevision.date ? { date: state.insertedRevision.date } : {}) };
+    else if (state.deletedRevision) run.revision = { type: 'delete', ...(state.deletedRevision.author ? { author: state.deletedRevision.author } : {}), ...(state.deletedRevision.date ? { date: state.deletedRevision.date } : {}) };
+  }
+
   return runs;
 }
 
@@ -1174,13 +1193,13 @@ async function parseInlineChildren(
     switch (localName(child)) {
       case 'r': {
         const produced = await parseRunElement(child, base, ctx, state);
-        // 功能：累计本段已产出的 run 数，供域标记定位插入位置；时间：2026-10-30；作者：hou0。
+        // 功能：累计本段已产出的 run 数，供域标记定位插入位置；时间：2026-10-30。
         state.runCount = (state.runCount ?? 0) + produced.length;
         runs.push(...produced);
         break;
       }
       case 'hyperlink': {
-        // 功能：保留目录项等内部书签链接（w:anchor），供编辑区点击跳转到目标标题；时间：2026-10-30；作者：hou0。
+        // 功能：保留目录项等内部书签链接（w:anchor），供编辑区点击跳转到目标标题；时间：2026-10-30。
         const anchor = attrValue(child, 'w:anchor');
         const inner = await parseInlineChildren(child, base, ctx, state);
         if (anchor) for (const run of inner) run.anchor = anchor;
@@ -1193,10 +1212,19 @@ async function parseInlineChildren(
       case 'sdt': {
         const container =
           localName(child) === 'sdt' ? firstChild(child, 'w:sdtContent') ?? child : child;
-        if (localName(child) === 'ins') ctx.hasTrackedChanges = true;
+        if (localName(child) === 'ins') {
+          ctx.hasTrackedChanges = true;
+          // 功能：插入修订——产出 run 带 insert 标记（审阅窗格可接受/拒绝）；时间：2026-10-31。
+          const prevInserted = state.insertedRevision;
+          state.insertedRevision = { author: getAttr(child, 'w:author') ?? undefined, date: getAttr(child, 'w:date') ?? undefined };
+          const inner = await parseInlineChildren(container, base, ctx, state);
+          state.insertedRevision = prevInserted ?? null;
+          runs.push(...inner);
+          break;
+        }
         if (localName(child) === 'sdt') ctx.hasContentControls = true;
         const inner = await parseInlineChildren(container, base, ctx, state);
-        // 功能：内联内容控件保留控件语义（复选框/下拉/日期），空内容标记为占位待填；时间：2026-10-30；作者：hou0。
+        // 功能：内联内容控件保留控件语义（复选框/下拉/日期），空内容标记为占位待填；时间：2026-10-30。
         const control = localName(child) === 'sdt' ? parseSdtControl(child) : undefined;
         if (control) {
           const text = inner.map((run) => run.text ?? '').join('');
@@ -1241,20 +1269,38 @@ async function parseInlineChildren(
         }
         break;
       }
-      case 'del':
-        ctx.hasTrackedChanges = true;
-        break;
       case 'bookmarkStart': {
-        // 功能：记录书签名（w:name），供目录项 anchor 跳转定位到该段落；时间：2026-10-30；作者：hou0。
+        // 功能：记录书签名（w:name），供目录项 anchor 跳转定位到该段落；时间：2026-10-30。
         const name = attrValue(child, 'w:name');
         if (name) (state.bookmarks ??= []).push(name);
         break;
       }
       case 'bookmarkEnd':
-      case 'commentRangeStart':
-      case 'commentRangeEnd':
       case 'proofErr':
         break;
+      case 'commentRangeStart': {
+        // 功能：打开批注范围，后续 run 携带批注 id；时间：2026-10-31。
+        const cid = attrValue(child, 'w:id');
+        if (cid) (state.activeComments ??= new Set()).add(cid);
+        break;
+      }
+      case 'commentRangeEnd': {
+        const cidEnd = attrValue(child, 'w:id');
+        if (cidEnd) state.activeComments?.delete(cidEnd);
+        break;
+      }
+      case 'commentReference':
+        break;
+      case 'del': {
+        // 功能：删除修订——delText 保留为带 delete 标记的 run（审阅可拒绝以恢复）；时间：2026-10-31。
+        ctx.hasTrackedChanges = true;
+        const prevDeleted = state.deletedRevision;
+        state.deletedRevision = { author: getAttr(child, 'w:author') ?? undefined, date: getAttr(child, 'w:date') ?? undefined };
+        const inner = await parseInlineChildren(child, base, ctx, state);
+        state.deletedRevision = prevDeleted ?? null;
+        runs.push(...inner);
+        break;
+      }
       case 'br': {
         // 功能：分页符强制断页、分栏符切到下一栏，其余按普通换行；时间：2026-10-30；作者：lq。
         const brType = getAttr(child, 'w:type');
@@ -1288,7 +1334,7 @@ async function parseParagraph(
     para: ctx.styles.docDefaults.para,
   };
   let paragraphStyle = applyParagraphStyle(mergeParagraph(styleBase.para, baseStyle?.para), pPr, ctx);
-  // 功能：文档自带 TOC 样式若缺少制表位，回退到内置默认（右对齐+点前导符）；时间：2026-10-30；作者：hou0。
+  // 功能：文档自带 TOC 样式若缺少制表位，回退到内置默认（右对齐+点前导符）；时间：2026-10-30。
   if (styleId && /^TOC\s*\d+$/i.test(styleId) && !paragraphStyle.tabStops?.length) {
     const level = parseInt(styleId.replace(/[^\d]/g, ''), 10);
     if (level >= 1 && level <= 9) {
@@ -1329,7 +1375,7 @@ async function parseParagraph(
   const lastRun = runs[runs.length - 1];
   const pageBreakAfter = lastRun?.pageBreak === true;
   if (pageBreakAfter) runs = runs.slice(0, -1);
-  // 功能：段首分栏符提升为段落属性，多栏节渲染时据此切栏；时间：2026-10-30；作者：hou0。
+  // 功能：段首分栏符提升为段落属性，多栏节渲染时据此切栏；时间：2026-10-30。
   const leadingColumnBreak = runs[0]?.columnBreak === true;
   if (leadingColumnBreak) {
     runs = runs.slice(1);
@@ -1337,7 +1383,7 @@ async function parseParagraph(
   }
   if (runs.length === 0) runs = [{ text: '', style: runBase }];
   // 功能：逐字母模式合并——空格 run 带负 letterSpacing，合并到前一字母 run，去掉可见空格；
-  // 时间：2026-10-30；作者：hou0。
+  // 时间：2026-10-30。
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i];
     const prev = runs[i - 1];
@@ -1368,14 +1414,14 @@ async function parseParagraph(
     list,
     styleId,
     bookmarks: state.bookmarks?.length ? [...state.bookmarks] : undefined,
-    // 功能：保留本段落内的域字符标记，保存时写回复杂域结构（目录等）；时间：2026-10-30；作者：hou0。
+    // 功能：保留本段落内的域字符标记，保存时写回复杂域结构（目录等）；时间：2026-10-30。
     fieldMarkers: state.markers?.length ? state.markers : undefined,
   };
   // 功能：保留段尾分节以及各节独立的页眉页脚与编号；时间：2026-10-24；作者：lq。
   const section = firstChild(pPr, 'w:sectPr');
   if (section) {
     const page = parsePageSetup(section, ctx);
-    // 功能：解析首页/奇偶页页眉页脚变体（仅当分节引用了对应类型）；时间：2026-10-31；作者：hou0。
+    // 功能：解析首页/奇偶页页眉页脚变体（仅当分节引用了对应类型）；时间：2026-10-31。
     const hasVariant = (kind: string, variant: string): boolean =>
       Array.from(section.childNodes).some(
         (node) => node instanceof Element && localName(node) === `${kind}Reference` && attrValue(node, 'w:type') === variant,
@@ -1583,10 +1629,10 @@ async function parseBlockContainer(element: Element, ctx: ParseContext): Promise
         const content = firstChild(child, 'w:sdtContent');
         if (!content) break;
         const inner = await parseBlockContainer(content, ctx);
-        // 功能：块级内容控件只包一段时挂到该段上，渲染成可交互控件；时间：2026-10-30；作者：hou0。
+        // 功能：块级内容控件只包一段时挂到该段上，渲染成可交互控件；时间：2026-10-30。
         const control = parseSdtControl(child);
         if (control && inner.length === 1 && inner[0].type === 'paragraph') {
-          // 功能：块级控件挂到该段首个 run 上，渲染与写回和行内控件走同一条路径；时间：2026-10-30；作者：hou0。
+          // 功能：块级控件挂到该段首个 run 上，渲染与写回和行内控件走同一条路径；时间：2026-10-30。
           const paragraph = inner[0];
           const runs = paragraph.runs.length ? paragraph.runs : [{ text: '', style: {} }];
           runs[0] = { ...runs[0], control };
@@ -1641,14 +1687,14 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
       (Math.abs(size.w - heightTwips) < 80 && Math.abs(size.h - widthTwips) < 80),
   );
   const columns = numericAttr(firstChild(sectPr, 'w:cols'), 'w:num');
-  // 功能：解析节分隔类型，continuous 表示同页继续，nextPage 强制新页；时间：2026-10-30；作者：hou0。
+  // 功能：解析节分隔类型，continuous 表示同页继续，nextPage 强制新页；时间：2026-10-30。
   const sectType = attrValue(firstChild(sectPr, 'w:type'), 'w:val');
-  // 功能：解析文档网格行距 w:docGrid w:linePitch（twips），段落行高按此网格对齐；时间：2026-10-30；作者：hou0。
+  // 功能：解析文档网格行距 w:docGrid w:linePitch（twips），段落行高按此网格对齐；时间：2026-10-30。
   const docGrid = firstChild(sectPr, 'w:docGrid');
   const linePitchTwips = docGrid ? numericAttr(docGrid, 'w:linePitch') : undefined;
-  // 功能：首页页眉页脚不同（w:titlePg）；时间：2026-10-31；作者：hou0。
+  // 功能：首页页眉页脚不同（w:titlePg）；时间：2026-10-31。
   const titlePage = firstChild(sectPr, 'w:titlePg') ? true : undefined;
-  // 功能：解析每栏宽度与间距，支持不等宽多栏版式；时间：2026-10-30；作者：hou0。
+  // 功能：解析每栏宽度与间距，支持不等宽多栏版式；时间：2026-10-30。
   const colsElement = firstChild(sectPr, 'w:cols');
   const columnEqualWidth = colsElement ? attrValue(colsElement, 'w:equalWidth') === 'true' : undefined;
   const colWidthsPx: number[] = [];
@@ -1683,7 +1729,7 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
 }
 
 /**
- * 功能：FNV-1a 字符串哈希——页眉页脚内容去重的缓存键；时间：2026-10-31；作者：hou0。
+ * 功能：FNV-1a 字符串哈希——页眉页脚内容去重的缓存键；时间：2026-10-31。
  */
 function hashXml(xml: string): string {
   let hash = 0x811c9dc5;
@@ -1694,7 +1740,7 @@ function hashXml(xml: string): string {
   return `${(hash >>> 0).toString(36)}-${xml.length}`;
 }
 
-/** 功能：深克隆块数组并重新生成所有 id（段落/表格/行/单元格/图片），保证模型内 id 唯一；时间：2026-10-31；作者：hou0。 */
+/** 功能：深克隆块数组并重新生成所有 id（段落/表格/行/单元格/图片），保证模型内 id 唯一；时间：2026-10-31。 */
 function cloneBlocksWithFreshIds(blocks: DocBlock[]): DocBlock[] {
   return blocks.map((block) => cloneBlockWithFreshIds(block));
 }
@@ -1723,12 +1769,63 @@ function cloneBlockWithFreshIds(block: DocBlock): DocBlock {
   return { ...block, id: uid('break') };
 }
 
+/**
+ * 功能：解析 word/comments.xml 批注列表——id/作者/日期/正文聚合；时间：2026-10-31。
+ */
+async function parseComments(pkg: OoxmlPackage, rels: Map<string, Relationship>): Promise<DocComment[] | undefined> {
+  const rel = rels.get('comments-part') ?? [...rels.values()].find((item) => item.type.endsWith('/comments'));
+  if (!rel?.resolved) return undefined;
+  try {
+    const xml = await pkg.text(rel.resolved);
+    if (!xml.trim()) return undefined;
+    const doc = parseXmlDom(xml);
+    const comments: DocComment[] = [];
+    for (const node of Array.from(doc.getElementsByTagName('w:comment'))) {
+      const id = node.getAttribute('w:id');
+      if (id === null || id === undefined || id === '') continue;
+      const blocks = await parseBlockContainer(node, {
+        pkg,
+        rels,
+        styles: { docDefaults: { run: {}, para: {} }, styles: new Map(), names: new Map(), types: new Map() },
+        numbering: new Map(),
+        counters: new Map(),
+        themeColors: {},
+        themeFonts: { major: '', minor: '' },
+        defaultFont: '',
+        defaultSizePt: 10.5,
+        imageUrls: new Map(),
+        usedImages: new Map(),
+        pageWidthPx: 794,
+        blockCounter: 0,
+        hasTrackedChanges: false,
+        hasContentControls: false,
+        fieldStack: [],
+      });
+      const text = blocks
+        .map((block) => (block.type === 'paragraph' ? block.runs.map((run) => run.text ?? '').join('') : ''))
+        .join('\n')
+        .trim();
+      comments.push({
+        id,
+        author: node.getAttribute('w:author') ?? '',
+        ...(node.getAttribute('w:date') ? { date: node.getAttribute('w:date') as string } : {}),
+        ...(node.getAttribute('w:resolved') === '1' ? { resolved: true } : {}),
+        text,
+        ...(blocks.length ? { blocks } : {}),
+      });
+    }
+    return comments.length ? comments : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function parseHeaderFooter(
   sectPr: Element | null,
   ctx: ParseContext,
   kind: 'header' | 'footer',
   distancePx: number,
-  /** 功能：引用变体——default/first/even（首页与奇偶页页眉页脚）；时间：2026-10-31；作者：hou0。 */
+  /** 功能：引用变体——default/first/even（首页与奇偶页页眉页脚）；时间：2026-10-31。 */
   variant: 'default' | 'first' | 'even' = 'default',
 ): Promise<HeaderFooter | undefined> {
   if (!sectPr) return undefined;
@@ -1746,7 +1843,7 @@ async function parseHeaderFooter(
   const rel = ctx.rels.get(relId);
   if (!rel?.resolved) return undefined;
   const xml = await ctx.pkg.text(rel.resolved);
-  // 功能：相同内容的页眉页脚只解析一次，使用时克隆并重新分配 id；时间：2026-10-31；作者：hou0。
+  // 功能：相同内容的页眉页脚只解析一次，使用时克隆并重新分配 id；时间：2026-10-31。
   const cacheKey = `${kind}:${hashXml(xml)}`;
   const cached = ctx.headerFooterCache?.get(cacheKey);
   if (cached) {
@@ -1843,7 +1940,11 @@ export async function parseDocxPackage(
     'footer',
     page.margins.footer,
   );
-  // 功能：文档级 sectPr 的首页/奇偶页页眉页脚变体（正文段无 sectPr 时唯一入口）；时间：2026-10-31；作者：hou0。
+  // 功能：批注列表（word/comments.xml）；时间：2026-10-31。
+  const commentsPart = [...provisional.rels.entries()].find(([, item]) => item.type.endsWith('/comments'));
+  const comments = commentsPart ? await parseComments(pkg, provisional.rels) : undefined;
+
+  // 功能：文档级 sectPr 的首页/奇偶页页眉页脚变体（正文段无 sectPr 时唯一入口）；时间：2026-10-31。
   const hasDocVariant = (kind: 'header' | 'footer', variant: string): boolean => {
     const sect = sectionForPart(kind);
     return !!sect && Array.from(sect.childNodes).some(
@@ -1900,11 +2001,11 @@ export async function parseDocxPackage(
           break;
         }
       }
-      // 功能：默认制表位（w:defaultTabStop，twips），无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30；作者：hou0。
+      // 功能：默认制表位（w:defaultTabStop，twips），无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30。
       const tabStop = settingsDocument.getElementsByTagName('w:defaultTabStop')[0];
       const tabStopTwips = tabStop ? numericAttr(tabStop, 'w:val') : undefined;
       if (tabStopTwips && tabStopTwips > 0) defaultTabStopPx = twipsToPx(tabStopTwips);
-      // 功能：奇偶页页眉页脚不同（w:evenAndOddHeaders）；时间：2026-10-31；作者：hou0。
+      // 功能：奇偶页页眉页脚不同（w:evenAndOddHeaders）；时间：2026-10-31。
       if (settingsDocument.getElementsByTagName('w:evenAndOddHeaders').length > 0) evenAndOddHeaders = true;
     } catch {
       // 忽略读取失败，不影响正文解析
@@ -1934,6 +2035,7 @@ export async function parseDocxPackage(
     ...(headerEven ? { headerEven } : {}),
     ...(footerFirst ? { footerFirst } : {}),
     ...(footerEven ? { footerEven } : {}),
+    ...(comments ? { comments } : {}),
   };
 }
 
