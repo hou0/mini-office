@@ -201,6 +201,20 @@ export function renderRunsHtml(runs: DocRun[], context: RunRenderContext = {}): 
   };
 
   for (const [runIndex, run] of runs.entries()) {
+    if (run.textbox) {
+      // 功能：文本框只读渲染——段落锚定的绝对定位容器，内容用正文渲染器；时间：2026-10-31；作者：hou0。
+      flushPending();
+      flushBuf();
+      const box = run.textbox;
+      const columnLeft = context.vmlColumnLeftPx ?? 0;
+      const indent = context.vmlIndentLeftPx ?? 0;
+      const left = (box.xRelative === 'page' ? box.left - columnLeft : box.left) - indent;
+      const inner = box.blocks
+        .map((block) => (block.type === 'paragraph' ? `<div data-textbox-block>${renderParagraphHtml(block, context)}</div>` : ''))
+        .join('');
+      parts.push(`<span data-textbox="1" data-textbox-left="${box.left}" data-textbox-top="${box.top}" data-textbox-width="${box.width}" data-textbox-height="${box.height}" data-textbox-xrel="${box.xRelative ?? 'text'}" contenteditable="false" aria-hidden="true" style="position:absolute;left:${left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;box-sizing:border-box;background:#ffffff;overflow:hidden;text-align:left;line-height:normal;">${inner}</span>`);
+      continue;
+    }
     if (run.control) {
       // 功能：控件 chip 作为整体渲染，不并入文本缓冲；时间：2026-10-30；作者：hou0。
       flushPending();

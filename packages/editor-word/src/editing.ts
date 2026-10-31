@@ -1,5 +1,6 @@
-import type { DocImage, DocParagraph, DocRun, RunStyle } from '@mini-office/document-model';
+import type { DocBlock, DocImage, DocParagraph, DocRun, RunStyle } from '@mini-office/document-model';
 import { FONT_CHOICES, fontStackFor } from '@mini-office/design-system';
+import { uid } from '@mini-office/shared';
 
 const NAMED_COLORS: Record<string, string> = {
   black: '#000000',
@@ -227,6 +228,33 @@ export function serializeDomRuns(
           },
           strokeColor: node.getAttribute('data-vml-stroke') ?? undefined,
           strokeWidthPx: number('data-vml-stroke-width', 1),
+        },
+      });
+      return;
+    }
+    // 功能：文本框在编辑回读时还原为带 textbox 的 run，内层段落按块重建；时间：2026-10-31；作者：hou0。
+    if (node.hasAttribute('data-textbox')) {
+      const number = (name: string): number => {
+        const value = Number(node.getAttribute(name));
+        return Number.isFinite(value) && value !== 0 ? value : 0;
+      };
+      const width = number('data-textbox-width') || 100;
+      const height = number('data-textbox-height') || 60;
+      const blocks: DocBlock[] = Array.from(node.querySelectorAll('[data-textbox-block]')).map((blockEl) => {
+        const inner = blockEl as HTMLElement;
+        const runs = serializeDomRuns(inner, style, imagesById);
+        return { type: 'paragraph' as const, id: uid('p'), runs, style: {} };
+      });
+      runs.push({
+        text: '',
+        style: { ...style },
+        textbox: {
+          left: number('data-textbox-left'),
+          top: number('data-textbox-top'),
+          width,
+          height,
+          xRelative: node.getAttribute('data-textbox-xrel') === 'page' ? 'page' as const : 'text' as const,
+          blocks,
         },
       });
       return;

@@ -91,6 +91,8 @@ export function paginateDocument(
   const pages: PageSlice[] = [];
   let nextNumber = 1;
   for (const section of sections) {
+    // 功能：documentSections 展开的节携带首页/奇偶页页眉页脚变体；时间：2026-10-31；作者：hou0。
+    const sectionVariants = section as DocModel & DocSection;
     const metrics = pageMetrics(section.page);
     // 功能：连续分节不翻页——把本节内容装进上一页的剩余空间，装不下的部分才另起新页；
     // 同一页内出现多栏分节时按分节记录栏分组，标题（单栏）与三栏段各自排版；时间：2026-10-30；作者：hou0。
@@ -124,7 +126,7 @@ export function paginateDocument(
         pages.push({
           ...slice,
           index: pages.length,
-          section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer },
+          section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer, headerFirst: sectionVariants.headerFirst, headerEven: sectionVariants.headerEven, footerFirst: sectionVariants.footerFirst, footerEven: sectionVariants.footerEven },
           sectionPage: (previous?.sectionPage ?? 0) + offset + 1,
           sectionTotal: (previous?.sectionTotal ?? 0) + rest.length,
         });
@@ -135,7 +137,7 @@ export function paginateDocument(
     }
     const slices = paginateBlocks(section.blocks, heights, metrics.contentHeight, tables, breaker);
     const start = section.page.pageNumberStart ?? nextNumber;
-    slices.forEach((slice, index) => pages.push({ ...slice, index: pages.length, section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer }, sectionPage: index, sectionTotal: slices.length }));
+    slices.forEach((slice, index) => pages.push({ ...slice, index: pages.length, section: { page: { ...section.page, pageNumberStart: start }, header: section.header, footer: section.footer, headerFirst: sectionVariants.headerFirst, headerEven: sectionVariants.headerEven, footerFirst: sectionVariants.footerFirst, footerEven: sectionVariants.footerEven }, sectionPage: index, sectionTotal: slices.length }));
     nextNumber = start + slices.length;
   }
   return pages;

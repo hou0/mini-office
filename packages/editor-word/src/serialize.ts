@@ -14,6 +14,7 @@ import {
   type RunStyle,
   type TableBorderSide,
   type TableBorders,
+  type HeaderFooter,
 } from '@mini-office/document-model';
 import {
   escapeXml,
@@ -393,6 +394,22 @@ function sdtPrXml(control: NonNullable<DocRun['control']>): string {
 }
 
 async function runXml(run: DocRun, state: SerializeState): Promise<string> {
+  // 功能：文本框写回为 VML v:shape + v:textbox，Word/WPS 打开仍是文本框；时间：2026-10-31；作者：hou0。
+  if (run.textbox) {
+    const box = run.textbox;
+    const style = [
+      'position:absolute',
+      `margin-left:${(box.left * 0.75).toFixed(2)}pt`,
+      `margin-top:${(box.top * 0.75).toFixed(2)}pt`,
+      `width:${(box.width * 0.75).toFixed(2)}pt`,
+      `height:${(box.height * 0.75).toFixed(2)}pt`,
+      box.xRelative === 'page' ? 'mso-position-horizontal-relative:page' : 'mso-position-horizontal-relative:text',
+      'mso-position-vertical-relative:paragraph',
+    ].join(';');
+    let body = '';
+    for (const block of box.blocks) body += block.type === 'paragraph' ? await paragraphXml(block, state) : '';
+    return `<w:r><w:pict><v:shape id="_x0000_s${Math.floor(Math.random() * 100000)}" type="#_x0000_t202" style="${style}" filled="t" stroked="t"><v:textbox><w:txbxContent>${body}</w:txbxContent></v:textbox></v:shape></w:pict></w:r>`;
+  }
   // 功能：VML 浮层（复选框等）按原样式写回，保证另存后在 Word/WPS 中位置与描边不变；时间：2026-10-30；作者：hou0。
   if (run.image?.vmlRect) {
     const rect = run.image.vmlRect;
@@ -778,6 +795,10 @@ function buildSectPr(page: PageSetup, state: SerializeState): string {
           grid.setAttribute('w:linePitch', String(Math.round(pxToTwips(page.linePitchPx))));
           if (!grid.parentNode) insertInSequence(sectPr, grid, SECT_PR_ORDER);
         }
+        // 功能：首页不同写回 w:titlePg；时间：2026-10-31；作者：hou0。
+        if (page.titlePage && !firstChild(sectPr, 'w:titlePg')) {
+          insertInSequence(sectPr, doc.createElementNS(W_NS, 'w:titlePg'), SECT_PR_ORDER);
+        }
         return new XMLSerializer().serializeToString(sectPr);
       }
     } catch {
@@ -786,22 +807,32 @@ function buildSectPr(page: PageSetup, state: SerializeState): string {
   }
   // 功能：写回分节类型、栏宽间距与文档网格，保证不等宽多栏与网格行距在 Word/WPS 中保持原样；时间：2026-10-30；作者：hou0。
   const sectType = `<w:type w:val="${page.type ?? 'nextPage'}"/>`;
+  const titlePgXml = page.titlePage ? '<w:titlePg/>' : '';
   const colsXml = columnsXml(page);
   const docGridXml = page.linePitchPx !== undefined
     ? `<w:docGrid w:type="lines" w:linePitch="${Math.round(pxToTwips(page.linePitchPx))}"/>`
     : '';
-  return `<w:sectPr>${sectType}${pgSz}${pgMar}${page.pageNumberStart !== undefined ? `<w:pgNumType w:start="${page.pageNumberStart}"/>` : ''}${colsXml}${docGridXml}</w:sectPr>`;
+  return `<w:sectPr>${sectType}${pgSz}${pgMar}${titlePgXml}${page.pageNumberStart !== undefined ? `<w:pgNumType w:start="${page.pageNumberStart}"/>` : ''}${colsXml}${docGridXml}</w:sectPr>`;
 }
 
 /** 功能：保存新增/编辑后的默认页眉页脚，写入独立部件、关系和内容类型；时间：2026-10-24；作者：lq。 */
 async function writeHeaderFooters(model: DocModel, state: SerializeState, suffix = ''): Promise<void> {
   const sectionDoc = parseXmlDom(`<w:root xmlns:w="${W_NS}" xmlns:r="${R_NS}">${state.sectPrXml ?? buildSectPr(model.page, state)}</w:root>`);
   const section = firstDescendant(sectionDoc, 'w:sectPr')!;
-  for (const kind of ['header', 'footer'] as const) {
-    const value = model[kind];
+  // 功能：支持首页/奇偶页页眉页脚变体——独立部件文件与对应 type 的引用；时间：2026-10-31；作者：hou0。
+  const variantEntries: Array<{ kind: 'header' | 'footer'; variant: 'default' | 'first' | 'even'; value?: HeaderFooter }> = [
+    { kind: 'header', variant: 'default', value: model.header },
+    { kind: 'footer', variant: 'default', value: model.footer },
+    { kind: 'header', variant: 'first', value: model.headerFirst },
+    { kind: 'header', variant: 'even', value: model.headerEven },
+    { kind: 'footer', variant: 'first', value: model.footerFirst },
+    { kind: 'footer', variant: 'even', value: model.footerEven },
+  ];
+  for (const { kind, variant, value } of variantEntries) {
     if (!value || (state.sourceExists && !value.edited)) continue;
     // 每个部件拥有独立关系作用域；新建文本内容不复用原图片关系；时间：2026-10-24；作者：lq。
-    const target = `mini-${kind}${suffix}.xml`;
+    const variantSuffix = variant === 'default' ? '' : `-${variant}`;
+    const target = `mini-${kind}${variantSuffix}${suffix}.xml`;
     const part = `word/${target}`;
     const sourceRelPath = value.sourcePart ? `word/_rels/${value.sourcePart.split('/').at(-1)}.rels` : '';
     const partRels = sourceRelPath ? await state.zip.file(sourceRelPath)?.async('text') : undefined;
@@ -819,10 +850,10 @@ async function writeHeaderFooters(model: DocModel, state: SerializeState, suffix
       state.documentRels.push(rel);
     }
     state.relsChanged = true;
-    const references = Array.from(section.children).filter((element) => element.tagName === `w:${kind}Reference` && element.getAttribute('w:type') === 'default');
+    const references = Array.from(section.children).filter((element) => element.tagName === `w:${kind}Reference` && (element.getAttribute('w:type') ?? 'default') === variant);
     references.forEach((element) => element.remove());
     const reference = sectionDoc.createElementNS(W_NS, `w:${kind}Reference`);
-    reference.setAttribute('w:type', 'default');
+    reference.setAttribute('w:type', variant);
     reference.setAttributeNS(R_NS, 'r:id', rel.id);
     insertInSequence(section, reference, SECT_PR_ORDER);
     const ct = parseXmlDom(state.contentTypesXml ?? contentTypesXml(false, false, false));

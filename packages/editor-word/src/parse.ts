@@ -30,6 +30,7 @@ import {
   mimeForPath,
   numericAttr,
   parseXmlDom,
+  elementText,
   readThemeColors,
   readThemeFonts,
   relationshipMap,
@@ -730,6 +731,35 @@ function parseVmlRectStyle(style: string): { left: number; top: number; width: n
 }
 
 async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun[]> {
+  // 功能：DrawingML 文本框（wps:txbx）——提取内容段落与锚定几何，只读渲染；时间：2026-10-31；作者：hou0。
+  const txbx = firstDescendant(drawing, 'wps:txbx') ?? firstDescendant(drawing, 'w:txbxContent');
+  if (txbx || firstDescendant(drawing, 'w:txbxContent')) {
+    const content = firstDescendant(drawing, 'w:txbxContent');
+    if (content) {
+      const blocks = await parseBlockContainer(content, ctx);
+      const extent = firstDescendant(drawing, 'wp:extent');
+      const width = Math.max(8, emuToPx(numericAttr(extent, 'cx', 1_828_800) ?? 1_828_800));
+      const height = Math.max(8, emuToPx(numericAttr(extent, 'cy', 1_371_600) ?? 1_371_600));
+      const positionH = firstDescendant(drawing, 'wp:positionH');
+      const positionV = firstDescendant(drawing, 'wp:positionV');
+      const hRelative = attrValue(positionH, 'relativeFrom');
+      // 功能：wp:posOffset 的偏移是元素文本（EMU），不是属性；时间：2026-10-31；作者：hou0。
+      const leftEmu = numericAttr(positionH, 'x') ?? (Number.parseInt(elementText(firstDescendant(positionH ?? null, 'wp:posOffset')) || '0', 10) || 0);
+      const topEmu = numericAttr(positionV, 'y') ?? (Number.parseInt(elementText(firstDescendant(positionV ?? null, 'wp:posOffset')) || '0', 10) || 0);
+      return [{
+        text: '',
+        style: {},
+        textbox: {
+          left: emuToPx(leftEmu),
+          top: emuToPx(topEmu),
+          width,
+          height,
+          xRelative: hRelative === 'page' ? 'page' : 'text',
+          blocks,
+        },
+      }];
+    }
+  }
   const blip = firstDescendant(drawing, 'a:blip');
   const rid = attrValue(blip, 'r:embed') ?? attrValue(blip, 'r:link');
   if (!rid) return [];
@@ -821,6 +851,30 @@ function vmlRectChecked(rect: Element): boolean {
 }
 
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
+  // 功能：VML 文本框（v:shape/v:rect 内嵌 v:textbox）——解析内容与几何，只读渲染；时间：2026-10-31；作者：hou0。
+  const textShape = firstDescendant(pict, 'v:shape');
+  const textHost = (textShape ?? firstDescendant(pict, 'v:rect')) as Element | null;
+  if (textHost && firstDescendant(textHost, 'v:textbox')) {
+    const content = firstDescendant(textHost, 'w:txbxContent');
+    if (content) {
+      const blocks = await parseBlockContainer(content, ctx);
+      const style = attrValue(textHost, 'style') ?? '';
+      const rectStyle = parseVmlRectStyle(style);
+      const size = rectStyle ?? vmlStyleSize(style);
+      return [{
+        text: '',
+        style: {},
+        textbox: {
+          left: rectStyle?.left ?? 0,
+          top: rectStyle?.top ?? 0,
+          width: size?.width ?? 120,
+          height: size?.height ?? 80,
+          xRelative: rectStyle?.xRelative ?? 'text',
+          blocks,
+        },
+      }];
+    }
+  }
   // 功能：VML 复选框（v:rect）按定位信息渲染；时间：2026-10-30；作者：hou0。
   const rect = firstDescendant(pict, 'v:rect');
   if (rect) {
@@ -1022,6 +1076,25 @@ async function parseRunElement(
       }
       case 'pict': {
         runs.push(...(await parseVmlPicture(child, ctx)));
+        break;
+      }
+      case 'AlternateContent': {
+        // 功能：mc:AlternateContent——优先 mc:Choice 的现代绘图（drawing/pict），无产出时回退 mc:Fallback；时间：2026-10-31；作者：hou0。
+        const parseBranch = async (branch: Element | null): Promise<DocRun[]> => {
+          const produced: DocRun[] = [];
+          for (const sub of Array.from(branch?.childNodes ?? [])) {
+            if (!(sub instanceof Element)) continue;
+            const name = localName(sub);
+            if (name === 'drawing') produced.push(...(await parseDrawing(sub, ctx)));
+            else if (name === 'pict') produced.push(...(await parseVmlPicture(sub, ctx)));
+          }
+          return produced;
+        };
+        let produced = await parseBranch(firstDescendant(child, 'mc:Choice'));
+        if (!produced.some((run) => run.text || run.image || run.textbox)) {
+          produced = await parseBranch(firstDescendant(child, 'mc:Fallback'));
+        }
+        if (produced.some((run) => run.text || run.image || run.textbox)) runs.push(...produced);
         break;
       }
       case 'fldChar': {
@@ -1299,10 +1372,27 @@ async function parseParagraph(
   const section = firstChild(pPr, 'w:sectPr');
   if (section) {
     const page = parsePageSetup(section, ctx);
+    // 功能：解析首页/奇偶页页眉页脚变体（仅当分节引用了对应类型）；时间：2026-10-31；作者：hou0。
+    const hasVariant = (kind: string, variant: string): boolean =>
+      Array.from(section.childNodes).some(
+        (node) => node instanceof Element && localName(node) === `${kind}Reference` && attrValue(node, 'w:type') === variant,
+      );
     paragraph.sectionEnd = {
       page,
       header: await parseHeaderFooter(section, ctx, 'header', page.margins.header),
       footer: await parseHeaderFooter(section, ctx, 'footer', page.margins.footer),
+      headerFirst: hasVariant('header', 'first')
+        ? await parseHeaderFooter(section, ctx, 'header', page.margins.header, 'first')
+        : undefined,
+      headerEven: hasVariant('header', 'even')
+        ? await parseHeaderFooter(section, ctx, 'header', page.margins.header, 'even')
+        : undefined,
+      footerFirst: hasVariant('footer', 'first')
+        ? await parseHeaderFooter(section, ctx, 'footer', page.margins.footer, 'first')
+        : undefined,
+      footerEven: hasVariant('footer', 'even')
+        ? await parseHeaderFooter(section, ctx, 'footer', page.margins.footer, 'even')
+        : undefined,
     };
     }
   return { paragraph, pageBreakAfter };
@@ -1553,6 +1643,8 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
   // 功能：解析文档网格行距 w:docGrid w:linePitch（twips），段落行高按此网格对齐；时间：2026-10-30；作者：hou0。
   const docGrid = firstChild(sectPr, 'w:docGrid');
   const linePitchTwips = docGrid ? numericAttr(docGrid, 'w:linePitch') : undefined;
+  // 功能：首页页眉页脚不同（w:titlePg）；时间：2026-10-31；作者：hou0。
+  const titlePage = firstChild(sectPr, 'w:titlePg') ? true : undefined;
   // 功能：解析每栏宽度与间距，支持不等宽多栏版式；时间：2026-10-30；作者：hou0。
   const colsElement = firstChild(sectPr, 'w:cols');
   const columnEqualWidth = colsElement ? attrValue(colsElement, 'w:equalWidth') === 'true' : undefined;
@@ -1581,6 +1673,7 @@ function parsePageSetup(sectPr: Element | null, ctx: ParseContext): PageSetup {
     columnEqualWidth,
     type: sectType === 'continuous' ? 'continuous' : 'nextPage',
     linePitchPx: linePitchTwips !== undefined ? twipsToPx(linePitchTwips) : undefined,
+    titlePage,
     // 功能：恢复 DOCX 起始页码；时间：2026-10-24；作者：lq。
     pageNumberStart: numericAttr(firstChild(sectPr, 'w:pgNumType'), 'w:start'),
   };
@@ -1632,6 +1725,8 @@ async function parseHeaderFooter(
   ctx: ParseContext,
   kind: 'header' | 'footer',
   distancePx: number,
+  /** 功能：引用变体——default/first/even（首页与奇偶页页眉页脚）；时间：2026-10-31；作者：hou0。 */
+  variant: 'default' | 'first' | 'even' = 'default',
 ): Promise<HeaderFooter | undefined> {
   if (!sectPr) return undefined;
   const references = Array.from(sectPr.childNodes).filter(
@@ -1640,7 +1735,9 @@ async function parseHeaderFooter(
   );
   if (references.length === 0) return undefined;
   const preferred =
-    references.find((reference) => attrValue(reference, 'w:type') === 'default') ?? references[0];
+    references.find((reference) => attrValue(reference, 'w:type') === variant) ??
+    (variant === 'default' ? references[0] : undefined);
+  if (!preferred) return undefined;
   const relId = preferred.getAttribute('r:id') ?? getAttrLocal(preferred, 'id');
   if (!relId) return undefined;
   const rel = ctx.rels.get(relId);
@@ -1743,6 +1840,25 @@ export async function parseDocxPackage(
     'footer',
     page.margins.footer,
   );
+  // 功能：文档级 sectPr 的首页/奇偶页页眉页脚变体（正文段无 sectPr 时唯一入口）；时间：2026-10-31；作者：hou0。
+  const hasDocVariant = (kind: 'header' | 'footer', variant: string): boolean => {
+    const sect = sectionForPart(kind);
+    return !!sect && Array.from(sect.childNodes).some(
+      (node) => node instanceof Element && localName(node) === `${kind}Reference` && attrValue(node, 'w:type') === variant,
+    );
+  };
+  const headerFirst = hasDocVariant('header', 'first')
+    ? await parseHeaderFooter(sectionForPart('header'), provisional, 'header', page.margins.header, 'first')
+    : undefined;
+  const headerEven = hasDocVariant('header', 'even')
+    ? await parseHeaderFooter(sectionForPart('header'), provisional, 'header', page.margins.header, 'even')
+    : undefined;
+  const footerFirst = hasDocVariant('footer', 'first')
+    ? await parseHeaderFooter(sectionForPart('footer'), provisional, 'footer', page.margins.footer, 'first')
+    : undefined;
+  const footerEven = hasDocVariant('footer', 'even')
+    ? await parseHeaderFooter(sectionForPart('footer'), provisional, 'footer', page.margins.footer, 'even')
+    : undefined;
 
   let words = 0;
   let characters = 0;
@@ -1769,6 +1885,7 @@ export async function parseDocxPackage(
 
   // 功能：读回模板里保存的邮件合并面板状态，供打开时恢复面板；同时读取默认制表位间距；时间：2026-10-29；作者：lq。
   let defaultTabStopPx: number | undefined;
+  let evenAndOddHeaders: boolean | undefined;
   if (pkg.has('word/settings.xml')) {
     try {
       const settingsDocument = parseXmlDom(await pkg.text('word/settings.xml'));
@@ -1784,6 +1901,8 @@ export async function parseDocxPackage(
       const tabStop = settingsDocument.getElementsByTagName('w:defaultTabStop')[0];
       const tabStopTwips = tabStop ? numericAttr(tabStop, 'w:val') : undefined;
       if (tabStopTwips && tabStopTwips > 0) defaultTabStopPx = twipsToPx(tabStopTwips);
+      // 功能：奇偶页页眉页脚不同（w:evenAndOddHeaders）；时间：2026-10-31；作者：hou0。
+      if (settingsDocument.getElementsByTagName('w:evenAndOddHeaders').length > 0) evenAndOddHeaders = true;
     } catch {
       // 忽略读取失败，不影响正文解析
     }
@@ -1807,6 +1926,11 @@ export async function parseDocxPackage(
     stats: { words, characters },
     ...(documentStyles.length > 0 ? { styles: documentStyles } : {}),
     ...(defaultTabStopPx !== undefined ? { defaultTabStopPx } : {}),
+    ...(evenAndOddHeaders ? { evenAndOddHeaders } : {}),
+    ...(headerFirst ? { headerFirst } : {}),
+    ...(headerEven ? { headerEven } : {}),
+    ...(footerFirst ? { footerFirst } : {}),
+    ...(footerEven ? { footerEven } : {}),
   };
 }
 

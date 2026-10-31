@@ -98,6 +98,16 @@ export interface DocRun {
   href?: string;
   /** 功能：该 run 是内容控件（w:sdt）的呈现内容；时间：2026-10-30；作者：hou0。 */
   control?: RunControl;
+  /** 功能：文本框（只读渲染）——锚定段落定位的绝对定位文字容器；时间：2026-10-31；作者：hou0。 */
+  textbox?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    /** 水平参照系：page=页面左缘，text=内容区左缘。 */
+    xRelative?: 'page' | 'text';
+    blocks: DocBlock[];
+  };
 }
 
 export interface WordTabStop {
@@ -275,6 +285,8 @@ export interface PageSetup {
   type?: 'nextPage' | 'continuous';
   /** 文档网格行距（w:docGrid w:linePitch），CSS px，段落行高按此网格对齐；时间：2026-10-30；作者：hou0。 */
   linePitchPx?: number;
+  /** 功能：首页页眉页脚不同（w:titlePg）；时间：2026-10-31；作者：hou0。 */
+  titlePage?: boolean;
   /** 功能：页码起始值，独立于物理页序；时间：2026-10-24；作者：lq。 */
   pageNumberStart?: number;
 }
@@ -289,8 +301,16 @@ export interface HeaderFooter {
   sourcePart?: string;
 }
 
-/** 功能：描述一个报告节的页面与页眉页脚；时间：2026-10-24；作者：lq。 */
-export interface DocSection { page: PageSetup; header?: HeaderFooter; footer?: HeaderFooter }
+/** 功能：描述一个报告节的页面与页眉页脚（含首页/奇偶页变体）；时间：2026-10-31；作者：hou0。 */
+export interface DocSection {
+  page: PageSetup;
+  header?: HeaderFooter;
+  footer?: HeaderFooter;
+  headerFirst?: HeaderFooter;
+  headerEven?: HeaderFooter;
+  footerFirst?: HeaderFooter;
+  footerEven?: HeaderFooter;
+}
 
 /** 功能：邮件合并筛选条件，面板筛选与 Word 兼容输出共用同一结构；时间：2026-10-29；作者：lq。 */
 export interface DocMergeCondition {
@@ -337,6 +357,13 @@ export interface DocModel {
   styles?: DocStyleDefinition[];
   /** 功能：默认制表位间距（settings.xml 的 w:defaultTabStop，CSS px）；无显式制表位时 tab 按它的整数倍跳转；时间：2026-10-30；作者：hou0。 */
   defaultTabStopPx?: number;
+  /** 功能：奇偶页页眉页脚不同（settings.xml 的 w:evenAndOddHeaders）；时间：2026-10-31；作者：hou0。 */
+  evenAndOddHeaders?: boolean;
+  /** 功能：首页/奇偶页页眉页脚变体（由节展开合并进文档对象供渲染读取）；时间：2026-10-31；作者：hou0。 */
+  headerFirst?: HeaderFooter;
+  headerEven?: HeaderFooter;
+  footerFirst?: HeaderFooter;
+  footerEven?: HeaderFooter;
 }
 
 export const A4_PAGE: PageSetup = {

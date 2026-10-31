@@ -3739,6 +3739,18 @@ function WordPageView({
   const margins = doc.page.margins;
   const contentWidth = Math.max(120, doc.page.widthPx - margins.left - margins.right);
   const columnCount = doc.page.columns ?? 1;
+  // 功能：页眉页脚变体——首页不同（w:titlePg）与奇偶页不同（w:evenAndOddHeaders）；时间：2026-10-31；作者：hou0。
+  const sectionPage0 = page.sectionPage ?? 0;
+  const headerVariant = doc.page.titlePage && sectionPage0 === 0 && doc.headerFirst
+    ? doc.headerFirst
+    : doc.evenAndOddHeaders === true && sectionPage0 % 2 === 1 && doc.headerEven
+      ? doc.headerEven
+      : doc.header;
+  const footerVariant = doc.page.titlePage && sectionPage0 === 0 && doc.footerFirst
+    ? doc.footerFirst
+    : doc.evenAndOddHeaders === true && sectionPage0 % 2 === 1 && doc.footerEven
+      ? doc.footerEven
+      : doc.footer;
   const renderBlock = (block: DocBlock, columnLeftPx?: number) =>
     block.type === 'paragraph' ? (
       locked?.includes(block.id) ? (
@@ -3860,7 +3872,7 @@ function WordPageView({
           overflow: 'hidden',
         }}
       >
-        {doc.header ? (
+        {headerVariant ? (
           <div
             style={{
               position: 'absolute',
@@ -3872,7 +3884,7 @@ function WordPageView({
             }}
           >
             <HeaderFooterView
-              blocks={doc.header.blocks}
+              blocks={headerVariant.blocks}
               doc={doc}
               pageNumber={pageNumber}
               totalPages={total}
@@ -3890,7 +3902,7 @@ function WordPageView({
         >
           {contentNodes}
         </div>
-        {doc.footer ? (
+        {footerVariant ? (
           <div
             style={{
               position: 'absolute',
@@ -3902,7 +3914,7 @@ function WordPageView({
             }}
           >
             <HeaderFooterView
-              blocks={doc.footer.blocks}
+              blocks={footerVariant.blocks}
               doc={doc}
               pageNumber={pageNumber}
               totalPages={total}
