@@ -851,9 +851,12 @@ function vmlRectChecked(rect: Element): boolean {
 }
 
 async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun[]> {
-  // 功能：VML 文本框（v:shape/v:rect 内嵌 v:textbox）——解析内容与几何，只读渲染；时间：2026-10-31；作者：hou0。
+  // 功能：VML 文本框（v:shape 或无定位的 v:rect 内嵌 v:textbox）——解析内容与几何，只读渲染；
+  // 带定位的 v:rect 是复选框语义（勾选态存在 v:textbox 里），走下方 vmlRect 分支；时间：2026-10-31；作者：hou0。
+  const rectForTextbox = firstDescendant(pict, 'v:rect');
+  const rectIsCheckbox = rectForTextbox ? !!parseVmlRectStyle(attrValue(rectForTextbox, 'style') ?? '') : false;
   const textShape = firstDescendant(pict, 'v:shape');
-  const textHost = (textShape ?? firstDescendant(pict, 'v:rect')) as Element | null;
+  const textHost = (textShape ?? (rectForTextbox && !rectIsCheckbox ? rectForTextbox : null)) as Element | null;
   if (textHost && firstDescendant(textHost, 'v:textbox')) {
     const content = firstDescendant(textHost, 'w:txbxContent');
     if (content) {
