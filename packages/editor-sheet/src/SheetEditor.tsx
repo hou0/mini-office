@@ -18,7 +18,7 @@ import {
   type WorkbookModel,
 } from '@mini-office/document-model';
 import { useWorkspaceStore } from '@mini-office/document-model';
-import { printPages, renderPrintPreview } from '@mini-office/platform-adapter';
+import { printPages, renderPrintPreview, type PrintPreviewHandle } from '@mini-office/platform-adapter';
 import {
   Button,
   ContextMenu,
@@ -34,6 +34,8 @@ import {
 } from '@mini-office/ui';
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   FileWarning,
   Search,
@@ -188,6 +190,10 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const [printPreviewScaleMode, setPrintPreviewScaleMode] = useState<'fit' | 'actual'>('fit');
   const printPreviewRef = useRef<HTMLDivElement>(null);
   const printPreviewCleanupRef = useRef<(() => void) | null>(null);
+  // 功能：单页预览的翻页句柄与当前页，与 Word 打印预览保持同一套交互；时间：2026-11-01；作者：lq。
+  const printPreviewHandleRef = useRef<PrintPreviewHandle | null>(null);
+  const printPreviewPageRef = useRef(0);
+  const [printPreviewPage, setPrintPreviewPage] = useState(0);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
@@ -309,6 +315,12 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   useEffect(() => {
     updateView(session.id, { activeSheetId: sheet.id, zoom });
   }, [sheet.id, session.id, updateView, zoom]);
+
+  // 功能：缩放改由右下角状态栏驱动，这里把 session.view 的变化同步回本地状态，避免两处入口不一致；时间：2026-10-31；作者：lq。
+  useEffect(() => {
+    const next = normalizeSheetZoom(session.view.zoom ?? 1);
+    setZoom((current) => (Math.abs(current - next) < 0.001 ? current : next));
+  }, [session.id, session.view.zoom]);
 
   const cancelGridFocus = useCallback(() => {
     if (gridFocusFrame.current !== null) cancelAnimationFrame(gridFocusFrame.current);
@@ -511,6 +523,73 @@ export function SheetEditor({ session }: { session: SheetSession }) {
   const deleteColumn = useCallback(() => {
     changeStructure(() => commit(deleteColumns(latestWorkbook(), sheet.id, active.col, 1), { key: 'structure' }));
   }, [active.col, changeStructure, commit, latestWorkbook, sheet.id]);
+
+  const setHidden = useCallback((kind: 'row' | 'col', hide: boolean, index?: number) => {
+    if (readonly) return;
+    const current = latestWorkbook();
+    const currentSheet = current.sheets.find((item) => item.id === sheet.id) ?? sheet;
+    const target = kind === 'row' ? currentSheet.hiddenRows : currentSheet.hiddenCols;
+    const start = kind === 'row' ? (selection.kind === 'row' ? range.r1 : index ?? active.row) : (selection.kind === 'col' ? range.c1 : index ?? active.col);
+    const end = kind === 'row' && selection.kind === 'row' ? range.r2 : kind === 'col' && selection.kind === 'col' ? range.c2 : start;
+    const indices = hide ? Array.from({ length: end - start + 1 }, (_, offset) => start + offset) : (() => {
+      const found: number[] = [];
+      for (let value = start - 1; value >= 0 && target[value]; value -= 1) found.push(value);
+      for (let value = start; value <= end; value += 1) if (target[value]) found.push(value);
+      for (let value = end + 1; target[value]; value += 1) found.push(value);
+      return found;
+    })();
+    if (!indices.length) return;
+    let next = updateSheet(current, sheet.id, (item) => {
+      const key = kind === 'row' ? 'hiddenRows' : 'hiddenCols';
+      const hidden = { ...item[key] };
+      for (const value of indices) { if (hide) hidden[value] = true; else delete hidden[value]; }
+      if (kind === 'row' && item.filterBaseHiddenRows) {
+        const base = { ...item.filterBaseHiddenRows };
+        for (const value of indices) { if (hide) base[value] = true; else delete base[value]; }
+        return { ...item, hiddenRows: hidden, filterBaseHiddenRows: base };
+      }
+      return { ...item, [key]: hidden };
+    });
+    const changed = next.sheets.find((item) => item.id === sheet.id)!;
+    const first = Object.entries(changed.filterCriteria ?? {})[0];
+    if (kind === 'row' && first && changed.autoFilter) next = applyFilter(next, changed, Number(first[0]), new Set(first[1]), { ...changed.autoFilter, r1: changed.autoFilter.r1 + 1 });
+    commit(next, { key: `${hide ? 'hide' : 'show'}-${kind}` });
+    if (hide) {
+      const hidden = kind === 'row' ? changed.hiddenRows : changed.hiddenCols;
+      const bound = kind === 'row' ? changed.dimension.rows : changed.dimension.cols;
+      let visible = end + 1;
+      while (visible < bound && hidden[visible]) visible += 1;
+      if (visible >= bound) {
+        visible = start - 1;
+        while (visible > 0 && hidden[visible]) visible -= 1;
+      }
+      const position = kind === 'row' ? { row: Math.max(0, visible), col: active.col } : { row: active.row, col: Math.max(0, visible) };
+      setSelection({ anchor: position, focus: position });
+    }
+  }, [active.col, active.row, commit, latestWorkbook, range, readonly, selection.kind, sheet]);
+
+  const insertFunction = useCallback(() => {
+    if (readonly) return;
+    cancelGridFocus();
+    setFormulaText((value) => value.startsWith('=') ? value : '=SUM(');
+  }, [cancelGridFocus, readonly]);
+
+  const autoSum = useCallback(() => {
+    if (readonly) return;
+    const multi = range.r1 !== range.r2 || range.c1 !== range.c2;
+    let source = range;
+    let destination = { row: range.r2 + 1, col: range.c1 };
+    if (!multi) {
+      let first = active.row - 1;
+      while (first >= 0 && typeof (workbook.computed?.[sheet.id]?.[cellKey(first, active.col)]?.value ?? sheet.cells[cellKey(first, active.col)]?.value) === 'number') first -= 1;
+      if (first === active.row - 1) return startEdit(active.row, active.col, '=SUM(');
+      source = { r1: first + 1, r2: active.row - 1, c1: active.col, c2: active.col };
+      destination = active;
+    } else if (sheet.cells[cellKey(destination.row, destination.col)]) {
+      destination = { row: range.r1, col: range.c2 + 1 };
+    }
+    startEdit(destination.row, destination.col, `=SUM(${rangeRef(source)})`);
+  }, [active, range, readonly, sheet, startEdit, workbook.computed]);
 
   const sortByActive = useCallback(
     (ascending: boolean, column = active.col, explicitTarget?: CellRange) => {
@@ -777,9 +856,13 @@ export function SheetEditor({ session }: { session: SheetSession }) {
 
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent, kind: 'row' | 'col', index: number) => {
+      if (kind === 'row' ? selection.kind !== 'row' || index < range.r1 || index > range.r2 : selection.kind !== 'col' || index < range.c1 || index > range.c2) {
+        const position = kind === 'row' ? { row: index, col: active.col } : { row: active.row, col: index };
+        setSelection({ anchor: position, focus: position, kind });
+      }
       setContextMenu({ x: event.clientX, y: event.clientY, kind, row: kind === 'row' ? index : active.row, col: kind === 'col' ? index : active.col });
     },
-    [active.col, active.row],
+    [active.col, active.row, range, selection.kind],
   );
 
   const contextItems: MenuItem[] = contextMenu
@@ -793,6 +876,10 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           { id: 'insert-col', label: '在左侧插入列', onSelect: insertColumn },
           { id: 'delete-row', label: '删除当前行', danger: true, onSelect: deleteRow },
           { id: 'delete-col', label: '删除当前列', danger: true, onSelect: deleteColumn },
+          { id: 'hide-row', label: '隐藏行', onSelect: () => setHidden('row', true, contextMenu.row) },
+          { id: 'show-rows', label: '取消隐藏行', onSelect: () => setHidden('row', false, contextMenu.row) },
+          { id: 'hide-col', label: '隐藏列', onSelect: () => setHidden('col', true, contextMenu.col) },
+          { id: 'show-cols', label: '取消隐藏列', onSelect: () => setHidden('col', false, contextMenu.col) },
           { type: 'separator' },
           { id: 'clear', label: '清除内容', onSelect: () => handleAction('clear') },
           { id: 'freeze', label: '冻结到当前单元格', onSelect: freeze },
@@ -805,10 +892,14 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             ? [
                 { id: 'insert', label: '在上方插入行', onSelect: insertRow },
                 { id: 'delete', label: '删除行', danger: true, onSelect: deleteRow },
+                { id: 'hide', label: '隐藏行', onSelect: () => setHidden('row', true, contextMenu.row) },
+                { id: 'show', label: '取消隐藏行', onSelect: () => setHidden('row', false, contextMenu.row) },
               ]
             : [
                 { id: 'insert', label: '在左侧插入列', onSelect: insertColumn },
                 { id: 'delete', label: '删除列', danger: true, onSelect: deleteColumn },
+                { id: 'hide', label: '隐藏列', onSelect: () => setHidden('col', true, contextMenu.col) },
+                { id: 'show', label: '取消隐藏列', onSelect: () => setHidden('col', false, contextMenu.col) },
               ]),
           { type: 'separator' },
           { id: 'sort-asc', label: '升序排序', onSelect: () => sortByActive(true) },
@@ -911,9 +1002,20 @@ export function SheetEditor({ session }: { session: SheetSession }) {
 
   const openPrintPreview = useCallback(() => {
     printPreviewCleanupRef.current?.();
+    printPreviewPageRef.current = 0;
+    setPrintPreviewPage(0);
     setPrintPreviewSetup({ ...(sheet.pageSetup ?? defaultSheetPageSetup()), margins: { ...(sheet.pageSetup ?? defaultSheetPageSetup()).margins } });
     setPrintPreviewOpen(true);
   }, [sheet.pageSetup]);
+
+  // 功能：预览页按「一页一屏 + 页码器」呈现，与 Word 打印预览保持同一套交互；时间：2026-11-01；作者：lq。
+  const goPreviewPage = useCallback((next: number) => {
+    const count = printPreviewHandleRef.current?.pageCount ?? 0;
+    const target = Math.max(0, Math.min(Math.max(0, count - 1), next));
+    printPreviewPageRef.current = target;
+    setPrintPreviewPage(target);
+    printPreviewHandleRef.current?.setPage(target);
+  }, []);
 
   useEffect(() => {
     if (!printPreviewOpen || !printPreviewSetup || !printPreviewRef.current) return;
@@ -924,15 +1026,21 @@ export function SheetEditor({ session }: { session: SheetSession }) {
     const pages = buildSheetPrintPages(workbook, previewSheet, staging);
     const size = sheetPageSize(printPreviewSetup);
     // 功能：预览复用打印模块的公共渲染，保证与 Word 预览视觉和页数完全一致；时间：2026-10-29；作者：lq。
-    const cleanupPreview = renderPrintPreview({
+    const handle = renderPrintPreview({
       host,
       pages,
       widthPx: size.width,
       heightPx: size.height,
       scale: printPreviewScaleMode === 'actual' ? 1 : undefined,
+      singlePage: true,
     });
+    handle.setPage(printPreviewPageRef.current);
     setPrintPreviewCount(pages.length);
-    printPreviewCleanupRef.current = () => { staging.remove(); cleanupPreview(); };
+    printPreviewHandleRef.current = handle;
+    printPreviewCleanupRef.current = () => {
+      staging.remove();
+      handle.cleanup();
+    };
     return () => printPreviewCleanupRef.current?.();
   }, [printPreviewOpen, printPreviewScaleMode, printPreviewSetup, sheet, workbook]);
 
@@ -1000,10 +1108,15 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           readonly={readonly}
           canUndo={canUndo}
           canRedo={canRedo}
-          zoom={zoom}
           propertiesOpen={settings.showProperties}
           onFormulaChange={setFormulaText}
           onFormulaFocus={cancelGridFocus}
+          onInsertFunction={insertFunction}
+          onAutoSum={autoSum}
+          onHideRow={() => setHidden('row', true)}
+          onShowRows={() => setHidden('row', false)}
+          onHideColumn={() => setHidden('col', true)}
+          onShowColumns={() => setHidden('col', false)}
           onFormulaCommit={formulaCommit}
           onFormulaCancel={cancelEdit}
           onJump={handleJump}
@@ -1032,7 +1145,8 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onPageSetup={openPageSetup}
           onCompatibility={() => openCompatibility({ type: 'compatibility', sessionId: session.id })}
           onToggleProperties={() => updateSettings({ showProperties: !settings.showProperties })}
-          onZoom={setZoom}
+          crosshair={settings.sheetCrosshair === true}
+          onToggleCrosshair={() => updateSettings({ sheetCrosshair: settings.sheetCrosshair !== true })}
           onUndo={undo}
           onRedo={redo}
           onAddSheet={addNewSheet}
@@ -1060,6 +1174,7 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             onFill={handleFill}
             onFilterColumn={openFilterColumn}
             readonly={readonly} zoom={zoom}
+            crosshair={settings.sheetCrosshair === true}
             onImageChange={(id, patch) => { if (!readonly) commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, images: item.images?.map((image) => image.id === id ? { ...image, ...patch } : image) })), { key: `image:${id}` }); }}
             onImageDelete={(id) => { if (!readonly) commit(updateSheet(latestWorkbook(), sheet.id, (item) => ({ ...item, images: item.images?.filter((image) => image.id !== id) })), { key: `image-delete:${id}` }); }}
           />
@@ -1156,9 +1271,38 @@ export function SheetEditor({ session }: { session: SheetSession }) {
         title="打印预览"
         description={`预览全部分页（共 ${printPreviewCount} 页）并选择打印方向，确认后调用系统打印。`}
         width="xl"
-        footer={<><Button onClick={() => { setPrintPreviewOpen(false); printPreviewCleanupRef.current?.(); }}>取消</Button><Button variant="primary" onClick={() => void confirmPrintPreview()}>打印</Button></>}
+        footer={<><span className="mr-auto text-[11px] text-[var(--mo-text-muted)]">共 {printPreviewCount} 页</span><Button onClick={() => { setPrintPreviewOpen(false); printPreviewCleanupRef.current?.(); }}>取消</Button><Button variant="primary" onClick={() => void confirmPrintPreview()}>打印</Button></>}
       >
-        {printPreviewSetup ? <div className="grid grid-cols-[180px_1fr] gap-4 text-[12px]">
+        {printPreviewSetup ? <div className="grid grid-cols-[1fr_236px] gap-4 text-[12px]">
+          {/* 功能：左预览右设置，一页一屏加页码器，与 Word 打印预览及 Office 保持一致；时间：2026-11-01；作者：lq。 */}
+          <div className="flex min-w-0 flex-col overflow-hidden rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface-2)]">
+            <div ref={printPreviewRef} className="h-[430px] w-full overflow-auto" aria-label="工作表打印预览" />
+            <div className="flex items-center justify-center gap-1 border-t border-[var(--mo-line)] bg-[var(--mo-surface)] py-1.5">
+              <button
+                type="button"
+                aria-label="上一页"
+                title="上一页"
+                disabled={printPreviewPage <= 0}
+                className="flex h-6 w-6 items-center justify-center rounded text-[var(--mo-text-secondary)] transition-colors hover:bg-[var(--mo-surface-2)] disabled:opacity-35 disabled:hover:bg-transparent"
+                onClick={() => goPreviewPage(printPreviewPage - 1)}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="min-w-[62px] text-center text-[11px] tabular-nums text-[var(--mo-text-muted)]">
+                {printPreviewCount === 0 ? '0 / 0' : `${printPreviewPage + 1} / ${printPreviewCount}`}
+              </span>
+              <button
+                type="button"
+                aria-label="下一页"
+                title="下一页"
+                disabled={printPreviewPage >= printPreviewCount - 1}
+                className="flex h-6 w-6 items-center justify-center rounded text-[var(--mo-text-secondary)] transition-colors hover:bg-[var(--mo-surface-2)] disabled:opacity-35 disabled:hover:bg-transparent"
+                onClick={() => goPreviewPage(printPreviewPage + 1)}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
           <div className="space-y-3 rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface-2)] p-3">
             <Field label="方向">
               <Select value={printPreviewSetup.orientation} onChange={(event) => setPrintPreviewSetup((current) => current ? { ...current, orientation: event.target.value as SheetPageSetup['orientation'] } : current)}>
@@ -1183,7 +1327,6 @@ export function SheetEditor({ session }: { session: SheetSession }) {
             </div>
             <p className="leading-5 text-[var(--mo-text-muted)]">共 {printPreviewCount} 页。列宽超出纸张时自动横向分页，合并单元格跨页会保留边框与底纹。</p>
           </div>
-          <div ref={printPreviewRef} className="relative min-h-[300px] max-h-[460px] overflow-auto rounded-md border border-[var(--mo-line)] bg-[#667085]" aria-label="工作表打印预览" />
         </div> : null}
       </Dialog>
 

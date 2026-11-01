@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBlankWorkbook } from '@mini-office/document-model';
 import { FormulaInput } from '../packages/editor-sheet/src/FormulaInput';
 import { SheetGrid } from '../packages/editor-sheet/src/SheetGrid';
+import { SheetToolbar } from '../packages/editor-sheet/src/SheetToolbar';
 import { completeFormulaParentheses, formulaReferenceSpan, pickFormulaReference } from '../packages/editor-sheet/src/formula/reference-picking';
 import { applyBordersToRange, cellStyle } from '../packages/editor-sheet/src/sheet-utils';
 
@@ -78,6 +79,36 @@ describe('公式引用选择', () => {
       expect(view.host.querySelector('[data-formula-reference="B1:C2"]')).not.toBeNull();
       expect(document.activeElement).toBe(input);
       expect(change).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled();
+    } finally { view.dispose(); }
+  });
+});
+
+describe('公式栏快捷操作', () => {
+  it('fx 可点击插入函数，自动求和有独立入口', () => {
+    const book = createBlankWorkbook();
+    const insert = vi.fn(); const sum = vi.fn(); const change = vi.fn();
+    const noOp = vi.fn();
+    const view = mount(createElement(SheetToolbar, {
+      workbook: book, sheet: book.sheets[0], range: { r1: 9, c1: 0, r2: 17, c2: 0 },
+      active: { row: 9, col: 0 }, formulaText: '', readonly: false, canUndo: false, canRedo: false,
+      propertiesOpen: false, crosshair: false,
+      onFormulaChange: change, onFormulaCommit: noOp, onFormulaCancel: noOp,
+      onFormulaFocus: noOp, onInsertFunction: insert, onAutoSum: sum,
+      onHideRow: noOp, onShowRows: noOp, onHideColumn: noOp, onShowColumns: noOp,
+      onJump: noOp, onStyle: noOp, onNumberFormat: noOp, onBorders: noOp,
+      borderWeight: 'thin', onBorderWeight: noOp, borderColor: '#000000', onBorderColor: noOp,
+      onMoreBorders: noOp, onMergeToggle: noOp, onFreeze: noOp, onInsertRow: noOp,
+      onDeleteRow: noOp, onInsertColumn: noOp, onDeleteColumn: noOp, onSort: noOp,
+      onFilter: noOp, onInsertImage: noOp, onCustomSort: noOp, onClearFilter: noOp,
+      onReapplyFilter: noOp, onFind: noOp, onExport: noOp, onPrint: noOp,
+      onPageSetup: noOp, onCompatibility: noOp, onToggleProperties: noOp,
+      onToggleCrosshair: noOp, onUndo: noOp, onRedo: noOp, onAddSheet: noOp,
+    }));
+    try {
+      act(() => (view.host.querySelector('button[aria-label="插入函数"]') as HTMLButtonElement).click());
+      expect(insert).toHaveBeenCalledOnce();
+      act(() => (view.host.querySelector('button[aria-label="自动求和"]') as HTMLButtonElement).click());
+      expect(sum).toHaveBeenCalledOnce();
     } finally { view.dispose(); }
   });
 });

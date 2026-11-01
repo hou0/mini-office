@@ -97,7 +97,7 @@ export function cellAt(sheet: SheetModel, row: number, col: number): Cell | unde
 }
 
 export function cellStyle(workbook: WorkbookModel, cell: Cell | undefined): CellStyle {
-  return (cell?.styleId ? workbook.styles[cell.styleId] : undefined) ?? workbook.styles.default ?? {};
+  return (cell?.styleId ? workbook.styles[cell.styleId] : undefined) ?? workbook.styles.default ?? workbook.styles.s0 ?? {};
 }
 
 export function cellDisplay(workbook: WorkbookModel, sheet: SheetModel, row: number, col: number): string {
@@ -562,7 +562,9 @@ export function selectionStats(workbook: WorkbookModel, sheet: SheetModel, range
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (let row = normalized.r1; row <= normalized.r2; row += 1) {
+    if (sheet.hiddenRows[row]) continue;
     for (let col = normalized.c1; col <= normalized.c2; col += 1) {
+      if (sheet.hiddenCols[col]) continue;
       const cell = sheet.cells[cellKey(row, col)];
       const computed = workbook.computed?.[sheet.id]?.[cellKey(row, col)];
       const value = computed?.value ?? cell?.value;

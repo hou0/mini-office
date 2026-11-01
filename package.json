@@ -1,6 +1,6 @@
 {
   "name": "mini-office",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "packageManager": "pnpm@10.33.2",
   "description": "Mini Office — 轻量、离线优先的跨平台办公套件",
@@ -21,6 +21,8 @@
     "tauri:check": "pnpm --filter @mini-office/desktop exec tauri build --debug --no-bundle"
   },
   "devDependencies": {
+    "@fontsource/caladea": "5.3.0",
+    "@fontsource/carlito": "5.3.0",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",

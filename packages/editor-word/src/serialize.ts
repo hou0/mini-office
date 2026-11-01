@@ -29,6 +29,10 @@ import {
 import { extensionOf, uid } from '@mini-office/shared';
 import { buildWordMailMergeXml, fileUriTarget, MAIL_MERGE_DATA_REL, MAIL_MERGE_ODSO_REL, MAIL_MERGE_SOURCE_REL, type WordMailMergeInfo } from './mail-merge-ooxml';
 import { documentSections } from './sections';
+// 功能：目录域保存时用同一套标题判定采集条目，保证屏幕与文件一致；时间：2026-10-30；作者：lq。
+import { collectTocHeadings, type TocEntry } from './toc';
+// 功能：默认制表位间距与渲染共用同一常量，避免保存值与屏幕跳位不一致；时间：2026-10-30；作者：lq。
+import { DEFAULT_TAB_STOP_PX } from './tab-stops';
 // 功能：保存时把文档用到的样式定义写入 styles.xml，Word/WPS 才能显示样式名与标题层级；时间：2026-10-29；作者：lq。
 import { collectUsedStyleDefinitions, resolveStyleRun } from './styles';
 
@@ -60,6 +64,8 @@ interface SerializeState {
   drawingCounter: number;
   hasNumbering: boolean;
   sectPrXml?: string;
+  /** 功能：目录域缓存条目，保存时写入 TOC 域结果，避免 Word 打开后目录为空；时间：2026-10-30；作者：lq。 */
+  tocEntries?: TocEntry[];
 }
 
 const IMAGE_MIME_EXT: Record<string, string> = {
@@ -161,6 +167,18 @@ function paragraphProperties(
   const background = hexColor(style.backgroundColor);
   if (background) {
     parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${background}"/>`);
+  }
+  // 功能：制表位按 CT_PPr 顺序排在 shd 之后、spacing 之前；时间：2026-10-30；作者：lq。
+  if (style.tabStops && style.tabStops.length > 0) {
+    const stops = style.tabStops
+      .filter((stop) => Number.isFinite(stop.posPx) && stop.posPx >= 0)
+      .sort((a, b) => a.posPx - b.posPx)
+      .map((stop) => {
+        const leader = stop.leader && stop.leader !== 'none' ? ` w:leader="${stop.leader}"` : '';
+        return `<w:tab w:val="${stop.alignment}"${leader} w:pos="${Math.round(stop.posPx * 15)}"/>`;
+      })
+      .join('');
+    if (stops) parts.push(`<w:tabs>${stops}</w:tabs>`);
   }
   const spacingParts: string[] = [];
   if (style.spaceBeforePx !== undefined) spacingParts.push(`w:before="${Math.round(style.spaceBeforePx * 15)}"`);
@@ -336,10 +354,28 @@ function drawingXml(image: DocImage, relId: string, drawingId: number): string {
   const geometry = `<wp:extent cx="${widthEmu}" cy="${heightEmu}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>`;
   const frame = `<wp:docPr id="${drawingId}" name="${name}" descr="${descr}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${A_NS}" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="${A_NS}"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="${PIC_NS}"><pic:nvPicPr><pic:cNvPr id="${drawingId}" name="${name}" descr="${descr}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${widthEmu}" cy="${heightEmu}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
   const wrap = image.wrap ?? 'inline';
+  const anchorInfo = image.anchor;
+  const emu = (px: number) => Math.round(px * 9525);
+  const distT = emu(anchorInfo?.distTopPx ?? 0);
+  const distB = emu(anchorInfo?.distBottomPx ?? 0);
+  const distL = emu(anchorInfo?.distLeftPx ?? (anchorInfo ? 0 : 12));
+  const distR = emu(anchorInfo?.distRightPx ?? (anchorInfo ? 0 : 12));
+  // 功能：锚定位置按解析结果写回，保存后浮动图片不会跳回栏首；时间：2026-10-31；作者：lq。
+  const positionH = anchorInfo?.hAlign
+    ? `<wp:positionH relativeFrom="${anchorInfo.hRelative ?? 'column'}"><wp:align>${anchorInfo.hAlign}</wp:align></wp:positionH>`
+    : `<wp:positionH relativeFrom="${anchorInfo?.hRelative ?? 'column'}"><wp:posOffset>${emu(anchorInfo?.hOffsetPx ?? 0)}</wp:posOffset></wp:positionH>`;
+  const positionV = anchorInfo?.vAlign
+    ? `<wp:positionV relativeFrom="${anchorInfo.vRelative ?? 'paragraph'}"><wp:align>${anchorInfo.vAlign}</wp:align></wp:positionV>`
+    : `<wp:positionV relativeFrom="${anchorInfo?.vRelative ?? 'paragraph'}"><wp:posOffset>${emu(anchorInfo?.vOffsetPx ?? 0)}</wp:posOffset></wp:positionV>`;
+  const wrapText = anchorInfo?.wrapText ?? (wrap === 'square-right' ? 'left' : 'right');
+  // 功能：wrapTight/through 需要 wrapPolygon，这里统一降级为 wrapSquare，保证 Word 能正常打开；时间：2026-10-31；作者：lq。
+  const wrapXml = anchorInfo?.wrapType === 'topAndBottom' || wrap === 'top-bottom'
+    ? '<wp:wrapTopAndBottom/>'
+    : `<wp:wrapSquare wrapText="${wrapText}"/>`;
   // 功能：浮动图的环绕方式必须排在 wp:docPr 之前（CT_Anchor 顺序），否则 Word 会拒绝打开含浮动图的文档；时间：2026-10-29；作者：lq。
   const drawing = wrap === 'inline'
-    ? `<wp:inline distT="0" distB="0" distL="0" distR="0">${geometry}${frame}</wp:inline>`
-    : `<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="0" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>${geometry}${wrap === 'top-bottom' ? '<wp:wrapTopAndBottom/>' : `<wp:wrapSquare wrapText="${wrap === 'square-right' ? 'right' : 'left'}"/>`}${frame}</wp:anchor>`;
+    ? `<wp:inline distT="${distT}" distB="${distB}" distL="${distL}" distR="${distR}">${geometry}${frame}</wp:inline>`
+    : `<wp:anchor distT="${distT}" distB="${distB}" distL="${distL}" distR="${distR}" simplePos="0" relativeHeight="0" behindDoc="${anchorInfo?.behindDoc ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>${positionH}${positionV}${geometry}${wrapXml}${frame}</wp:anchor>`;
   return `<w:drawing>${drawing}</w:drawing>`;
 }
 
@@ -400,6 +436,21 @@ async function paragraphXml(
 ): Promise<string> {
   const includeNumbering = !options.forceNumberingAsText;
   const pPr = paragraphProperties(paragraph, state, includeNumbering);
+  // 功能：目录段落写回真正的 TOC 域，并附带缓存条目，Word / WPS 打开即可见；时间：2026-10-30；作者：lq。
+  if (paragraph.toc) {
+    const levels = paragraph.toc.levels;
+    const instruction = ` TOC \\o "1-${levels}" \\h \\z \\u `;
+    const entries = (state.tocEntries ?? []).filter((entry) => entry.level <= levels);
+    const result = entries
+      .map((entry, index) => {
+        const line =
+          `<w:r><w:t xml:space="preserve">${escapeXml(entry.text)}</w:t></w:r>` +
+          `<w:r><w:tab/><w:t xml:space="preserve">${escapeXml(String(entry.page))}</w:t></w:r>`;
+        return index === entries.length - 1 ? line : `${line}<w:r><w:br/></w:r>`;
+      })
+      .join('');
+    return `<w:p>${pPr}<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">${escapeXml(instruction)}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>${result}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>`;
+  }
   let prefix = '';
   if (
     paragraph.list &&
@@ -754,8 +805,11 @@ function documentRelsXml(rels: RelationshipInfo[]): string {
   return `${xmlDeclaration()}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items}</Relationships>`;
 }
 
-function settingsXml(): string {
-  return `${xmlDeclaration()}<w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="420"/><w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
+// 功能：默认制表位随文档写出，缺省用 Word 的 0.5 英寸（720 twips = 48px），保证重开后跳位与渲染一致；时间：2026-10-30；作者：lq。
+function settingsXml(defaultTabStopPx?: number): string {
+  const stepPx = defaultTabStopPx && defaultTabStopPx > 0 ? defaultTabStopPx : DEFAULT_TAB_STOP_PX;
+  const twips = Math.round(stepPx * 15);
+  return `${xmlDeclaration()}<w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="${twips}"/><w:characterSpacingControl w:val="compressPunctuation"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`;
 }
 
 function updateContentTypes(xml: string, extensions: Set<string>): string {
@@ -813,6 +867,8 @@ export interface SerializeDocxOptions {
   mailMergeState?: string;
   /** 模板保存时写给 Word / WPS 的邮件合并数据源与筛选，成品输出时移除。 */
   mailMerge?: WordMailMergeInfo;
+  /** 功能：目录条目（含页码），由编辑器渲染时的分页结果传入；缺省时按标题重新采集；时间：2026-10-30；作者：lq。 */
+  tocEntries?: TocEntry[];
 }
 
 export async function serializeDocx(
@@ -839,6 +895,10 @@ export async function serializeDocx(
     drawingCounter: 0,
     hasNumbering: sourceExists && zip.file('word/numbering.xml') !== null,
     sectPrXml: collectSectPrXml(documentXml),
+    // 功能：目录域缓存结果优先用编辑器实测页码，缺省时按标题重采并回落到第 1 页；时间：2026-10-30；作者：lq。
+    tocEntries:
+      options.tocEntries ??
+      collectTocHeadings(doc.blocks, 9).map((heading) => ({ ...heading, page: 1 })),
   };
 
   // 功能：每条记录对应独立节，分别设置页眉页脚及起始页码；时间：2026-10-24；作者：lq。
@@ -877,7 +937,7 @@ export async function serializeDocx(
   if (!sourceExists) {
     zip.file('[Content_Types].xml', contentTypesXml(false, false, false));
     zip.file('_rels/.rels', packageRelsXml());
-    zip.file('word/settings.xml', settingsXml());
+    zip.file('word/settings.xml', settingsXml(doc.defaultTabStopPx));
     zip.file('docProps/core.xml', corePropertiesXml(doc));
     zip.file('docProps/app.xml', appPropertiesXml());
     if (!state.documentRels.some((rel) => rel.type.endsWith('/styles'))) {
@@ -909,8 +969,16 @@ export async function serializeDocx(
 
   // 功能：成品不再连接外部合并数据源，打开时刷新分页域；时间：2026-10-24；作者：lq。
   if (options.materialized || options.sections) {
-    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml());
+    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml(doc.defaultTabStopPx));
     Array.from(settings.getElementsByTagName('w:mailMerge')).forEach((element) => element.remove());
+    const update = firstChild(settings.documentElement, 'w:updateFields') ?? settings.createElementNS(W_NS, 'w:updateFields');
+    update.setAttribute('w:val', 'true');
+    if (!update.parentNode) settings.documentElement.appendChild(update);
+    zip.file('word/settings.xml', new XMLSerializer().serializeToString(settings));
+  }
+  // 功能：含目录域时要求 Word/WPS 打开即刷新域，缓存页码与实际分页不一致也能自愈；时间：2026-10-30；作者：lq。
+  else if (sections.some((section) => section.blocks.some((block) => block.type === 'paragraph' && block.toc))) {
+    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml(doc.defaultTabStopPx));
     const update = firstChild(settings.documentElement, 'w:updateFields') ?? settings.createElementNS(W_NS, 'w:updateFields');
     update.setAttribute('w:val', 'true');
     if (!update.parentNode) settings.documentElement.appendChild(update);
@@ -919,7 +987,7 @@ export async function serializeDocx(
 
   // 功能：模板保存时写入面板状态与 Word / WPS 兼容的邮件合并信息；成品输出已在前一个分支移除；时间：2026-10-29；作者：lq。
   else if (options.mailMergeState !== undefined || options.mailMerge) {
-    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml());
+    const settings = parseXmlDom(await zip.file('word/settings.xml')?.async('text') ?? settingsXml(doc.defaultTabStopPx));
     if (options.mailMergeState !== undefined) {
       // 普通保存模板：把邮件合并面板状态写入文档变量，下次打开自动恢复
       const docVars = firstChild(settings.documentElement, 'w:docVars') ?? settings.createElementNS(W_NS, 'w:docVars');

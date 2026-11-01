@@ -296,6 +296,16 @@ export interface PrintPreviewOptions extends PrintPageGeometry {
   scale?: number;
   /** 每页各自的纸张尺寸，用于多节混合方向的文档；缺省时所有页共用 widthPx / heightPx。 */
   pageSizes?: PrintPageGeometry[];
+  /** 单页模式：只渲染当前页，配合 setPage 翻页；默认 false（整列平铺）。 */
+  singlePage?: boolean;
+}
+
+/** 功能：打印预览句柄——清理、翻页与页数；时间：2026-11-01；作者：lq。 */
+export interface PrintPreviewHandle {
+  cleanup: () => void;
+  /** 切到第 index 页（0 起）；整列平铺模式下无效。 */
+  setPage: (index: number) => void;
+  pageCount: number;
 }
 
 /**
@@ -304,7 +314,7 @@ export interface PrintPreviewOptions extends PrintPageGeometry {
  *
  * 返回的清理函数会移除预览 DOM，但不销毁调用方传入的页面元素。
  */
-export function renderPrintPreview(options: PrintPreviewOptions): () => void {
+export function renderPrintPreview(options: PrintPreviewOptions): PrintPreviewHandle {
   const { host, pages } = options;
   host.replaceChildren();
   const sizes = options.pageSizes && options.pageSizes.length === pages.length ? options.pageSizes : null;
@@ -320,7 +330,46 @@ export function renderPrintPreview(options: PrintPreviewOptions): () => void {
   const maxHeight = papers.reduce((max, paper) => Math.max(max, Number.parseFloat(paper.sheetHeight)), 0);
   const mixed = papers.some((paper) => paper.width !== papers[0].width || paper.height !== papers[0].height);
   const gutter = options.gutter ?? 24;
-  // 功能：整列按容器宽度等比缩放，超宽纸张也不出现横向滚动条；时间：2026-10-29；作者：lq。
+  const cleanup = () => host.replaceChildren();
+  const clampIndex = (index: number) => Math.max(0, Math.min(pages.length - 1, Math.trunc(index) || 0));
+
+  // 功能：单页模式——一次只渲染一页，按容器宽高双向适配，接近 Office/GenOffice 的打印预览；时间：2026-11-01；作者：lq。
+  if (options.singlePage) {
+    const stage = document.createElement('div');
+    stage.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;padding:14px;box-sizing:border-box;';
+    host.appendChild(stage);
+    const paint = (index: number) => {
+      const paper = papers[index];
+      if (!paper) return;
+      const width = Number.parseFloat(paper.width);
+      const height = Number.parseFloat(paper.sheetHeight);
+      const availableWidth = Math.max(200, (host.clientWidth || 640) - gutter * 2);
+      const availableHeight = Math.max(200, (host.clientHeight || 520) - gutter * 2);
+      const scale =
+        options.scale && options.scale > 0
+          ? options.scale
+          : Math.min(1, availableWidth / maxWidth, availableHeight / maxHeight);
+      const frame = document.createElement('div');
+      frame.style.cssText = `position:relative;flex:0 0 auto;width:${width * scale}px;height:${height * scale}px;background:#ffffff;box-shadow:0 1px 3px rgba(15,23,42,.16),0 0 0 1px rgba(15,23,42,.10);overflow:hidden;`;
+      const page = pages[index];
+      page.style.position = 'absolute';
+      page.style.left = '0';
+      page.style.top = '0';
+      page.style.margin = '0';
+      page.style.transform = `scale(${scale})`;
+      page.style.transformOrigin = 'top left';
+      frame.appendChild(page);
+      stage.replaceChildren(frame);
+    };
+    paint(0);
+    return {
+      cleanup,
+      pageCount: pages.length,
+      setPage: (index: number) => paint(clampIndex(index)),
+    };
+  }
+
+  // 功能：整列平铺模式——页数少时一屏看全，仍是 Excel 多页对照的默认视图；时间：2026-10-29；作者：lq。
   const available = Math.max(240, (host.clientWidth || 640) - gutter);
   const scale = options.scale && options.scale > 0 ? options.scale : Math.min(1, available / maxWidth);
   const list = document.createElement('div');
@@ -338,7 +387,7 @@ export function renderPrintPreview(options: PrintPreviewOptions): () => void {
         ? ` · ${paper.name ?? '自定义'} ${paper.widthMm > paper.heightMm ? '横向' : '纵向'}`
         : '';
       label.textContent = `第 ${index + 1} / ${pages.length} 页${suffix}`;
-      label.style.cssText = 'font-size:11px;line-height:14px;color:#E4E7EC;';
+      label.style.cssText = 'font-size:11px;line-height:14px;color:var(--mo-text-muted,#667085);';
       column.appendChild(label);
     }
     const frame = document.createElement('div');
@@ -354,7 +403,7 @@ export function renderPrintPreview(options: PrintPreviewOptions): () => void {
     list.appendChild(column);
   });
   host.appendChild(list);
-  return () => host.replaceChildren();
+  return { cleanup, pageCount: pages.length, setPage: () => undefined };
 }
 
 /** Print the current view. Tauri uses the native WKWebView/WebView2 print API. */

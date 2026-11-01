@@ -1,5 +1,9 @@
 import { DEFAULT_ACCENT_HEX, type AccentId, type AppSettings } from '@mini-office/shared';
 
+// 功能：文档纸张色换算（深色模式提亮文字、压暗底纹、框线跟随主题）供 Word 与 Excel 共用；时间：2026-10-31；作者：lq。
+export * from './colors';
+export * from './use-paper-theme';
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
@@ -30,20 +34,179 @@ export const FONT_CHOICES = [
   'Courier New',
 ] as const;
 
-/** Map CSS-facing Chinese font names to concrete family stacks. */
+/**
+ * 功能：Word 常见西文字体 → 随包度量兼容字体的映射；时间：2026-10-31；作者：lq。
+ *
+ * Calibri/Cambria 在未安装 Office 的机器上不存在，Carlito/Caladea 与它们字符宽度一致，
+ * 用它兜底才能让换行位置、页数与 Word 打开时接近。
+ */
+const LATIN_FONT_STACKS: Record<string, string> = {
+  calibri: '"Calibri", "Carlito", "Segoe UI", system-ui, sans-serif',
+  carlito: '"Carlito", "Calibri", system-ui, sans-serif',
+  cambria: '"Cambria", "Caladea", "Georgia", serif',
+  caladea: '"Caladea", "Cambria", "Georgia", serif',
+  'times new roman': '"Times New Roman", "Liberation Serif", "Songti SC", serif',
+  arial: '"Arial", "Helvetica Neue", "Liberation Sans", sans-serif',
+  helvetica: '"Helvetica Neue", "Arial", sans-serif',
+  'helvetica neue': '"Helvetica Neue", "Arial", sans-serif',
+  'courier new': '"Courier New", "Courier", monospace',
+  consolas: '"Consolas", "Menlo", monospace',
+  'segoe ui': '"Segoe UI", system-ui, sans-serif',
+  verdana: '"Verdana", "Geneva", sans-serif',
+  georgia: '"Georgia", "Caladea", serif',
+  garamond: '"Garamond", "Caladea", serif',
+  'trebuchet ms': '"Trebuchet MS", "Helvetica Neue", sans-serif',
+  'comic sans ms': '"Comic Sans MS", "Chalkboard SE", cursive',
+};
+
+/** 功能：候选字体清单，用于探测本机已安装字体；时间：2026-10-31；作者：lq。 */
+export const FONT_PROBES: readonly string[] = [
+  '宋体',
+  '新宋体',
+  '仿宋',
+  '楷体',
+  '黑体',
+  '微软雅黑',
+  '等线',
+  '幼圆',
+  '隶书',
+  '华文宋体',
+  '华文中宋',
+  '华文仿宋',
+  '华文楷体',
+  '华文细黑',
+  '思源宋体',
+  '思源黑体',
+  'PingFang SC',
+  'Songti SC',
+  'Heiti SC',
+  'Kaiti SC',
+  'STSong',
+  'STFangsong',
+  'STKaiti',
+  'STHeiti',
+  'Calibri',
+  'Cambria',
+  'Arial',
+  'Times New Roman',
+  'Courier New',
+  'Consolas',
+  'Georgia',
+  'Verdana',
+  'Trebuchet MS',
+  'Segoe UI',
+  'Helvetica Neue',
+  'Caladea',
+  'Carlito',
+];
+
+/**
+ * 功能：用 document.fonts.check 探测本机真正可用的字体；时间：2026-10-31；作者：lq。
+ *
+ * 浏览器不能直接枚举系统字体，但可以逐个探测候选族是否可渲染。
+ * 探测失败时退回内置清单，保证下拉永远有选项。
+ */
+export function detectInstalledFonts(): string[] {
+  if (typeof document === 'undefined' || typeof document.fonts?.check !== 'function') return [...FONT_CHOICES];
+  const available: string[] = [];
+  for (const name of FONT_PROBES) {
+    try {
+      if (document.fonts.check(`16px "${name}"`)) available.push(name);
+    } catch {
+      // 非法字体名直接跳过
+    }
+  }
+  return available.length ? available : [...FONT_CHOICES];
+}
+
+/**
+ * 功能：字体下拉的最终选项——本机可用字体 + 当前文档正在用的字体；时间：2026-10-31；作者：lq。
+ *
+ * `installed` 传入平台适配器枚举到的真实字体清单（桌面端可拿到全部系统字体），
+ * 拿不到时才退回到逐个探测；两者都为空时使用内置清单，保证下拉永远有选项。
+ */
+export function availableFontChoices(current?: string, installed?: string[]): string[] {
+  const detected = installed && installed.length > 0 ? installed : detectInstalledFonts();
+  const list = ['默认', ...detected.filter((name) => name && name !== '默认')];
+  if (current && !list.includes(current)) list.push(current);
+  return list;
+}
+
+/**
+ * 功能：CJK 字体按字形风格分成几类回退栈；时间：2026-10-31；作者：lq。
+ *
+ * 之前所有未知中文字体都回退到 DOC_FONT_STACK（以 PingFang SC 打头，属于黑体类），
+ * 于是宋体、仿宋、楷体文档在没装对应字体的机器上会整体变成黑体，字形与原件差别很大。
+ * 按风格分类后，至少能保证「衬线还是无衬线」「仿宋/楷体的书写感」这两层是对的。
+ */
+const CJK_STACKS = {
+  song: '"Songti SC", "SimSun", "Noto Serif CJK SC", "Source Han Serif SC", serif',
+  fangsong: '"FangSong", "STFangsong", "FangSong_GB2312", "Songti SC", serif',
+  kai: '"Kaiti SC", "KaiTi", "STKaiti", "Kaiti_GB2312", serif',
+  li: '"Baoli SC", "STLiti", "Kaiti SC", serif',
+  hei: '"PingFang SC", "Heiti SC", "SimHei", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif',
+  round: '"Yuanti SC", "YouYuan", "PingFang SC", "Noto Sans CJK SC", sans-serif',
+  mono: '"SF Mono", "Menlo", "Consolas", "Courier New", monospace',
+} as const;
+
+/** 功能：常见中文字体名 → 回退栈；覆盖 Office 自带、华文、方正、GB2312 等别名；时间：2026-10-31；作者：lq。 */
+const CJK_FONT_STACKS: Record<string, string> = {
+  宋体: CJK_STACKS.song,
+  新宋体: CJK_STACKS.song,
+  '宋体-简': CJK_STACKS.song,
+  '宋体-繁': CJK_STACKS.song,
+  华文宋体: '"STSong", "Songti SC", "SimSun", serif',
+  华文中宋: '"STZhongsong", "Songti SC", "SimSun", serif',
+  方正小标宋简体: '"STZhongsong", "Songti SC", "SimSun", serif',
+  方正书宋简体: CJK_STACKS.song,
+  仿宋: CJK_STACKS.fangsong,
+  '仿宋_GB2312': CJK_STACKS.fangsong,
+  华文仿宋: '"STFangsong", "FangSong", serif',
+  方正仿宋简体: CJK_STACKS.fangsong,
+  楷体: CJK_STACKS.kai,
+  '楷体_GB2312': CJK_STACKS.kai,
+  华文楷体: '"STKaiti", "Kaiti SC", serif',
+  方正楷体简体: CJK_STACKS.kai,
+  隶书: CJK_STACKS.li,
+  华文隶书: '"STLiti", "Baoli SC", serif',
+  黑体: CJK_STACKS.hei,
+  华文细黑: '"STHeiti", "Heiti SC", "PingFang SC", sans-serif',
+  微软雅黑: '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif',
+  '微软雅黑 Light': '"Microsoft YaHei", "PingFang SC", sans-serif',
+  等线: '"DengXian", "PingFang SC", sans-serif',
+  '等线 Light': '"DengXian", "PingFang SC", sans-serif',
+  幼圆: CJK_STACKS.round,
+  思源宋体: '"Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif',
+  思源黑体: '"Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", sans-serif',
+};
+
+/** 功能：按字体名里的字形关键字推断回退栈，覆盖表里没列出的厂商字体；时间：2026-10-31；作者：lq。 */
+function heuristicCjkStack(name: string): string {
+  if (/仿宋|fangsong/i.test(name)) return CJK_STACKS.fangsong;
+  if (/楷|kai/i.test(name)) return CJK_STACKS.kai;
+  if (/隶|lishu|liti/i.test(name)) return CJK_STACKS.li;
+  if (/圆|yuanti|youyuan/i.test(name)) return CJK_STACKS.round;
+  if (/宋|song|明朝|mincho/i.test(name)) return CJK_STACKS.song;
+  if (/黑|hei|yahei|雅黑|sans|gothic/i.test(name)) return CJK_STACKS.hei;
+  if (/mono|code|consol|courier/i.test(name)) return CJK_STACKS.mono;
+  return DOC_FONT_STACK;
+}
+
+/**
+ * 功能：把文档里的字体名换成浏览器可用的字体栈；时间：2026-10-31；作者：lq。
+ *
+ * 顺序：西文度量兼容映射 → 中文字体表 → 字形关键字推断。
+ * 未命中的字体仍把它自己放在栈首，本机装了就直接用，没装才走回退。
+ */
 export function fontStackFor(name?: string): string {
   if (!name || name === '默认') return DOC_FONT_STACK;
-  const map: Record<string, string> = {
-    宋体: '"Songti SC", "SimSun", "Noto Serif CJK SC", serif',
-    仿宋: '"FangSong", "STFangsong", "FangSong_GB2312", serif',
-    黑体: '"Heiti SC", "SimHei", "Noto Sans CJK SC", sans-serif',
-    楷体: '"Kaiti SC", "KaiTi", "STKaiti", serif',
-    微软雅黑: '"Microsoft YaHei", "PingFang SC", sans-serif',
-    等线: '"DengXian", "PingFang SC", sans-serif',
-    思源宋体: '"Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif',
-    思源黑体: '"Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", sans-serif',
-  };
-  return map[name] ?? `"${name}", ${DOC_FONT_STACK}`;
+  const key = name.trim();
+  if (!key) return DOC_FONT_STACK;
+  const latin = LATIN_FONT_STACKS[key.toLowerCase()];
+  if (latin) return latin;
+  const mapped = CJK_FONT_STACKS[key];
+  if (mapped) return mapped;
+  return `"${key}", ${heuristicCjkStack(key)}`;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -216,7 +379,10 @@ export function accentPresetById(accent: AccentId | string | undefined | null): 
   return ACCENT_PRESETS.find((preset) => preset.id === id);
 }
 
-export type AppearanceConfig = Pick<AppSettings, 'theme' | 'accent' | 'customAccent'>;
+/** 功能：外观配置；护眼模式为可选项，缺省视为关闭，便于旧调用点无需改动；时间：2026-10-30；作者：lq。 */
+export type AppearanceConfig = Pick<AppSettings, 'theme' | 'accent' | 'customAccent'> & {
+  eyeCare?: boolean;
+};
 
 let lastAccent: { accent: AccentId; customAccent: string } = {
   accent: DEFAULT_ACCENT,
@@ -271,6 +437,10 @@ export function applyAppearance(config: AppearanceConfig): ResolvedTheme {
     accent: normalizeAccentId(config.accent),
     customAccent: normalizeAccentHex(config.customAccent) ?? DEFAULT_ACCENT_HEX,
   };
+  // 功能：护眼模式只切换 data-eyecare，配色全部由 tokens.css 承担，方便主题插件叠加；时间：2026-10-30；作者：lq。
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.eyecare = config.eyeCare ? 'on' : 'off';
+  }
   return applyTheme(config.theme);
 }
 

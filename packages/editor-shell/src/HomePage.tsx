@@ -29,12 +29,18 @@ const KIND_ICONS: Record<OfficeKind, typeof FileText> = {
   docx: FileText,
   xlsx: Table2,
   pptx: Presentation,
+  pdf: FileText,
+  md: FileText,
+  html: FileText,
 };
 
 const KIND_TINTS: Record<OfficeKind, { bg: string; color: string }> = {
   docx: { bg: '#EEF3FF', color: '#2B579A' },
   xlsx: { bg: '#E9F7EF', color: '#217346' },
   pptx: { bg: '#FCEFE9', color: '#C43E1C' },
+  pdf: { bg: '#FDECEC', color: '#E34F4F' },
+  md: { bg: '#F0EEFF', color: '#6B5BD2' },
+  html: { bg: '#FFF1E3', color: '#E67E22' },
 };
 
 export function HomePage() {
@@ -202,8 +208,8 @@ export function HomePage() {
                 <span className="text-[var(--mo-accent)]"> Office</span> 功能
               </h1>
               <p className="mt-3 max-w-[540px] text-[13px] leading-6 text-[var(--mo-text-muted)]">
-                离线优先、轻量快速的跨平台办公套件。Word、Excel、PPT 在同一处打开，
-                重视真实文件兼容与文档安全。
+                离线优先、轻量快速的跨平台办公套件。Word、Excel、PPT 在同一处编辑，
+                PDF、Markdown、HTML 在同一处预览，重视真实文件兼容与文档安全。
               </p>
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <Button variant="primary" icon={<FolderOpen size={15} />} onClick={() => void openFile()} loading={busy}>
@@ -217,7 +223,7 @@ export function HomePage() {
                   onClick={() => void openFile()}
                   className="ml-1 inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-[var(--mo-text-muted)] hover:bg-[var(--mo-surface-2)]"
                 >
-                  <UploadCloud size={14} /> 或将 DOCX / XLSX / PPTX 拖入窗口
+                  <UploadCloud size={14} /> 或将 DOCX / XLSX / PPTX / PDF / MD / HTML 拖入窗口
                 </button>
               </div>
             </div>

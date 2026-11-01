@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { createBlankWorkbook } from '@mini-office/document-model';
 import { SheetGrid } from '../packages/editor-sheet/src/SheetGrid';
-import { applyFilter, sortRange, tableRangeForSelection, type Selection } from '../packages/editor-sheet/src/sheet-utils';
+import { applyFilter, selectionStats, sortRange, tableRangeForSelection, type Selection } from '../packages/editor-sheet/src/sheet-utils';
 import { serializeXlsx } from '../packages/editor-sheet/src/serialize';
 import { parseWorkbookPackage } from '../packages/editor-sheet/src/parse';
 import { loadOoxmlPackage } from '@mini-office/ooxml';
@@ -121,4 +121,110 @@ describe('表头选区与筛选', () => {
     expect(reopened.sheets[0].hiddenRows[4]).toBeUndefined();
   });
 
+});
+
+// 功能：阅读模式（十字高亮行列）是核对长表格的刚需，验证开关只影响参考带与表头高亮；时间：2026-10-30；作者：lq。
+describe('阅读模式高亮行列', () => {
+  function renderGrid(crosshair: boolean) {
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const book = fixture();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const scrollRef = { current: null as HTMLDivElement | null };
+    act(() =>
+      root.render(
+        createElement(SheetGrid, {
+          workbook: book,
+          sheet: book.sheets[0],
+          selection: { anchor: { row: 1, col: 1 }, focus: { row: 1, col: 1 } },
+          editing: null,
+          scrollElementRef: scrollRef,
+          crosshair,
+          onSelectionChange: vi.fn(),
+          onStartEdit: vi.fn(),
+          onCommitEdit: vi.fn(),
+          onCancelEdit: vi.fn(),
+          onColumnResize: vi.fn(),
+          onRowResize: vi.fn(),
+          onCellContextMenu: vi.fn(),
+          onHeaderContextMenu: vi.fn(),
+          onAction: vi.fn(),
+          onFill: vi.fn(),
+        }),
+      ),
+    );
+    return { host, cleanup: () => { act(() => root.unmount()); host.remove(); } };
+  }
+
+  it('筛选隐藏的数字不计入可见选区求和', () => {
+    const book = fixture();
+    book.sheets[0].hiddenRows = { 2: true };
+    const stats = selectionStats(book, book.sheets[0], { r1: 1, r2: 3, c1: 1, c2: 1 });
+    expect(stats).toMatchObject({ count: 2, sum: 40, average: 20 });
+  });
+
+  it('冻结行列在滚动后仍沿冻结边界对齐', () => {
+    const book = fixture();
+    book.sheets[0].freeze = { rows: 1, cols: 1 };
+    const element = document.createElement('div'); document.body.append(element);
+    const root = createRoot(element);
+    act(() => root.render(createElement(SheetGrid, { workbook: book, sheet: book.sheets[0],
+      selection: { anchor: { row: 1, col: 1 }, focus: { row: 1, col: 1 } }, editing: null,
+      onSelectionChange: vi.fn(), onStartEdit: vi.fn(), onCommitEdit: vi.fn(), onCancelEdit: vi.fn(),
+      onColumnResize: vi.fn(), onRowResize: vi.fn(), onCellContextMenu: vi.fn(),
+      onHeaderContextMenu: vi.fn(), onAction: vi.fn(), onFill: vi.fn(),
+    })));
+    try {
+      const topPane = [...element.querySelectorAll('div')].find((node) => node.style.borderBottom === '1px solid var(--mo-line-strong)');
+      const leftPane = [...element.querySelectorAll('div')].find((node) => node.style.borderRight === '1px solid var(--mo-line-strong)');
+      expect(topPane?.querySelector('[data-cell="0:1"]')).toBeTruthy();
+      expect((topPane?.querySelector('[data-cell="0:1"]') as HTMLElement).style.left).toBe('0px');
+      expect(leftPane?.querySelector('[data-cell="1:0"]')).toBeTruthy();
+      expect((leftPane?.querySelector('[data-cell="1:0"]') as HTMLElement).style.top).toBe('0px');
+    } finally { act(() => root.unmount()); element.remove(); }
+  });
+
+  it('双击列表头边缘自适应宽度，单元格编辑不出现第二层文本', () => {
+    const book = fixture();
+    const element = document.createElement('div'); document.body.append(element);
+    const root = createRoot(element); const resize = vi.fn();
+    const render = (editing: { row: number; col: number; initialText: string } | null) => root.render(createElement(SheetGrid, {
+      workbook: book, sheet: book.sheets[0], selection: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } }, editing,
+      onSelectionChange: vi.fn(), onStartEdit: vi.fn(), onCommitEdit: vi.fn(), onCancelEdit: vi.fn(),
+      onColumnResize: resize, onRowResize: vi.fn(), onCellContextMenu: vi.fn(),
+      onHeaderContextMenu: vi.fn(), onAction: vi.fn(), onFill: vi.fn(),
+    }));
+    try {
+      act(() => render(null));
+      const header = [...element.querySelectorAll('div')].find((node) => node.textContent === 'A' && node.style.cursor === '' && node.style.width === '88px')!;
+      const grip = [...header.children].find((node) => (node as HTMLElement).style.cursor === 'col-resize')!;
+      act(() => grip.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+      expect(resize).toHaveBeenCalledWith(0, expect.any(Number));
+      act(() => render({ row: 0, col: 0, initialText: '部门' }));
+      expect(element.querySelector('[data-cell="0:0"]')?.textContent).toBe('');
+      expect(element.querySelector('input[aria-label="单元格编辑"]')).toBeTruthy();
+    } finally { act(() => root.unmount()); element.remove(); }
+  });
+
+  it('开启后出现行列参考带，并点亮当前行列表头', () => {
+    const { host, cleanup } = renderGrid(true);
+    try {
+      expect(host.querySelector('[data-crosshair="row"]')).toBeTruthy();
+      expect(host.querySelector('[data-crosshair="col"]')).toBeTruthy();
+      expect(host.querySelectorAll('[data-cross-active]')).toHaveLength(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('关闭后不渲染任何参考带与表头高亮，不干扰正常阅读', () => {
+    const { host, cleanup } = renderGrid(false);
+    try {
+      expect(host.querySelector('[data-crosshair]')).toBeNull();
+      expect(host.querySelectorAll('[data-cross-active]')).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
 });

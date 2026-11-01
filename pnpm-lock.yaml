@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@fontsource/caladea':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/carlito':
+        specifier: 5.3.0
+        version: 5.3.0
       '@types/node':
         specifier: ^22.5.5
         version: 22.20.5
@@ -626,6 +632,12 @@ packages:
     engines: {node: '>=12'}
     cpu: [x64]
     os: [win32]
+
+  '@fontsource/caladea@5.3.0':
+    resolution: {integrity: sha512-ErBJWj9Gp/tTS33h0SUHmU3MCHzQa3RJS405ccznE8xxVK41J+mrKhjjcf3oIrnQTCgICMbl9nAH3XMXN9ANUg==}
+
+  '@fontsource/carlito@5.3.0':
+    resolution: {integrity: sha512-oPqvLGK/dtVzC4KjdDcV/YzQq37sZdMXxD58ADvguPo3dm6yzbBKs40ADmevJF0wLvyvJY7/fPl5YkCQ1njWUw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -2040,6 +2052,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.21.5':
     optional: true
+
+  '@fontsource/caladea@5.3.0': {}
+
+  '@fontsource/carlito@5.3.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

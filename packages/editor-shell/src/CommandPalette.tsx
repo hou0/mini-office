@@ -4,6 +4,7 @@ import {
   AppWindow,
   ArrowRight,
   Download,
+  Eye,
   FilePlus2,
   FileText,
   FileWarning,
@@ -17,6 +18,7 @@ import {
   Presentation,
   Printer,
   Puzzle,
+  Ruler,
   Save,
   SaveAll,
   Search,
@@ -92,7 +94,7 @@ export function CommandPalette({
       onHome();
     };
     const applyThemeMode = (theme: 'light' | 'dark' | 'system') => {
-      applyAppearance({ theme, accent: settings.accent, customAccent: settings.customAccent });
+      applyAppearance({ theme, accent: settings.accent, customAccent: settings.customAccent, eyeCare: settings.eyeCare });
       updateSettings({ theme });
     };
     const list: Command[] = [
@@ -211,6 +213,31 @@ export function CommandPalette({
         icon: <PanelRight size={15} />,
         run: () => updateSettings({ showProperties: !settings.showProperties }),
       },
+      // 功能：标尺默认隐藏，命令面板提供显式入口，找不到工具栏按钮时也能开启；时间：2026-10-30；作者：lq。
+      {
+        id: 'word-ruler',
+        label: settings.wordRuler === true ? '隐藏标尺' : '显示标尺',
+        section: '视图',
+        icon: <Ruler size={15} />,
+        disabled: activeSession?.kind !== 'docx',
+        run: () => updateSettings({ wordRuler: settings.wordRuler !== true }),
+      },
+      {
+        id: 'eye-care',
+        label: settings.eyeCare ? '关闭护眼模式' : '开启护眼模式',
+        section: '视图',
+        icon: <Eye size={15} />,
+        run: () => {
+          const eyeCare = !settings.eyeCare;
+          applyAppearance({
+            theme: settings.theme,
+            accent: settings.accent,
+            customAccent: settings.customAccent,
+            eyeCare,
+          });
+          updateSettings({ eyeCare });
+        },
+      },
       {
         id: 'theme-light',
         label: '切换到浅色主题',
@@ -248,6 +275,7 @@ export function CommandPalette({
             theme: settings.theme,
             accent: preset.id,
             customAccent: settings.customAccent,
+            eyeCare: settings.eyeCare,
           });
           updateSettings({ accent: preset.id });
         },
@@ -332,8 +360,10 @@ export function CommandPalette({
     saveActive,
     settings.accent,
     settings.customAccent,
+    settings.eyeCare,
     settings.showProperties,
     settings.theme,
+    settings.wordRuler,
     updateSettings,
   ]);
 

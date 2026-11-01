@@ -232,12 +232,20 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
     theme?: ThemeMode;
     accent?: AccentId;
     customAccent?: string;
+    eyeCare?: boolean;
   }) => {
     applyAppearance({
       theme: patch.theme ?? settings.theme,
       accent: patch.accent ?? settings.accent,
       customAccent: patch.customAccent ?? settings.customAccent,
+      eyeCare: patch.eyeCare ?? settings.eyeCare,
     });
+  };
+
+  // 功能：护眼模式即时预览，避免用户开关后看不出变化；时间：2026-10-30；作者：lq。
+  const setEyeCare = (eyeCare: boolean) => {
+    updateSettings({ eyeCare });
+    previewAppearance({ eyeCare });
   };
 
   const setTheme = (theme: ThemeMode) => {
@@ -269,11 +277,13 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
       showProperties: false,
       showToolbar: true,
       restoreSession: true,
+      eyeCare: false,
     });
     applyAppearance({
       theme: 'system',
       accent: 'mist',
       customAccent: DEFAULT_ACCENT_HEX,
+      eyeCare: false,
     });
     setCustomHex(DEFAULT_ACCENT_HEX);
     notify('success', '已恢复默认设置');
@@ -520,6 +530,26 @@ function SettingsContent({ onClose }: { onClose: () => void }) {
                   </span>
                 </div>
 
+                {/* 功能：护眼模式开关，纸张与界面同步转米黄，导出仍为白纸；时间：2026-10-30；作者：lq。 */}
+                <SettingRow
+                  title="护眼模式"
+                  description="界面与纸张改用低蓝光米黄色，长时间阅读更舒适；打印与导出 PDF 仍是标准白纸。"
+                  control={
+                    <Switch checked={settings.eyeCare} onChange={setEyeCare} label="护眼模式" />
+                  }
+                />
+                {/* 功能：标尺默认隐藏（与 Word / WPS 一致），需要精确缩进与制表位时再开启；时间：2026-10-30；作者：lq。 */}
+                <SettingRow
+                  title="Word 标尺"
+                  description="在正文上方显示标尺，可拖动首行与左右缩进、增删制表位；排版合同、公文填空行时再开启。"
+                  control={
+                    <Switch
+                      checked={settings.wordRuler === true}
+                      onChange={(checked) => updateSettings({ wordRuler: checked })}
+                      label="Word 标尺"
+                    />
+                  }
+                />
                 {canVibrancy ? (
                   <SettingRow
                     title="毛玻璃效果"

@@ -18,6 +18,7 @@ import type {
   WorkbookModel,
 } from '@mini-office/document-model';
 import { columnLabel } from '@mini-office/shared';
+import { fontStackFor, paperFill, paperInk, paperLine, usePaperTheme } from '@mini-office/design-system';
 import { cellKey } from '@mini-office/document-model';
 // 功能：在表头显示筛选入口与激活状态；时间：2026-10-24；作者：lq。
 import { ChevronDown, Filter } from 'lucide-react';
@@ -74,6 +75,8 @@ export interface SheetGridProps {
   onFilterColumn?: (col: number, anchor: DOMRect) => void;
   // 功能：图片编辑回调及缩放坐标换算参数；时间：2026-10-24；作者：lq。
   readonly?: boolean;
+  /** 功能：阅读模式——十字高亮当前单元格所在行列；时间：2026-10-30；作者：lq。 */
+  crosshair?: boolean;
   zoom?: number;
   onImageChange?: (id: string, patch: Partial<SheetImage>) => void;
   onImageDelete?: (id: string) => void;
@@ -109,10 +112,11 @@ function borderCss(side: CellBorders['top']): string | undefined {
   if (!side) return undefined;
   // 功能：让“无框线”覆盖默认网格线，避免边框清除后仍显示浅色网格；时间：2026-10-24；作者：lq。
   if (side.style === 'none') return 'none';
-  const width = side.style === 'thick' ? 3 : side.style === 'medium' || side.style === 'double' ? 2 : 1;
+  const width = side.style === 'thick' || side.style === 'double' ? 3 : side.style === 'medium' ? 2 : 1;
   // 功能：将 Excel 的“细/中/粗”边框语义转换为浏览器可识别的实线；时间：2026-10-24；作者：lq。
   const lineStyle = side.style === 'double' ? 'double' : side.style === 'dashed' ? 'dashed' : side.style === 'dotted' ? 'dotted' : 'solid';
-  return `${width}px ${lineStyle} ${side.color ?? '#000000'}`;
+  // 功能：黑色框线走主题变量，深色纸张上自动提亮、打印与导出时仍是纯黑；时间：2026-10-31；作者：lq。
+  return `${width}px ${lineStyle} ${paperLine(side.color, '#000000')}`;
 }
 
 function buildOffsets(count: number, sizeAt: (index: number) => number): number[] {
@@ -144,10 +148,13 @@ export function SheetGrid(props: SheetGridProps) {
     onHeaderContextMenu,
     onAction,
     onFill,
+    crosshair,
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 功能：单元格底色/文字色需要按当前纸张主题换算，主题切换时重新渲染；时间：2026-10-31；作者：lq。
+  const darkPaper = usePaperTheme() === 'dark';
   const [viewport, setViewport] = useState({ width: 800, height: 500 });
   const [scroll, setScroll] = useState({ left: 0, top: 0 });
   const [resizePreview, setResizePreview] = useState<{ kind: 'col' | 'row'; index: number; size: number } | null>(null);
@@ -205,6 +212,14 @@ export function SheetGrid(props: SheetGridProps) {
     }
     return { origin, covered };
   }, [sheet.merges]);
+
+  useLayoutEffect(() => {
+    // Filtering can shrink the scrollable area while the browser clamps scrollTop.
+    const element = scrollRef.current;
+    if (!element) return;
+    setScroll((previous) => previous.left === element.scrollLeft && previous.top === element.scrollTop
+      ? previous : { left: element.scrollLeft, top: element.scrollTop });
+  }, [totalHeight, totalWidth]);
 
   const startRow = findIndex(rowOffsets, scroll.top);
   const endRow = Math.min(rowsCount - 1, findIndex(rowOffsets, scroll.top + viewport.height) + OVERSCAN);
@@ -333,7 +348,7 @@ export function SheetGrid(props: SheetGridProps) {
   useEffect(() => {
     const scrollElement = scrollRef.current;
     // 功能：表头选择仅改变选区，保持当前水平和垂直滚动位置；时间：2026-10-24；作者：lq。
-    if (!scrollElement || selection.kind) return;
+    if (!scrollElement || selection.kind || sheet.hiddenRows[active.row] || sheet.hiddenCols[active.col]) return;
     const left = colOffsets[active.col] ?? 0;
     const right = colOffsets[active.col + 1] ?? left;
     const top = rowOffsets[active.row] ?? 0;
@@ -346,7 +361,7 @@ export function SheetGrid(props: SheetGridProps) {
     else if (bottom > scrollElement.scrollTop + scrollElement.clientHeight) {
       scrollElement.scrollTop = bottom - scrollElement.clientHeight;
     }
-  }, [active.col, active.row, colOffsets, rowOffsets, selection.kind]);
+  }, [active.col, active.row, colOffsets, rowOffsets, selection.kind, sheet.hiddenRows, sheet.hiddenCols]);
 
   const handleScroll = useCallback(() => {
     if (scrollRaf.current !== null) return;
@@ -516,6 +531,41 @@ export function SheetGrid(props: SheetGridProps) {
     [draft, onCommitEdit],
   );
 
+  const autoFit = (kind: 'col' | 'row', index: number) => {
+    if (props.readonly) return;
+    resizeRef.current = null;
+    setResizePreview(null);
+    // Measure with the same font and text as the grid, including imported styles.
+    const measure = document.createElement('span');
+    measure.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;pointer-events:none';
+    document.body.append(measure);
+    try {
+      if (kind === 'col') {
+        let width = 24;
+        for (const key of Object.keys(sheet.cells)) {
+          const [row, col] = key.split(':').map(Number);
+          if (col !== index || sheet.hiddenRows[row]) continue;
+          const style = cellStyle(workbook, sheet.cells[key]);
+          measure.style.font = `${style.italic ? 'italic ' : ''}${style.bold ? 'bold ' : ''}${style.fontSizePt ?? workbook.defaultFontSizePt}pt ${fontStackFor(style.fontFamily ?? workbook.defaultFont)}`;
+          const text = cellDisplay(workbook, sheet, row, col);
+          measure.textContent = text;
+          width = Math.max(width, Math.ceil(measure.getBoundingClientRect().width || text.length * (style.fontSizePt ?? workbook.defaultFontSizePt)) + 12 + (style.indent ?? 0) * 8 + (sheet.autoFilter?.r1 === row ? 18 : 0));
+        }
+        onColumnResize(index, Math.min(800, width));
+      } else {
+        let height = sheet.defaultRowHeight;
+        for (const key of Object.keys(sheet.cells)) {
+          const [row, col] = key.split(':').map(Number);
+          if (row !== index || sheet.hiddenCols[col]) continue;
+          const style = cellStyle(workbook, sheet.cells[key]);
+          const lines = cellDisplay(workbook, sheet, row, col).split('\n').length;
+          height = Math.max(height, Math.ceil(lines * (style.fontSizePt ?? workbook.defaultFontSizePt) * 1.6 + 6));
+        }
+        onRowResize(index, Math.min(400, height));
+      }
+    } finally { measure.remove(); }
+  };
+
   const renderCell = (
     row: number,
     col: number,
@@ -560,10 +610,11 @@ export function SheetGrid(props: SheetGridProps) {
       paddingRight: sheet.autoFilter && row === sheet.autoFilter.r1 ? 21 : 4,
       boxSizing: 'border-box',
       overflow: 'hidden',
-      background: style.fill ?? '#FFFFFF',
-      color: style.color ?? '#1D2939',
+      // 功能：底色与文字色按纸张主题换算——深色纸下白底压暗、深字提亮；打印与导出由 --mo-cell-*-plain 还原；时间：2026-10-31；作者：lq。
+      background: 'var(--mo-cell-fill)',
+      color: 'var(--mo-cell-ink)',
       fontSize: `${style.fontSizePt ?? workbook.defaultFontSizePt}pt`,
-      fontFamily: style.fontFamily ?? workbook.defaultFont,
+      fontFamily: fontStackFor(style.fontFamily ?? workbook.defaultFont),
       fontWeight: style.bold ? 700 : 400,
       fontStyle: style.italic ? 'italic' : 'normal',
       textDecoration: [style.underline ? 'underline' : '', style.strike ? 'line-through' : '']
@@ -571,23 +622,30 @@ export function SheetGrid(props: SheetGridProps) {
         .join(' ') || undefined,
       whiteSpace: style.wrapText ? 'pre-wrap' : 'nowrap',
       wordBreak: style.wrapText ? 'break-word' : 'normal',
-      borderRight: borderCss(style.borders?.right) ?? (sheet.showGridLines ? '1px solid rgba(228,233,242,0.9)' : undefined),
-      borderBottom: borderCss(style.borders?.bottom) ?? (sheet.showGridLines ? '1px solid rgba(228,233,242,0.9)' : undefined),
+      borderRight: borderCss(style.borders?.right) ?? (sheet.showGridLines ? '1px solid var(--mo-grid-line)' : undefined),
+      borderBottom: borderCss(style.borders?.bottom) ?? (sheet.showGridLines ? '1px solid var(--mo-grid-line)' : undefined),
       borderTop: borderCss(style.borders?.top),
       borderLeft: borderCss(style.borders?.left),
-      outline: isActive ? '2px solid var(--mo-accent)' : undefined,
-      outlineOffset: isActive ? '-2px' : undefined,
-      zIndex: isActive ? 7 : origin ? 3 : 1,
+      outline: isActive && !editing ? '2px solid var(--mo-accent)' : undefined,
+      outlineOffset: isActive && !editing ? '-2px' : undefined,
+      zIndex: isActive ? 7 : origin ? 5 : style.borders ? 4 : 1,
       cursor: 'cell',
     };
     const displayText = style.shrinkToFit ? text : text;
+    // 功能：同一单元格同时挂「屏幕色」与「原色」两套变量，导出/打印时由 CSS 切回原色；时间：2026-10-31；作者：lq。
+    const themeVars = {
+      '--mo-cell-fill': paperFill(style.fill, darkPaper),
+      '--mo-cell-fill-plain': style.fill ?? 'var(--mo-paper)',
+      '--mo-cell-ink': paperInk(style.color, darkPaper),
+      '--mo-cell-ink-plain': style.color ?? 'var(--mo-paper-ink)',
+    } as CSSProperties;
     return (
       <div
         key={key}
         data-cell={key}
         data-row={row}
         data-col={col}
-        style={cellCss}
+        style={{ ...cellCss, ...themeVars }}
         title={text.length > 30 ? text : undefined}
         onMouseDown={(event) => {
           if (event.button !== 0) return;
@@ -614,7 +672,7 @@ export function SheetGrid(props: SheetGridProps) {
             {sheet.filterCriteria?.[col] ? <Filter size={11} /> : <ChevronDown size={11} />}
           </button>
         ) : null}
-        <SheetCellText text={displayText} shrink={!!style.shrinkToFit && !style.wrapText} width={width} font={`${style.fontFamily}-${style.fontSizePt}-${style.bold}`} />
+        {editing?.row === row && editing.col === col ? null : <SheetCellText text={displayText} shrink={!!style.shrinkToFit && !style.wrapText} width={width} font={`${style.fontFamily}-${style.fontSizePt}-${style.bold}`} />}
       </div>
     );
   };
@@ -684,8 +742,10 @@ export function SheetGrid(props: SheetGridProps) {
     if (frozenRows > 0) {
       const cells: React.ReactNode[] = [];
       for (let row = 0; row < frozenRows; row += 1) {
-        for (let col = frozenCols; col <= endCol; col += 1) {
-          const left = (colOffsets[col] ?? 0) - scroll.left;
+        if (sheet.hiddenRows[row]) continue;
+        for (let col = Math.max(frozenCols, startCol - 1); col <= endCol; col += 1) {
+          if (sheet.hiddenCols[col]) continue;
+          const left = (colOffsets[col] ?? 0) - scroll.left - frozenColsWidth;
           if (left + (colOffsets[col + 1] ?? 0) - (colOffsets[col] ?? 0) < 0) continue;
           cells.push(
             renderCell(row, col, { left, top: rowOffsets[row] ?? 0, width: (colOffsets[col + 1] ?? 0) - (colOffsets[col] ?? 0), height: (rowOffsets[row + 1] ?? 0) - (rowOffsets[row] ?? 0) }, true),
@@ -703,7 +763,7 @@ export function SheetGrid(props: SheetGridProps) {
             height: frozenRowsHeight,
             overflow: 'hidden',
             zIndex: 12,
-            background: '#fff',
+            background: 'var(--mo-paper)',
             borderBottom: '1px solid var(--mo-line-strong)',
           }}
         >
@@ -714,8 +774,10 @@ export function SheetGrid(props: SheetGridProps) {
     if (frozenCols > 0) {
       const cells: React.ReactNode[] = [];
       for (let col = 0; col < frozenCols; col += 1) {
-        for (let row = frozenRows; row <= endRow; row += 1) {
-          const top = (rowOffsets[row] ?? 0) - scroll.top;
+        if (sheet.hiddenCols[col]) continue;
+        for (let row = Math.max(frozenRows, startRow - 1); row <= endRow; row += 1) {
+          if (sheet.hiddenRows[row]) continue;
+          const top = (rowOffsets[row] ?? 0) - scroll.top - frozenRowsHeight;
           if (top + (rowOffsets[row + 1] ?? 0) - (rowOffsets[row] ?? 0) < 0) continue;
           cells.push(
             renderCell(row, col, { left: colOffsets[col] ?? 0, top, width: (colOffsets[col + 1] ?? 0) - (colOffsets[col] ?? 0), height: (rowOffsets[row + 1] ?? 0) - (rowOffsets[row] ?? 0) }, true),
@@ -733,7 +795,7 @@ export function SheetGrid(props: SheetGridProps) {
             height: Math.max(0, viewport.height - frozenRowsHeight),
             overflow: 'hidden',
             zIndex: 12,
-            background: '#fff',
+            background: 'var(--mo-paper)',
             borderRight: '1px solid var(--mo-line-strong)',
           }}
         >
@@ -744,7 +806,9 @@ export function SheetGrid(props: SheetGridProps) {
     if (frozenRows > 0 && frozenCols > 0) {
       const cells: React.ReactNode[] = [];
       for (let row = 0; row < frozenRows; row += 1) {
+        if (sheet.hiddenRows[row]) continue;
         for (let col = 0; col < frozenCols; col += 1) {
+          if (sheet.hiddenCols[col]) continue;
           cells.push(
             renderCell(row, col, { left: colOffsets[col] ?? 0, top: rowOffsets[row] ?? 0, width: (colOffsets[col + 1] ?? 0) - (colOffsets[col] ?? 0), height: (rowOffsets[row + 1] ?? 0) - (rowOffsets[row] ?? 0) }, true),
           );
@@ -761,7 +825,7 @@ export function SheetGrid(props: SheetGridProps) {
             height: frozenRowsHeight,
             overflow: 'hidden',
             zIndex: 13,
-            background: '#fff',
+            background: 'var(--mo-paper)',
           }}
         >
           {cells}
@@ -781,13 +845,15 @@ export function SheetGrid(props: SheetGridProps) {
   const selectionTop = rowOffsets[range.r1] ?? 0;
   const selectionWidth = (colOffsets[range.c2 + 1] ?? selectionLeft) - selectionLeft;
   const selectionHeight = (rowOffsets[range.r2 + 1] ?? selectionTop) - selectionTop;
+  // 功能：编辑框沿用单元格自身的底色与文字色，并同样做深色纸张换算；时间：2026-10-31；作者：lq。
+  const editingStyle = editing ? cellStyle(workbook, sheet.cells[cellKey(editing.row, editing.col)]) : null;
 
   return (
     <div
       ref={containerRef}
       data-sheet-grid={gridId}
       tabIndex={0}
-      className="relative flex h-full min-h-0 flex-col bg-[var(--mo-surface)] outline-none"
+      className="mo-sheet relative flex h-full min-h-0 flex-col outline-none"
       onKeyDown={handleKeyDown}
     >
       <div className="flex shrink-0" style={{ height: COL_HEADER_HEIGHT }}>
@@ -814,17 +880,25 @@ export function SheetGrid(props: SheetGridProps) {
               const width = (colOffsets[col + 1] ?? left) - left;
               if (width <= 0) return null;
               const selected = col >= range.c1 && col <= range.c2;
+              // 功能：阅读模式下把当前单元格所在列的表头也点亮，配合行表头形成十字参考；时间：2026-10-30；作者：lq。
+              const crossActive = crosshair && col === active.col;
               return (
                 <div
                   key={col}
+                  data-cross-active={crossActive ? 'col' : undefined}
                   style={{
                     ...headerBase,
                     left,
                     top: 0,
                     width,
                     height: COL_HEADER_HEIGHT,
-                    color: selected ? 'var(--mo-accent)' : undefined,
-                    background: selected ? 'var(--mo-accent-soft)' : undefined,
+                    color: selected || crossActive ? 'var(--mo-accent)' : undefined,
+                    background: crossActive
+                      ? 'color-mix(in srgb, var(--mo-accent) 16%, var(--mo-surface-2))'
+                      : selected
+                        ? 'var(--mo-accent-soft)'
+                        : undefined,
+                    boxShadow: crossActive ? 'inset 0 -2px 0 var(--mo-accent)' : undefined,
                   }}
                   onMouseDown={(event) => {
                     event.preventDefault();
@@ -846,6 +920,7 @@ export function SheetGrid(props: SheetGridProps) {
                       height: '100%',
                       cursor: 'col-resize',
                     }}
+                    onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); autoFit('col', col); }}
                     onMouseDown={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -873,17 +948,24 @@ export function SheetGrid(props: SheetGridProps) {
               const height = (rowOffsets[row + 1] ?? top) - top;
               if (height <= 0) return null;
               const selected = row >= range.r1 && row <= range.r2;
+              const crossActive = crosshair && row === active.row;
               return (
                 <div
                   key={row}
+                  data-cross-active={crossActive ? 'row' : undefined}
                   style={{
                     ...headerBase,
                     left: 0,
                     top,
                     width: ROW_HEADER_WIDTH,
                     height,
-                    color: selected ? 'var(--mo-accent)' : undefined,
-                    background: selected ? 'var(--mo-accent-soft)' : undefined,
+                    color: selected || crossActive ? 'var(--mo-accent)' : undefined,
+                    background: crossActive
+                      ? 'color-mix(in srgb, var(--mo-accent) 16%, var(--mo-surface-2))'
+                      : selected
+                        ? 'var(--mo-accent-soft)'
+                        : undefined,
+                    boxShadow: crossActive ? 'inset -2px 0 0 var(--mo-accent)' : undefined,
                   }}
                   onMouseDown={(event) => {
                     event.preventDefault();
@@ -905,6 +987,7 @@ export function SheetGrid(props: SheetGridProps) {
                       height: 5,
                       cursor: 'row-resize',
                     }}
+                    onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); autoFit('row', row); }}
                     onMouseDown={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -959,6 +1042,37 @@ export function SheetGrid(props: SheetGridProps) {
               {/* 功能：图片与网格共用滚动坐标，拖动和缩放结束后保存；时间：2026-10-24；作者：lq。 */}
               <SheetImageLayer images={sheet.images ?? []} colOffsets={colOffsets} rowOffsets={rowOffsets} readonly={!!props.readonly} zoom={props.zoom ?? 1}
                 onChange={(id, patch) => props.onImageChange?.(id, patch)} onDelete={(id) => props.onImageDelete?.(id)} />
+              {/* 功能：阅读模式的行列参考带，浅色叠加不遮挡内容，打印与导出不包含；时间：2026-10-30；作者：lq。 */}
+              {crosshair ? (
+                <>
+                  <div
+                    data-crosshair="row"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: rowOffsets[active.row] ?? 0,
+                      width: totalWidth,
+                      height: Math.max(1, (rowOffsets[active.row + 1] ?? 0) - (rowOffsets[active.row] ?? 0)),
+                      background: 'color-mix(in srgb, var(--mo-accent) 7%, transparent)',
+                      pointerEvents: 'none',
+                      zIndex: 3,
+                    }}
+                  />
+                  <div
+                    data-crosshair="col"
+                    style={{
+                      position: 'absolute',
+                      left: colOffsets[active.col] ?? 0,
+                      top: 0,
+                      width: Math.max(1, (colOffsets[active.col + 1] ?? 0) - (colOffsets[active.col] ?? 0)),
+                      height: totalHeight,
+                      background: 'color-mix(in srgb, var(--mo-accent) 7%, transparent)',
+                      pointerEvents: 'none',
+                      zIndex: 3,
+                    }}
+                  />
+                </>
+              ) : null}
               <div
                 style={{
                   position: 'absolute',
@@ -966,6 +1080,7 @@ export function SheetGrid(props: SheetGridProps) {
                   top: selectionTop,
                   width: Math.max(1, selectionWidth),
                   height: Math.max(1, selectionHeight),
+                  boxSizing: 'border-box',
                   border: '2px solid var(--mo-accent)',
                   background: 'color-mix(in srgb, var(--mo-accent) 8%, transparent)',
                   pointerEvents: 'none',
@@ -998,7 +1113,8 @@ export function SheetGrid(props: SheetGridProps) {
                   width: 7,
                   height: 7,
                   background: 'var(--mo-accent)',
-                  border: '1px solid #fff',
+                  // 功能：填充柄外圈用纸张色描边，深色纸下不会出现刺眼的白框；时间：2026-10-31；作者：lq。
+                  border: '1px solid var(--mo-paper)',
                   cursor: 'crosshair',
                   zIndex: 9,
                 }}
@@ -1043,19 +1159,24 @@ export function SheetGrid(props: SheetGridProps) {
                     position: 'absolute',
                     left: colOffsets[editing.col] ?? 0,
                     top: rowOffsets[editing.row] ?? 0,
-                    minWidth: Math.max(80, (colOffsets[editing.col + 1] ?? 0) - (colOffsets[editing.col] ?? 0)),
+                    width: Math.max(24, (colOffsets[editing.col + 1] ?? 0) - (colOffsets[editing.col] ?? 0)),
                     height: Math.max(22, (rowOffsets[editing.row + 1] ?? 0) - (rowOffsets[editing.row] ?? 0)),
                     padding: '0 4px',
                     border: '2px solid var(--mo-accent)',
                     outline: 'none',
-                    background: '#fff',
-                    color: '#1D2939',
-                    fontSize: 13,
-                    fontFamily: 'var(--mo-font-ui)',
+                    background: 'var(--mo-cell-fill)',
+                    color: 'var(--mo-cell-ink)',
+                    '--mo-cell-fill': paperFill(editingStyle?.fill, darkPaper),
+                    '--mo-cell-fill-plain': editingStyle?.fill ?? 'var(--mo-paper)',
+                    '--mo-cell-ink': paperInk(editingStyle?.color, darkPaper),
+                    '--mo-cell-ink-plain': editingStyle?.color ?? 'var(--mo-paper-ink)',
+                    fontSize: `${editingStyle?.fontSizePt ?? workbook.defaultFontSizePt}pt`,
+                    fontFamily: fontStackFor(editingStyle?.fontFamily ?? workbook.defaultFont),
+                    fontWeight: editingStyle?.bold ? 700 : 400,
+                    textAlign: editingStyle?.horizontalAlign === 'right' ? 'right' : editingStyle?.horizontalAlign === 'center' ? 'center' : 'left',
                     boxSizing: 'border-box',
                     zIndex: 20,
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-                  }}
+                  } as CSSProperties}
                 />
               ) : null}
             </div>

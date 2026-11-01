@@ -272,6 +272,9 @@ function sheetXml(
   }
 
   const rowXml: string[] = [];
+  for (const row of [...Object.keys(sheet.rowHeights), ...Object.keys(sheet.hiddenRows)]) {
+    if (!rows.has(Number(row))) rows.set(Number(row), []);
+  }
   for (const [rowIndex, cells] of [...rows.entries()].sort((a, b) => a[0] - b[0])) {
     cells.sort((a, b) => a.col - b.col);
     const height = sheet.rowHeights[rowIndex];
@@ -308,7 +311,8 @@ function sheetXml(
   }
   for (const [col] of Object.entries(sheet.hiddenCols)) {
     if (sheet.colWidths[Number(col)]) continue;
-    colsXml.push(`<col min="${Number(col) + 1}" max="${Number(col) + 1}" width="8.43" hidden="1"/>`);
+    const chars = Math.max(1, Math.round(((sheet.defaultColWidth - 5) / 7) * 100) / 100);
+    colsXml.push(`<col min="${Number(col) + 1}" max="${Number(col) + 1}" width="${chars}" hidden="1"/>`);
   }
 
   const freeze = sheet.freeze;
@@ -353,7 +357,7 @@ function sheetXml(
 
   // 功能：严格按 CT_Worksheet 子元素顺序拼装（sheetData → autoFilter → mergeCells → printOptions → pageMargins → pageSetup → drawing），
   // 否则 Excel 会因模式校验失败判定文件损坏，而 WPS 仍可打开；时间：2026-10-29；作者：lq。
-  return `${xmlDeclaration()}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="${dimension}"/>${sheetViews}<sheetFormatPr defaultRowHeight="15"/>${
+  return `${xmlDeclaration()}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="${dimension}"/>${sheetViews}<sheetFormatPr defaultRowHeight="${Math.round(sheet.defaultRowHeight * 0.75 * 100) / 100}" defaultColWidth="${Math.max(1, Math.round(((sheet.defaultColWidth - 5) / 7) * 100) / 100)}"/>${
     colsXml.length ? `<cols>${colsXml.join('')}</cols>` : ''
   }<sheetData>${rowXml.join('')}</sheetData>${filter}${mergeXml}${printOptionsXml}${pageMarginsXml}${pageSetupXml}${sheet.images?.length ? '<drawing r:id="rIdMiniOfficeDrawing"/>' : ''}</worksheet>`;
 }

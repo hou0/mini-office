@@ -183,6 +183,54 @@ export function resolveDrawingColor(
   return spec;
 }
 
+/**
+ * 功能：Word 主题色槽位名到主题表键名的映射；时间：2026-11-01；作者：lq。
+ *
+ * 主题表（theme1.xml）里存的是 tx1/bg1/accent1 这类键，文档里写的是 text1/background1，
+ * 不映射就会整条主题色解析失败、退回黑色。
+ */
+export const WORD_THEME_SLOTS: Record<string, string> = {
+  text1: 'tx1',
+  background1: 'bg1',
+  text2: 'tx2',
+  background2: 'bg2',
+  dark1: 'dk1',
+  light1: 'lt1',
+  dark2: 'dk2',
+  light2: 'lt2',
+  accent1: 'accent1',
+  accent2: 'accent2',
+  accent3: 'accent3',
+  accent4: 'accent4',
+  accent5: 'accent5',
+  accent6: 'accent6',
+  hyperlink: 'hlink',
+  followedHyperlink: 'folHlink',
+};
+
+/** 功能：Word 的 tint/shade 用十六进制百分比（0~255 → 0~100000）；时间：2026-11-01；作者：lq。 */
+function parseHexPercent(value?: string): number | undefined {
+  if (!value) return undefined;
+  const n = parseInt(value, 16);
+  return Number.isFinite(n) ? (n / 255) * 100000 : undefined;
+}
+
+/** 功能：把主题槽位名 + tint/shade 解析成具体颜色；时间：2026-11-01；作者：lq。 */
+export function resolveThemeSlot(
+  slot: string | undefined,
+  theme: Record<string, string>,
+  tintHex?: string,
+  shadeHex?: string,
+): string | undefined {
+  if (!slot) return undefined;
+  const base = theme[WORD_THEME_SLOTS[slot] ?? slot];
+  if (!base) return undefined;
+  return cssColor(
+    { hex: base, tint: parseHexPercent(tintHex), shade: parseHexPercent(shadeHex) },
+    theme,
+  );
+}
+
 /** Resolve a WordprocessingML color (`w:color`) including themeColor/themeTint. */
 export function resolveWordColor(
   node: unknown,
@@ -191,40 +239,53 @@ export function resolveWordColor(
   if (!node || typeof node !== 'object') return undefined;
   const obj = node as Record<string, unknown>;
   const val = obj['@_w:val'] as string | undefined;
-  const themeColor = obj['@_w:themeColor'] as string | undefined;
-  const themeTint = obj['@_w:themeTint'] as string | undefined;
-  const themeShade = obj['@_w:themeShade'] as string | undefined;
   if (val && normalizeHex(val)) return normalizeHex(val);
-  if (!themeColor) return undefined;
-  const schemeMap: Record<string, string> = {
-    text1: 'tx1',
-    background1: 'bg1',
-    text2: 'tx2',
-    background2: 'bg2',
-    dark1: 'dk1',
-    light1: 'lt1',
-    dark2: 'dk2',
-    light2: 'lt2',
-    accent1: 'accent1',
-    accent2: 'accent2',
-    accent3: 'accent3',
-    accent4: 'accent4',
-    accent5: 'accent5',
-    accent6: 'accent6',
-    hyperlink: 'hlink',
-    followedHyperlink: 'folHlink',
-  };
-  const scheme = schemeMap[themeColor] ?? themeColor;
-  const base = theme[scheme];
-  if (!base) return undefined;
-  const parseHexPercent = (value?: string) => {
-    if (!value) return undefined;
-    const n = parseInt(value, 16);
-    return Number.isFinite(n) ? (n / 255) * 100000 : undefined;
-  };
-  return cssColor(
-    { hex: base, tint: parseHexPercent(themeTint), shade: parseHexPercent(themeShade) },
+  return resolveThemeSlot(
+    obj['@_w:themeColor'] as string | undefined,
     theme,
+    obj['@_w:themeTint'] as string | undefined,
+    obj['@_w:themeShade'] as string | undefined,
+  );
+}
+
+/**
+ * 功能：读取 WordprocessingML 属性，兼容 DOM 元素与已解析对象两种输入；时间：2026-11-01；作者：lq。
+ *
+ * 解析链路有两套输入：文档部件走 `parseXmlDom` 得到 DOM 元素，绘图部件走对象映射。
+ * 只用对象键（`@_w:fill`）读属性时，DOM 元素一律读到 undefined，底纹会整块丢失。
+ */
+function readWordAttr(node: unknown, name: string): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const dom = node as { getAttribute?: (key: string) => string | null };
+  if (typeof dom.getAttribute === 'function') {
+    return dom.getAttribute(name) ?? undefined;
+  }
+  return (node as Record<string, unknown>)[`@_${name}`] as string | undefined;
+}
+
+/**
+ * 功能：解析 WordprocessingML 底纹（`w:shd`），支持 fill 与 themeFill 两条路径；时间：2026-11-01；作者：lq。
+ *
+ * Office 用「主题色 + 变浅 80%」做表头、提示块时只写 `w:themeFill`，不写 `w:fill`；
+ * 只读 fill 会让这类底纹整块丢失，浅色下变成纯白、深色下没有色差。
+ */
+export function resolveWordShading(
+  node: unknown,
+  theme: Record<string, string> = {},
+): string | undefined {
+  if (!node || typeof node !== 'object') return undefined;
+  const pattern = readWordAttr(node, 'w:val') ?? 'clear';
+  if (pattern === 'nil' || pattern === 'none') return undefined;
+  const fill = readWordAttr(node, 'w:fill');
+  if (fill && fill.toLowerCase() !== 'auto') {
+    const hex = normalizeHex(fill);
+    if (hex) return hex;
+  }
+  return resolveThemeSlot(
+    readWordAttr(node, 'w:themeFill'),
+    theme,
+    readWordAttr(node, 'w:themeFillTint'),
+    readWordAttr(node, 'w:themeFillShade'),
   );
 }
 

@@ -153,7 +153,7 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
     const name = getAttr(firstChild(fontElement, 'name'), 'val');
     if (name) font.fontFamily = name;
     const size = Number(getAttr(firstChild(fontElement, 'sz'), 'val'));
-    if (Number.isFinite(size)) font.fontSizePt = size;
+    if (Number.isFinite(size) && size > 0) font.fontSizePt = size;
     if (firstChild(fontElement, 'b')) font.bold = true;
     if (firstChild(fontElement, 'i')) font.italic = true;
     if (firstChild(fontElement, 'u')) font.underline = true;
@@ -246,8 +246,8 @@ function parseStyles(xml: string, theme: Record<string, string>): ParsedStyles {
       distributed: 'middle',
     };
     const style: CellStyle = {
-      fontFamily: font.fontFamily ?? '等线',
-      fontSizePt: font.fontSizePt ?? 11,
+      fontFamily: font.fontFamily,
+      fontSizePt: font.fontSizePt,
       bold: font.bold,
       italic: font.italic,
       underline: font.underline,
@@ -321,6 +321,12 @@ async function parseSheet(
     const tabColor = excelColor(firstChild(sheetView, 'tabColor'), theme);
     if (tabColor) sheet.tabColor = tabColor;
   }
+
+  const format = firstChild(worksheet, 'sheetFormatPr');
+  const defaultRowHeight = Number(getAttr(format, 'defaultRowHeight'));
+  if (Number.isFinite(defaultRowHeight) && defaultRowHeight > 0) sheet.defaultRowHeight = Math.round(defaultRowHeight * 4 / 3);
+  const defaultColWidth = Number(getAttr(format, 'defaultColWidth'));
+  if (Number.isFinite(defaultColWidth) && defaultColWidth > 0) sheet.defaultColWidth = Math.round(defaultColWidth * 7 + 5);
 
   const dimension = getAttr(firstChild(worksheet, 'dimension'), 'ref');
 
@@ -464,8 +470,8 @@ async function parseSheet(
       }
 
       if (cell.formula && cell.value === null) cell.value = null;
-      if (cell.value !== null || cell.formula) sheet.cells[`${row}:${col}`] = cell;
-      void style;
+      // Empty cells may still carry borders, fills and fonts (common in form templates).
+      if (cell.value !== null || cell.formula || (styleIdRaw !== undefined && style)) sheet.cells[`${row}:${col}`] = cell;
     }
   }
 

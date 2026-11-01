@@ -197,7 +197,7 @@ export function useMailMergeController({ session, doc, renderBlocks, onOpenDocum
     });
     const mailMergeTemplate = wordCompatible;
     // 以 store 中的最新元数据为准，避免组件持有旧 doc 引用时反复写入；时间：2026-10-29；作者：lq。
-    const currentMeta = useWorkspaceStore.getState().sessions[session.id]?.data?.meta as { mailMergeState?: string; mailMergeTemplate?: unknown } | undefined;
+    const currentMeta = (useWorkspaceStore.getState().sessions[session.id]?.data as DocModel | undefined)?.meta as { mailMergeState?: string; mailMergeTemplate?: unknown } | undefined;
     if (currentMeta && (currentMeta.mailMergeState !== mailMergeState || JSON.stringify(currentMeta.mailMergeTemplate) !== JSON.stringify(mailMergeTemplate))) {
       updateDocMeta(session.id, { mailMergeState, mailMergeTemplate });
     }

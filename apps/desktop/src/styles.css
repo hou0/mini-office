@@ -4,6 +4,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * 功能：随包内置与 Office 度量兼容的西文字体，保证 Calibri / Cambria 文档在未装 Office 的机器上排版一致；
+ * 只取 latin 子集，中日韩文字仍走系统字体；时间：2026-10-31；作者：lq。
+ */
+@font-face {
+  font-family: 'Carlito';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/carlito-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Carlito';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/carlito-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Carlito';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/carlito-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Carlito';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/carlito-latin-700-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Caladea';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/caladea-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Caladea';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/caladea-latin-400-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Caladea';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/caladea-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Caladea';
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/caladea-latin-700-italic.woff2') format('woff2');
+}
+
 /* App-level utility compositions */
 .mo-divider {
   height: 1px;
@@ -97,8 +158,89 @@
 
 /* Ensure printed/exported pages keep exact white paper regardless of theme. */
 .mo-paper {
-  background: #ffffff;
-  color: #1d2939;
+  background: var(--mo-paper, #ffffff);
+  color: var(--mo-paper-ink, #1d2939);
+}
+
+/* 功能：表格画布同样按「纸张」处理——深色模式跟随纸张底色，导出与打印时回到白纸；时间：2026-10-31；作者：lq。 */
+.mo-sheet {
+  background: var(--mo-paper, #ffffff);
+  color: var(--mo-paper-ink, #1d2939);
+}
+
+/*
+ * 功能：单元格的屏幕色是按主题算出来的 hsl 值（保留色相压暗），导出与打印必须切回文档原色；
+ * 每个单元格同时挂了 --mo-cell-fill / --mo-cell-fill-plain 两套变量，这里只做切换；时间：2026-10-31；作者：lq。
+ */
+[data-exporting='1'] .mo-sheet [data-cell],
+[data-exporting='1'] .mo-sheet [data-sheet-formula-input] {
+  background-color: var(--mo-cell-fill-plain) !important;
+  color: var(--mo-cell-ink-plain) !important;
+}
+@media print {
+  .mo-sheet [data-cell],
+  .mo-sheet [data-sheet-formula-input] {
+    background-color: var(--mo-cell-fill-plain) !important;
+    color: var(--mo-cell-ink-plain) !important;
+  }
+}
+
+/*
+ * 功能：深色模式下纸张与窗口底色取同一色值后，用一根极细描边保留页面边界；
+ * 描边用 outline 实现，不覆盖页面内联的 box-shadow；时间：2026-10-31；作者：lq。
+ */
+[data-theme='dark'] .mo-word-page {
+  outline: 1px solid color-mix(in srgb, var(--mo-line-strong) 60%, transparent);
+  outline-offset: -1px;
+}
+[data-exporting='1'] .mo-word-page {
+  outline: none !important;
+}
+@media print {
+  .mo-word-page {
+    outline: none !important;
+  }
+}
+
+/* 功能：深色纸张下把文档里的深色文字提亮，强调色保持原样；时间：2026-10-31；作者：lq。 */
+[data-theme='dark'] .mo-paper [data-ink='1'],
+[data-theme='dark'] .mo-sheet [data-ink='1'] {
+  color: var(--mo-paper-ink) !important;
+}
+
+/* 功能：导出 PDF 时临时回白纸，避免护眼米黄底色被写进交付文件；时间：2026-10-30；作者：lq。 */
+[data-exporting='1'] .mo-paper,
+[data-exporting='1'] .mo-sheet {
+  background: #ffffff !important;
+  color: #1d2939 !important;
+  /* 功能：导出时框线与深色文字一起回到深色，避免白纸上出现浅灰网格；时间：2026-10-31；作者：lq。 */
+  --mo-paper: #ffffff;
+  --mo-paper-ink: #1d2939;
+  --mo-table-line: #000000;
+  --mo-shade-light: #ffffff;
+  --mo-grid-line: #e4e9f2;
+}
+
+[data-exporting='1'] .mo-paper [data-ink='1'],
+[data-exporting='1'] .mo-sheet [data-ink='1'] {
+  color: #1d2939 !important;
+}
+
+@media print {
+  .mo-paper,
+  .mo-sheet {
+    background: #ffffff !important;
+    color: #1d2939 !important;
+    --mo-paper: #ffffff;
+    --mo-paper-ink: #1d2939;
+    --mo-table-line: #000000;
+    --mo-shade-light: #ffffff;
+    --mo-grid-line: #e4e9f2;
+  }
+  .mo-paper [data-ink='1'],
+  .mo-sheet [data-ink='1'] {
+    color: #1d2939 !important;
+  }
 }
 
 @media print {

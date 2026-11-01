@@ -79,7 +79,9 @@ export function paginateBlocks(
 
   for (const block of blocks) {
     if (block.type === 'pageBreak') {
-      flush();
+      // 连续/段首硬分页有实际空白页语义，不能与一个分页符折叠。
+      if (current.length === 0) pages.push({ index: pages.length, blocks: [] });
+      else flush();
       continue;
     }
     if (block.type === 'paragraph' && block.style.pageBreakBefore && current.length > 0) {

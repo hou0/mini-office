@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { useWorkspaceStore, type WordSession, type SheetSession, type SlidesSession } from '@mini-office/document-model';
+import { useWorkspaceStore, type WordSession, type SheetSession, type SlidesSession, type DocumentSession } from '@mini-office/document-model';
 import { applyAppearance, watchSystemTheme } from '@mini-office/design-system';
 import { ToastViewport, TooltipHost } from '@mini-office/ui';
 import { extensionOf } from '@mini-office/shared';
@@ -26,6 +26,8 @@ import { confirmWorkspaceClose, type CloseChoice } from './close-workspace';
 const WordEditor = lazy(() => import('../../editor-word/src/WordEditor').then((module) => ({ default: module.WordEditor })));
 const SheetEditor = lazy(() => import('../../editor-sheet/src/SheetEditor').then((module) => ({ default: module.SheetEditor })));
 const SlidesEditor = lazy(() => import('../../editor-slides/src/SlidesEditor').then((module) => ({ default: module.SlidesEditor })));
+// 功能：只在打开 PDF、Markdown、HTML 时加载轻量预览组件；时间：2026-10-31；作者：lq。
+const PreviewViewer = lazy(() => import('./PreviewViewer').then((module) => ({ default: module.PreviewViewer })));
 
 export function AppShell() {
   const sessions = useWorkspaceStore((state) => state.sessions);
@@ -128,7 +130,7 @@ export function AppShell() {
   useEffect(() => {
     applyAppearance(settings);
     return watchSystemTheme(settings.theme);
-  }, [settings.theme, settings.accent, settings.customAccent]);
+  }, [settings.theme, settings.accent, settings.customAccent, settings.eyeCare]);
 
   useEffect(() => {
     document.documentElement.dataset.fontSize = settings.fontSize;
@@ -313,12 +315,12 @@ export function AppShell() {
     const files = Array.from(event.dataTransfer.files);
     if (files.length === 0) return;
     const supported = files.find((file) =>
-      ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.pptm', '.csv', '.doc', '.xls', '.ppt'].includes(
+      ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.pptm', '.csv', '.doc', '.xls', '.ppt', '.pdf', '.md', '.markdown', '.html', '.htm'].includes(
         extensionOf(file.name),
       ),
     );
     if (!supported) {
-      notify('warning', '不支持的文件类型', '请选择 DOCX、XLSX、PPTX 或 CSV 文件。');
+      notify('warning', '不支持的文件类型', '请选择 DOCX、XLSX、PPTX、CSV、PDF、MD 或 HTML 文件。');
       return;
     }
     if (files.length > 1) notify('info', '一次打开一个文件', `已选择 ${supported.name}`);
@@ -335,6 +337,9 @@ export function AppShell() {
     }
     if (activeSession.kind === 'xlsx') {
       return <SheetEditor key={activeSession.id} session={activeSession as SheetSession} />;
+    }
+    if (['pdf', 'md', 'html'].includes(activeSession.kind)) {
+      return <PreviewViewer key={activeSession.id} session={activeSession as DocumentSession} />;
     }
     return <SlidesEditor key={activeSession.id} session={activeSession as SlidesSession} />;
   })();

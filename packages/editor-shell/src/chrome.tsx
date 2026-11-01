@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   AppWindow,
   Download,
+  Eye,
   Home,
   FileText,
   FolderOpen,
@@ -11,6 +12,7 @@ import {
   Monitor,
   Moon,
   MoreHorizontal,
+  Minus,
   Palette,
   Plus,
   Presentation,
@@ -19,9 +21,12 @@ import {
   Sun,
   Table2,
   X,
+  FileCode2,
+  FileType2,
+  FileKey,
 } from 'lucide-react';
 import { useWorkspaceStore, type DocumentSession } from '@mini-office/document-model';
-import { Button, Dialog, Dropdown, IconButton, Kbd, Tooltip, type MenuItem } from '@mini-office/ui';
+import { Button, Dialog, Dropdown, IconButton, Kbd, Select, Tooltip, type MenuItem } from '@mini-office/ui';
 import { coverageLabel } from '@mini-office/document-model';
 import {
   MOD_KEY,
@@ -43,12 +48,18 @@ const KIND_ICONS: Record<OfficeKind, typeof FileText> = {
   docx: FileText,
   xlsx: Table2,
   pptx: Presentation,
+  pdf: FileKey,
+  md: FileType2,
+  html: FileCode2,
 };
 
 const KIND_TINTS: Record<OfficeKind, string> = {
   docx: '#2B579A',
   xlsx: '#217346',
   pptx: '#C43E1C',
+  pdf: '#E34F4F',
+  md: '#6B5BD2',
+  html: '#E67E22',
 };
 
 export function TitleBar({
@@ -73,6 +84,8 @@ export function TitleBar({
       theme,
       accent: settings.accent,
       customAccent: settings.customAccent,
+      // 功能：切换主题时保留护眼状态，避免外壳与纸张配色错位；时间：2026-10-30；作者：lq。
+      eyeCare: settings.eyeCare,
     });
     updateSettings({ theme });
   };
@@ -84,6 +97,7 @@ export function TitleBar({
       theme: settings.theme,
       accent,
       customAccent: settings.customAccent,
+      eyeCare: settings.eyeCare,
     });
     updateSettings({ accent });
   };
@@ -137,6 +151,16 @@ export function TitleBar({
       <Tooltip label={`主题：${settings.theme === 'system' ? '跟随系统' : settings.theme === 'dark' ? '深色' : '浅色'}`}>
         <IconButton label="切换主题" onClick={toggleTheme}>
           {currentTheme === 'dark' ? <Moon size={15} /> : <Sun size={15} />}
+        </IconButton>
+      </Tooltip>
+      {/* 功能：护眼模式一键开关，放在主题切换旁边便于随手切换；时间：2026-10-30；作者：lq。 */}
+      <Tooltip label={settings.eyeCare ? '关闭护眼模式' : '护眼模式：米黄纸色，低蓝光'}>
+        <IconButton
+          label="护眼模式"
+          active={settings.eyeCare}
+          onClick={() => updateSettings({ eyeCare: !settings.eyeCare })}
+        >
+          <Eye size={15} />
         </IconButton>
       </Tooltip>
       <Dropdown
@@ -452,7 +476,21 @@ export function StatusBar() {
   const sessions = useWorkspaceStore((state) => state.sessions);
   const activeId = useWorkspaceStore((state) => state.activeId);
   const settings = useWorkspaceStore((state) => state.settings);
+  const updateView = useWorkspaceStore((state) => state.updateView);
   const session = activeId ? sessions[activeId] : undefined;
+  const isWord = session?.kind === 'docx';
+  // 功能：Excel 的缩放与 Word 统一放到右下角状态栏，工具栏只留输出类按钮；时间：2026-10-31；作者：lq。
+  const isSheet = session?.kind === 'xlsx';
+  const canZoom = isWord || isSheet;
+  const viewZoom = session?.view.zoom ?? 1;
+  const zoom = normalizeStatusZoom(viewZoom);
+  const zoomPercent = Math.round(zoom * 100);
+  const zoomOptions = [...new Set([40, 50, 75, 90, 100, 110, 125, 150, 175, 200, 250, zoomPercent])].sort((a, b) => a - b);
+  const pageCount = Math.max(1, session?.view.pageCount ?? 1);
+  const currentPage = Math.max(1, Math.min(pageCount, (session?.view.page ?? 0) + 1));
+  const applyZoom = (value: number) => {
+    if (canZoom && activeId) updateView(activeId, { zoom: normalizeStatusZoom(value) });
+  };
 
   const saveLabel = !session
     ? '就绪'
@@ -469,61 +507,102 @@ export function StatusBar() {
   const stats = session ? documentStats(session) : null;
 
   return (
-    <footer className="mo-glass mo-no-print flex h-[27px] shrink-0 items-center gap-3 border-t border-[var(--mo-line)] bg-[var(--mo-surface)] px-3 text-[10px] text-[var(--mo-text-muted)]">
-      <div className="flex min-w-0 items-center gap-2">
-        <span
-          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            session?.state === 'SAVE_FAILED'
-              ? 'bg-[var(--mo-danger)]'
-              : session?.dirty
-                ? 'bg-[var(--mo-warning)]'
-                : 'bg-[var(--mo-success)]'
-          }`}
-        />
-        <span className="whitespace-nowrap">{saveLabel}</span>
-        {session?.readonly ? (
-          <span className="rounded bg-[var(--mo-surface-2)] px-1 py-0.5 text-[9px]">只读保真模式</span>
-        ) : session ? (
-          <span className="rounded bg-[var(--mo-accent-soft)] px-1 py-0.5 text-[9px] text-[var(--mo-accent)]">可编辑</span>
-        ) : null}
+    <footer className="mo-glass mo-no-print flex h-[27px] min-w-0 shrink-0 items-center gap-2 border-t border-[var(--mo-line)] bg-[var(--mo-surface)] px-2 text-[10px] text-[var(--mo-text-muted)]">
+      <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+        {isWord ? <span className="shrink-0 whitespace-nowrap" aria-label="文档页数">第 {currentPage} 页 / 共 {pageCount} 页</span> : null}
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              session?.state === 'SAVE_FAILED'
+                ? 'bg-[var(--mo-danger)]'
+                : session?.dirty
+                  ? 'bg-[var(--mo-warning)]'
+                  : 'bg-[var(--mo-success)]'
+            }`}
+          />
+          <span className="whitespace-nowrap">{saveLabel}</span>
+          {session?.readonly ? (
+            <span className="rounded bg-[var(--mo-surface-2)] px-1 py-0.5 text-[9px]">只读保真模式</span>
+          ) : session ? (
+            <span className="rounded bg-[var(--mo-accent-soft)] px-1 py-0.5 text-[9px] text-[var(--mo-accent)]">可编辑</span>
+          ) : null}
+        </div>
+        {session ? (
+          <>
+            {!isWord ? (
+              <>
+                <span className="h-3 w-px bg-[var(--mo-line)]" />
+                <span className="min-w-0 truncate">{OFFICE_META[session.kind].label}</span>
+              </>
+            ) : null}
+            {stats ? (
+              <>
+                <span className="h-3 w-px bg-[var(--mo-line)]" />
+                <span className="whitespace-nowrap">{stats}</span>
+              </>
+            ) : null}
+            <span className="h-3 w-px bg-[var(--mo-line)]" />
+            <span className="whitespace-nowrap">{coverageLabel(session.capability)}</span>
+            {session.capability.warnings.length > 0 ? (
+              <span className="rounded bg-[var(--mo-warning-soft)] px-1 py-0.5 text-[9px] text-[var(--mo-warning)]">
+                {session.capability.warnings.length} 条兼容提示
+              </span>
+            ) : null}
+            {session.saveError ? (
+              <span className="truncate text-[var(--mo-danger)]">{session.saveError}</span>
+            ) : null}
+          </>
+        ) : (
+          <span>Mini Office · 离线优先的办公套件</span>
+        )}
       </div>
-      {session ? (
-        <>
-          <span className="h-3 w-px bg-[var(--mo-line)]" />
-          <span className="min-w-0 truncate">{OFFICE_META[session.kind].label}</span>
-          {stats ? (
-            <>
-              <span className="h-3 w-px bg-[var(--mo-line)]" />
-              <span className="whitespace-nowrap">{stats}</span>
-            </>
+      {canZoom ? (
+        <div role="group" aria-label={isWord ? 'Word 缩放' : '工作表缩放'} className="ml-auto flex shrink-0 items-center gap-0.5">
+          {isWord ? (
+            <button type="button" aria-label="适应宽度" title="适应文档宽度"
+              className="mr-1 h-5 shrink-0 whitespace-nowrap rounded px-1.5 text-[10px] text-[var(--mo-text-primary)] hover:bg-[var(--mo-surface-2)]"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => window.dispatchEvent(new CustomEvent('mini-office:word-fit-width', { detail: { sessionId: activeId } }))}>
+              适应宽度
+            </button>
           ) : null}
-          <span className="h-3 w-px bg-[var(--mo-line)]" />
-          <span className="whitespace-nowrap">{coverageLabel(session.capability)}</span>
-          {session.capability.warnings.length > 0 ? (
-            <span className="rounded bg-[var(--mo-warning-soft)] px-1 py-0.5 text-[9px] text-[var(--mo-warning)]">
-              {session.capability.warnings.length} 条兼容提示
-            </span>
-          ) : null}
-          {session.saveError ? (
-            <span className="truncate text-[var(--mo-danger)]">{session.saveError}</span>
-          ) : null}
-        </>
+          <IconButton label="缩小" title={`缩小${isWord ? '文档' : '工作表'}（每次 5%）`} className="h-5 w-5" disabled={zoom <= 0.4}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => applyZoom(zoom - 0.05)}>
+            <Minus size={12} />
+          </IconButton>
+          <input type="range" aria-label="缩放滑块" title={`${isWord ? '文档' : '工作表'}缩放（40% 到 250%）`} min={40} max={250} step={5}
+            value={zoomPercent} aria-valuetext={`${zoomPercent}%`}
+            className="h-4 w-20 min-w-0 cursor-pointer accent-[var(--mo-accent)] sm:w-24"
+            onChange={(event) => applyZoom(Number(event.target.value) / 100)} />
+          <IconButton label="放大" title={`放大${isWord ? '文档' : '工作表'}（每次 5%）`} className="h-5 w-5" disabled={zoom >= 2.5}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => applyZoom(zoom + 0.05)}>
+            <Plus size={12} />
+          </IconButton>
+          <Select aria-label="缩放比例" title={`${isWord ? '文档' : '工作表'}缩放比例；放大 ${MOD_KEY} +；缩小 ${MOD_KEY} -；还原 ${MOD_KEY} 0`}
+            className="h-5 w-[66px] border-transparent bg-transparent px-1 text-[10px] tabular-nums"
+            value={String(zoomPercent)} onChange={(event) => applyZoom(Number(event.target.value) / 100)}>
+            {zoomOptions.map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+          </Select>
+        </div>
       ) : (
-        <span>Mini Office · 离线优先的办公套件</span>
+        <div className="ml-auto flex shrink-0 items-center gap-3">
+          <span className="hidden md:inline">自动恢复 {settings.autoSave ? '开启' : '关闭'}</span>
+          <span className="hidden sm:inline">UTF-8 · OOXML</span>
+          <span className="inline-flex items-center gap-1">
+            <Kbd>{MOD_KEY}</Kbd>
+            <Kbd>K</Kbd>
+            <span className="hidden lg:inline">命令</span>
+          </span>
+          {/* 功能：桌面状态栏显示软件名称；时间：2026-10-24；作者：lq。 */}
+          <span className="hidden lg:inline">{isTauriRuntime() ? 'Mini Office' : 'Web 模式'}</span>
+        </div>
       )}
-      <div className="ml-auto flex shrink-0 items-center gap-3">
-        <span className="hidden md:inline">自动恢复 {settings.autoSave ? '开启' : '关闭'}</span>
-        <span className="hidden sm:inline">UTF-8 · OOXML</span>
-        <span className="inline-flex items-center gap-1">
-          <Kbd>{MOD_KEY}</Kbd>
-          <Kbd>K</Kbd>
-          <span className="hidden lg:inline">命令</span>
-        </span>
-        {/* 功能：桌面状态栏显示软件名称；时间：2026-10-24；作者：lq。 */}
-        <span className="hidden lg:inline">{isTauriRuntime() ? 'Mini Office' : 'Web 模式'}</span>
-      </div>
     </footer>
   );
+}
+
+function normalizeStatusZoom(value: number): number {
+  return Math.max(0.4, Math.min(2.5, Math.round((Number.isFinite(value) ? value : 1) * 100) / 100));
 }
 
 function documentStats(session: DocumentSession): string {

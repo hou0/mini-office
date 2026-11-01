@@ -7,7 +7,15 @@ import type { DocModel } from './word';
 import type { WorkbookModel } from './sheet';
 import type { SlideDeck } from './slides';
 
-export type AnyDocumentData = DocModel | WorkbookModel | SlideDeck;
+// 功能：保存 PDF、Markdown、HTML 的只读预览内容，避免引入重量级编辑模型；时间：2026-10-31；作者：lq。
+export interface PreviewDocumentData {
+  format: 'pdf' | 'md' | 'html';
+  bytes?: Uint8Array;
+  text?: string;
+}
+
+export type AnyDocumentData = DocModel | WorkbookModel | SlideDeck | PreviewDocumentData;
+export type AnyDocumentDataWithPreview = AnyDocumentData;
 
 export type LifecycleState =
   | 'UNOPENED'
@@ -79,9 +87,10 @@ export interface SessionView {
   presenting?: boolean;
   mode?: 'pages' | 'continuous';
   page?: number;
+  pageCount?: number;
 }
 
-export interface DocumentSession<T extends AnyDocumentData = AnyDocumentData> {
+export interface DocumentSession<T extends AnyDocumentDataWithPreview = AnyDocumentDataWithPreview> {
   id: string;
   kind: OfficeKind;
   displayName: string;
@@ -111,7 +120,7 @@ export interface OpenDocumentInput {
   knownFonts?: string[];
 }
 
-export interface FormatOpenResult<T extends AnyDocumentData = AnyDocumentData> {
+export interface FormatOpenResult<T extends AnyDocumentDataWithPreview = AnyDocumentDataWithPreview> {
   data: T;
   capability: CapabilityReport;
   readonly?: boolean;
@@ -123,7 +132,7 @@ export interface SerializeContext {
   name: string;
 }
 
-export interface FormatHandler<T extends AnyDocumentData = AnyDocumentData> {
+export interface FormatHandler<T extends AnyDocumentDataWithPreview = AnyDocumentDataWithPreview> {
   readonly kind: OfficeKind;
   readonly extensions: string[];
   createBlank(): T;
@@ -132,7 +141,7 @@ export interface FormatHandler<T extends AnyDocumentData = AnyDocumentData> {
   getStats?(data: T): DocumentStats;
 }
 
-export type AnyFormatHandler = FormatHandler<AnyDocumentData>;
+export type AnyFormatHandler = FormatHandler<AnyDocumentDataWithPreview>;
 
 export type FormatRegistry = Partial<Record<OfficeKind, AnyFormatHandler>>;
 

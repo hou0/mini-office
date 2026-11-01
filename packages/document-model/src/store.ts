@@ -36,8 +36,11 @@ import type { DocModel } from './word';
 import type { SlideDeck } from './slides';
 
 const SETTINGS_KEY = 'mini-office.settings';
+/** 功能：设置项默认值调整的一次性迁移标记，只影响升级后的第一次读取；时间：2026-10-30；作者：lq。 */
+const SETTINGS_MIGRATION_KEY = 'mini-office.settings.migrated.v1';
 const THEME_KEY = 'mini-office.theme';
-const ALL_EXTENSIONS = ['.docx', '.docm', '.dotx', '.xlsx', '.xlsm', '.xltx', '.pptx', '.pptm', '.csv', '.doc', '.xls', '.ppt'];
+// 功能：让系统文件选择器与拖拽入口识别三种只读预览格式；时间：2026-10-31；作者：lq。
+const ALL_EXTENSIONS = ['.docx', '.docm', '.dotx', '.xlsx', '.xlsm', '.xltx', '.pptx', '.pptm', '.csv', '.doc', '.xls', '.ppt', '.pdf', '.md', '.markdown', '.html', '.htm'];
 const KIND_BY_EXTENSION: Record<string, OfficeKind> = {
   '.docx': 'docx',
   '.docm': 'docx',
@@ -52,6 +55,11 @@ const KIND_BY_EXTENSION: Record<string, OfficeKind> = {
   '.pptm': 'pptx',
   '.potx': 'pptx',
   '.ppt': 'pptx',
+  '.pdf': 'pdf',
+  '.md': 'md',
+  '.markdown': 'md',
+  '.html': 'html',
+  '.htm': 'html',
 };
 
 const handlers: FormatRegistry = {};
@@ -165,7 +173,19 @@ function emptyCapability(): CapabilityReport {
 function loadSettings(): AppSettings {
   if (typeof localStorage === 'undefined') return { ...DEFAULT_SETTINGS };
   const stored = safeJsonParse<Partial<AppSettings>>(localStorage.getItem(SETTINGS_KEY), {});
-  return { ...DEFAULT_SETTINGS, ...stored };
+  const merged = { ...DEFAULT_SETTINGS, ...stored };
+  // 功能：Word 标尺改为默认隐藏（与 Word / WPS 一致），旧存档里被写成 true 的一次性改回，
+  // 否则改默认值对已存过设置的用户无效，看起来像没生效；用户之后手动开启仍会被正常保存。
+  // 时间：2026-10-30；作者：lq。
+  try {
+    if (!localStorage.getItem(SETTINGS_MIGRATION_KEY)) {
+      merged.wordRuler = DEFAULT_SETTINGS.wordRuler;
+      localStorage.setItem(SETTINGS_MIGRATION_KEY, '1');
+    }
+  } catch {
+    // 迁移失败不影响启动，最多是这一次仍按旧值显示。
+  }
+  return merged;
 }
 
 function persistSettings(settings: AppSettings): void {
@@ -716,7 +736,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => {
     updateDocMeta(id, metaPatch) {
       const session = get().sessions[id];
       if (!session || session.readonly) return;
-      const next = typeof metaPatch === 'function' ? metaPatch(session.data.meta) : { ...session.data.meta, ...metaPatch };
+      const wordData = session.data as DocModel;
+      const next = typeof metaPatch === 'function' ? metaPatch(wordData.meta) : { ...wordData.meta, ...metaPatch };
       patchSession(id, { data: { ...session.data, meta: next }, dirty: true, state: saveInFlight.has(id) ? 'SAVING' : 'DIRTY' });
       scheduleSnapshot(id);
     },

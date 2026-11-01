@@ -11,6 +11,7 @@ import { useMemo } from 'react';
 import {
   BookOpen,
   Command,
+  Eye,
   FilePlus2,
   FolderOpen,
   Info,
@@ -19,6 +20,7 @@ import {
   Moon,
   Package,
   Printer,
+  Ruler,
   Save,
   Search,
   Settings,
@@ -57,7 +59,7 @@ export function MenuBar({ onHome }: { onHome: () => void }) {
 
   const menus = useMemo<Array<{ id: string; label: string; items: MenuItem[] }>>(() => {
     const setThemeMode = (theme: 'light' | 'dark' | 'system') => {
-      applyAppearance({ theme, accent: settings.accent, customAccent: settings.customAccent });
+      applyAppearance({ theme, accent: settings.accent, customAccent: settings.customAccent, eyeCare: settings.eyeCare });
       updateSettings({ theme });
     };
 
@@ -186,6 +188,30 @@ export function MenuBar({ onHome }: { onHome: () => void }) {
             checked: settings.showProperties,
             onSelect: () => updateSettings({ showProperties: !settings.showProperties }),
           },
+          // 功能：标尺默认隐藏，与 Word / WPS 的「视图 → 标尺」一致，需要精确缩进与制表位时再开；时间：2026-10-30；作者：lq。
+          {
+            id: 'toggle-ruler',
+            label: '标尺',
+            icon: <Ruler size={13} />,
+            checked: settings.wordRuler === true,
+            onSelect: () => updateSettings({ wordRuler: settings.wordRuler !== true }),
+          },
+          {
+            id: 'toggle-eyecare',
+            label: '护眼模式',
+            icon: <Eye size={13} />,
+            checked: settings.eyeCare,
+            onSelect: () => {
+              const eyeCare = !settings.eyeCare;
+              applyAppearance({
+                theme: settings.theme,
+                accent: settings.accent,
+                customAccent: settings.customAccent,
+                eyeCare,
+              });
+              updateSettings({ eyeCare });
+            },
+          },
         ],
       },
       {
@@ -247,9 +273,11 @@ export function MenuBar({ onHome }: { onHome: () => void }) {
     setCommandPalette,
     settings.accent,
     settings.customAccent,
+    settings.eyeCare,
     settings.showProperties,
     settings.showToolbar,
     settings.theme,
+    settings.wordRuler,
     updateSettings,
   ]);
 

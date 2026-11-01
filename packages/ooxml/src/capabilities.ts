@@ -83,13 +83,31 @@ function collectFontNamesFromXml(xml: string, state: ScanState): void {
 
 const FONT_ALIASES: Record<string, string[]> = {
   宋体: ['simsun', 'songti sc', 'stsong', 'noto serif cjk sc', 'source han serif sc', 'serif'],
+  新宋体: ['simsun', 'songti sc', 'stsong'],
   仿宋: ['fangsong', 'stfangsong', 'fangsong_gb2312'],
+  '仿宋_GB2312': ['fangsong', 'stfangsong', 'fangsong_gb2312'],
   黑体: ['simhei', 'heiti sc', 'stheiti', 'noto sans cjk sc', 'source han sans sc'],
   楷体: ['kaiti', 'stkaiti', 'kaiti_gb2312', 'kaiti sc'],
+  '楷体_GB2312': ['kaiti', 'stkaiti', 'kaiti_gb2312', 'kaiti sc'],
   微软雅黑: ['microsoft yahei', 'microsoftyahei'],
+  '微软雅黑 Light': ['microsoft yahei', 'microsoftyahei'],
   等线: ['dengxian'],
+  '等线 Light': ['dengxian'],
   思源宋体: ['source han serif sc', 'noto serif cjk sc'],
   思源黑体: ['source han sans sc', 'noto sans cjk sc'],
+  // 功能：华文/方正等常见商业字体名补上等价关系，避免已能正确渲染的字体仍被报“缺失”；时间：2026-10-31；作者：lq。
+  华文宋体: ['stsong', 'songti sc', 'simsun'],
+  华文中宋: ['stzhongsong', 'songti sc', 'stsong'],
+  方正小标宋简体: ['stzhongsong', 'songti sc', 'stsong'],
+  方正书宋简体: ['stsong', 'songti sc'],
+  华文仿宋: ['stfangsong', 'fangsong'],
+  方正仿宋简体: ['stfangsong', 'fangsong'],
+  华文楷体: ['stkaiti', 'kaiti', 'kaiti sc'],
+  方正楷体简体: ['stkaiti', 'kaiti', 'kaiti sc'],
+  华文细黑: ['stheiti', 'heiti sc'],
+  隶书: ['baoli sc', 'stliti'],
+  华文隶书: ['stliti', 'baoli sc'],
+  幼圆: ['yuanti sc', 'youyuan'],
 };
 
 function normalizeFont(name: string): string {

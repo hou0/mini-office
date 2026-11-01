@@ -73,6 +73,18 @@ describe('打印文档', () => {
 });
 
 describe('Word 分页', () => {
+  it('段首和连续硬分页保留空白页，不折叠分页结构', () => {
+    const paragraph = makeParagraph([{ text: '正文', style: {} }]);
+    const pageBreak = (id: string) => ({ type: 'pageBreak' as const, id });
+    const heights = new Map([[paragraph.id, 20]]);
+    const pages = paginateBlocks([pageBreak('a'), pageBreak('b'), paragraph], heights, 500);
+    expect(pages.map((page) => page.blocks.length)).toEqual([0, 0, 1]);
+    const cover = makeParagraph([{ text: '封面', style: {} }]);
+    heights.set(cover.id, 20);
+    const withBlank = paginateBlocks([cover, pageBreak('c'), pageBreak('d'), paragraph], heights, 500);
+    expect(withBlank.map((page) => page.blocks.length)).toEqual([1, 0, 1]);
+  });
+
   it('长表格按行跨页并重复表头，行不丢失不重复', () => {
     const table = tableFixture(40, 1);
     const heights = new Map([[table.id, 40 * 30]]);
@@ -289,7 +301,7 @@ describe('多节混合方向', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const pages = Array.from({ length: 2 }, () => document.createElement('div'));
-    const cleanup = renderPrintPreview({
+    const preview = renderPrintPreview({
       host,
       pages,
       pageSizes: [portrait, landscape],
@@ -306,7 +318,7 @@ describe('多节混合方向', () => {
       expect(labels[0]).toContain('纵向');
       expect(labels[1]).toContain('横向');
     } finally {
-      cleanup();
+      preview.cleanup();
       host.remove();
     }
   });

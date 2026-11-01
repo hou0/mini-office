@@ -1,5 +1,6 @@
+import { useRef } from 'react';
 import type { BorderSide, CellRange, CellStyle, SheetModel, WorkbookModel } from '@mini-office/document-model';
-import { columnLabel, MOD_KEY } from '@mini-office/shared';
+import { columnLabel } from '@mini-office/shared';
 import {
   AlignCenter,
   AlignLeft,
@@ -15,6 +16,7 @@ import {
   ListFilter,
   Merge,
   PanelRight,
+  PaintBucket,
   Printer,
   Redo2,
   Rows3,
@@ -26,6 +28,8 @@ import {
   Underline,
   Undo2,
   WrapText,
+  Crosshair,
+  Sigma,
 } from 'lucide-react';
 import {
   ColorField,
@@ -44,7 +48,6 @@ import { FormulaInput } from './FormulaInput';
 import { BorderMenu } from './BorderMenu';
 import type { BorderPreset } from './sheet-utils';
 export type { BorderPreset } from './sheet-utils';
-import { SHEET_ZOOM_MAX, SHEET_ZOOM_MIN } from './zoom-shortcuts';
 
 const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36];
 
@@ -76,12 +79,17 @@ export interface SheetToolbarProps {
   readonly: boolean;
   canUndo: boolean;
   canRedo: boolean;
-  zoom: number;
   propertiesOpen: boolean;
   onFormulaChange: (value: string) => void;
   onFormulaCommit: () => void;
   onFormulaCancel: () => void;
   onFormulaFocus: () => void;
+  onInsertFunction: () => void;
+  onAutoSum: () => void;
+  onHideRow: () => void;
+  onShowRows: () => void;
+  onHideColumn: () => void;
+  onShowColumns: () => void;
   onJump: (ref: string) => void;
   onStyle: (patch: Partial<CellStyle>) => void;
   onNumberFormat: (format: string) => void;
@@ -111,7 +119,9 @@ export interface SheetToolbarProps {
   onPageSetup: () => void;
   onCompatibility: () => void;
   onToggleProperties: () => void;
-  onZoom: (zoom: number) => void;
+  /** 功能：阅读模式（十字高亮行列）开关状态与切换入口；时间：2026-10-30；作者：lq。 */
+  crosshair: boolean;
+  onToggleCrosshair: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onAddSheet: () => void;
@@ -119,6 +129,7 @@ export interface SheetToolbarProps {
 
 export function SheetToolbar(props: SheetToolbarProps) {
   const { workbook, sheet, range, active, readonly } = props;
+  const formulaRef = useRef<HTMLInputElement>(null);
   const style = cellStyle(workbook, cellAt(sheet, active.row, active.col));
   const rangeLabel =
     range.r1 === range.r2 && range.c1 === range.c2
@@ -134,11 +145,14 @@ export function SheetToolbar(props: SheetToolbarProps) {
     { type: 'label', label: '行' },
     { id: 'insert-row', label: '在上方插入行', icon: <Rows3 size={13} />, disabled: readonly, onSelect: props.onInsertRow },
     { id: 'delete-row', label: '删除当前行', icon: <Trash2 size={13} />, disabled: readonly, onSelect: props.onDeleteRow },
+    { id: 'hide-row', label: '隐藏行', disabled: readonly, onSelect: props.onHideRow },
+    { id: 'show-rows', label: '取消隐藏行', disabled: readonly, onSelect: props.onShowRows },
     { type: 'separator' },
     { type: 'label', label: '列' },
     { id: 'insert-col', label: '在左侧插入列', icon: <Columns3 size={13} />, disabled: readonly, onSelect: props.onInsertColumn },
     { id: 'delete-col', label: '删除当前列', icon: <Trash2 size={13} />, disabled: readonly, onSelect: props.onDeleteColumn },
-
+    { id: 'hide-col', label: '隐藏列', disabled: readonly, onSelect: props.onHideColumn },
+    { id: 'show-cols', label: '取消隐藏列', disabled: readonly, onSelect: props.onShowColumns },
   ];
 
   // 功能：参照 Excel 将排序与筛选集中到独立下拉菜单；时间：2026-10-24；作者：lq。
@@ -156,7 +170,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
 
   return (
-    <div className="mo-glass mo-no-print shrink-0 border-b border-[var(--mo-line)] bg-[var(--mo-surface)]">
+    <div data-sheet-toolbar className="mo-glass mo-no-print shrink-0 border-b border-[var(--mo-line)] bg-[var(--mo-surface)]">
       {/* 功能：拉开 Excel 工具栏控件间距，降低图标拥挤并保持窄窗口可横向滚动；时间：2026-10-24；作者：lq。 */}
       <div
         className="flex h-11 items-center gap-1 overflow-x-auto px-2"
@@ -218,14 +232,20 @@ export function SheetToolbar(props: SheetToolbarProps) {
         <IconButton label="删除线" active={!!style.strike} disabled={readonly} onClick={() => props.onStyle({ strike: !style.strike })}>
           <Strikethrough size={15} />
         </IconButton>
+        {/* 功能：使用 Excel 风格的“A + 颜色下划线”工具栏图标，提升颜色按钮辨识度；时间：2026-10-31；作者：lq。 */}
         <ColorField
           label="字体颜色"
           value={style.color}
+          icon={<span className="text-[16px] font-semibold leading-none">A</span>}
+          indicatorColor={style.color ?? '#1D2939'}
           onChange={(color) => props.onStyle({ color })}
         />
+        {/* 功能：使用 Excel 风格的油漆桶图标并保留当前填充色下划线；时间：2026-10-31；作者：lq。 */}
         <ColorField
           label="填充颜色"
           value={style.fill}
+          icon={<PaintBucket size={15} strokeWidth={2.1} />}
+          indicatorColor={style.fill ?? '#F2C94C'}
           onChange={(fill) => props.onStyle({ fill })}
         />
         {/* 功能：常用边框、线型和颜色集中到分组菜单，左侧按钮重复应用上次预设；时间：2026-10-24；作者：lq。 */}
@@ -285,25 +305,17 @@ export function SheetToolbar(props: SheetToolbarProps) {
             <Search size={15} />
           </IconButton>
         </Tooltip>
+        {/* 功能：阅读模式开关，开启后当前行列在表头与网格中高亮，方便核对数据；时间：2026-10-30；作者：lq。 */}
+        <Tooltip label={props.crosshair ? '关闭阅读模式' : '阅读模式：高亮当前行列'}>
+          <IconButton label="阅读模式" active={props.crosshair} onClick={props.onToggleCrosshair}>
+            <Crosshair size={15} />
+          </IconButton>
+        </Tooltip>
         <IconButton label="属性面板" active={props.propertiesOpen} onClick={props.onToggleProperties}>
           <PanelRight size={15} />
         </IconButton>
-        {/* 功能：移除工具栏自动撑开的空白，缩放和输出按钮紧接前面工具；时间：2026-10-24；作者：lq。 */}
+        {/* 功能：缩放已移到右下角状态栏（与 Word 一致），工具栏只保留输出类按钮；时间：2026-10-31；作者：lq。 */}
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* 功能：移除重复范围显示，名称框保留选区地址；时间：2026-10-24；作者：lq。 */}
-          <Select
-            aria-label="缩放"
-            title={`放大 ${MOD_KEY} +；缩小 ${MOD_KEY} -；100% ${MOD_KEY} 0；${MOD_KEY} + 滚轮`}
-            className="h-7 w-[68px] border-transparent bg-transparent text-[11px]"
-            value={String(Math.round(props.zoom * 100))}
-            onChange={(event) => props.onZoom(Number(event.target.value) / 100)}
-          >
-            {[...new Set([SHEET_ZOOM_MIN * 100, 50, 75, 90, 100, 110, 125, 150, 175, 200, SHEET_ZOOM_MAX * 100, Math.round(props.zoom * 100)])].sort((a, b) => a - b).map((value) => (
-              <option key={value} value={value}>
-                {value}%
-              </option>
-            ))}
-          </Select>
           <IconButton label="打印" onClick={props.onPrint}>
             <Printer size={15} />
           </IconButton>
@@ -338,8 +350,23 @@ export function SheetToolbar(props: SheetToolbarProps) {
             }
           }}
         />
-        <span className="shrink-0 font-serif text-[12px] italic text-[var(--mo-text-muted)]">fx</span>
+        <button type="button" aria-label="插入函数" title="插入函数" disabled={readonly}
+          className="shrink-0 rounded px-1 font-serif text-[12px] italic text-[var(--mo-text-muted)] hover:bg-[var(--mo-accent-soft)] disabled:opacity-50"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            const input = formulaRef.current;
+            if (props.formulaText.startsWith('=')) {
+              const cursor = input?.selectionStart ?? props.formulaText.length;
+              props.onFormulaChange(`${props.formulaText.slice(0, cursor)}SUM(${props.formulaText.slice(cursor)}`);
+              requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(cursor + 4, cursor + 4); });
+            } else {
+              props.onInsertFunction();
+              requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(5, 5); });
+            }
+          }} >fx</button>
+        <IconButton label="自动求和" disabled={readonly} onClick={props.onAutoSum}><Sigma size={14} /></IconButton>
         <FormulaInput
+          ref={formulaRef}
           aria-label="公式栏"
           className="h-6 min-w-0 flex-1 font-mono text-[12px]"
           value={props.formulaText}

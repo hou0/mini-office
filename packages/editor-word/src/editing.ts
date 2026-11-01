@@ -125,30 +125,49 @@ export function serializeDomRuns(
   imagesById: Map<string, DocImage>,
 ): DocRun[] {
   const runs: DocRun[] = [];
+  // 功能：记录已写入的原子内容数，用于判断块级元素是否应转成换行；时间：2026-10-30；作者：lq。
+  let emitted = 0;
+  const push = (run: DocRun) => {
+    runs.push(run);
+    emitted += 1;
+  };
 
   const walk = (node: Node, style: RunStyle) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = node.textContent ?? '';
-      if (text) runs.push({ text, style: { ...style } });
+      // 功能：把编辑区文本节点中的普通 CR/LF 保持为空白，显式 BR/Tab 节点才生成 OOXML 控制 run；时间：2026-10-31；作者：lq。
+      const parts = text.replace(/\r\n?|\n/g, ' ').split(/(\t)/);
+      parts.forEach((part, index) => {
+        if (part === '\t') push({ text: '', style: { ...style }, tab: true });
+        else if (part) push({ text: part, style: { ...style } });
+      });
       return;
     }
     if (!(node instanceof Element)) return;
     if (node.getAttribute('data-list-marker') === '1') return;
-    if (node.hasAttribute('data-tab')) { runs.push({ text: '', style: { ...style }, tab: true }); return; }
+    if (node.hasAttribute('data-tab')) { push({ text: '', style: { ...style }, tab: true }); return; }
+    // 功能：格式标记仅用于可视提示，真正的换行由紧随其后的 BR 节点序列化；时间：2026-10-31；作者：lq。
+    if (node.hasAttribute('data-line-break')) return;
     const tag = node.tagName;
+    // 功能：浏览器粘贴/输入法可能插入 div、p 等块级包裹，块边界等价于一个段内换行，不能丢；时间：2026-10-30；作者：lq。
+    if ((tag === 'DIV' || tag === 'P') && !node.hasAttribute('data-paragraph-id')) {
+      if (emitted > 0) push({ text: '', style: { ...style }, lineBreak: true });
+      for (const child of Array.from(node.childNodes)) walk(child, style);
+      return;
+    }
     if (tag === 'BR') {
-      runs.push({ text: '', style: { ...style }, lineBreak: true });
+      push({ text: '', style: { ...style }, lineBreak: true });
       return;
     }
     if (tag === 'IMG') {
       const id = node.getAttribute('data-image-id') ?? '';
       const stored = imagesById.get(id);
       if (stored) {
-        runs.push({ text: '', style: { ...style }, image: stored });
+        push({ text: '', style: { ...style }, image: stored });
       } else {
         const src = (node as HTMLImageElement).src;
         if (src) {
-          runs.push({
+          push({
             text: '',
             style: { ...style },
             image: {
@@ -221,7 +240,7 @@ export function serializeDomRuns(
     // 功能：字段原子沿用节点原有字形样式，输入不会将其拆散；时间：2026-10-24；作者：lq。
     if (node.hasAttribute('data-merge-field')) {
       const name = node.getAttribute('data-merge-field')!;
-      runs.push({ text: `«${name}»`, mergeField: name, style: next });
+      push({ text: `«${name}»`, mergeField: name, style: next });
       return;
     }
     for (const child of Array.from(node.childNodes)) walk(child, next);

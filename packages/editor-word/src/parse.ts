@@ -9,10 +9,14 @@ import {
   type DocTableCell,
   type DocTableRow,
   type HeaderFooter,
+  type ImageAnchor,
   type ListInfo,
   type PageSetup,
   type ParagraphStyle,
   type RunStyle,
+  type TabAlignment,
+  type TabLeader,
+  type TabStop,
   type TableBorderSide,
   type TableBorders,
 } from '@mini-office/document-model';
@@ -29,6 +33,8 @@ import {
   parseXmlDom,
   readThemeColors,
   readThemeFonts,
+  resolveThemeSlot,
+  resolveWordShading,
   relationshipMap,
   toggleValue,
   twipsToPx,
@@ -114,6 +120,8 @@ interface ParseContext {
   blockCounter: number;
   hasTrackedChanges: boolean;
   hasContentControls: boolean;
+  /** 功能：目录域状态；非空表示当前段落仍处在 TOC 域的缓存结果里，应整段丢弃；时间：2026-10-30；作者：lq。 */
+  toc?: { levels: number; depth: number };
 }
 
 function mergeRun(base: RunStyle, override: RunStyle | undefined): RunStyle {
@@ -214,11 +222,9 @@ function applyRunStyle(base: RunStyle, rPr: Element | null, ctx: ParseContext): 
     if (value && HIGHLIGHT_COLORS[value]) style.highlight = HIGHLIGHT_COLORS[value];
     else if (value === 'none') style.highlight = undefined;
   }
-  const shading = firstChild(rPr, 'w:shd');
-  const fill = attrValue(shading, 'w:fill');
-  if (fill && fill.toLowerCase() !== 'auto' && /^[0-9a-fA-F]{6}$/.test(fill)) {
-    style.highlight = `#${fill.toUpperCase()}`;
-  }
+  // 功能：文字底纹同样支持主题色（w:themeFill），不再只认 w:fill；时间：2026-11-01；作者：lq。
+  const shadingFill = resolveWordShading(firstChild(rPr, 'w:shd'), ctx.themeColors);
+  if (shadingFill) style.highlight = shadingFill;
 
   const vertAlign = attrValue(firstChild(rPr, 'w:vertAlign'), 'w:val');
   if (vertAlign === 'superscript') style.verticalAlign = 'super';
@@ -284,13 +290,57 @@ function applyParagraphStyle(base: ParagraphStyle, pPr: Element | null, ctx: Par
   const outline = numericAttr(firstChild(pPr, 'w:outlineLvl'), 'w:val');
   if (outline !== undefined) style.outlineLevel = outline;
 
-  const shading = firstChild(pPr, 'w:shd');
-  const fill = attrValue(shading, 'w:fill');
-  if (fill && /^[0-9a-fA-F]{6}$/.test(fill)) style.backgroundColor = `#${fill.toUpperCase()}`;
+  // 功能：段落底纹支持主题色填充；时间：2026-11-01；作者：lq。
+  const paragraphShading = resolveWordShading(firstChild(pPr, 'w:shd'), ctx.themeColors);
+  if (paragraphShading) style.backgroundColor = paragraphShading;
   // 功能：解析段落边框，恢复 Word 中常见的横线、签名线和分隔线；时间：2026-10-27；作者：lq。
   const paragraphBorders = firstChild(pPr, 'w:pBdr');
-  if (paragraphBorders) style.borders = parseTableBorders(paragraphBorders);
+  if (paragraphBorders) style.borders = parseTableBorders(paragraphBorders, ctx.themeColors);
+  // 功能：解析制表位，标尺与正文 Tab 定位共用；时间：2026-10-30；作者：lq。
+  const tabs = firstChild(pPr, 'w:tabs');
+  if (tabs) {
+    const stops = parseTabStops(tabs);
+    if (stops.length > 0) style.tabStops = stops;
+  }
   return style;
+}
+
+const TAB_ALIGNMENT_MAP: Record<string, TabAlignment> = {
+  left: 'left',
+  start: 'left',
+  center: 'center',
+  right: 'right',
+  end: 'right',
+  decimal: 'decimal',
+  num: 'left',
+};
+
+const TAB_LEADER_MAP: Record<string, TabLeader> = {
+  none: 'none',
+  dot: 'dot',
+  hyphen: 'hyphen',
+  underscore: 'underscore',
+  heavy: 'heavy',
+  middleDot: 'middleDot',
+};
+
+/** 功能：读取 w:tabs 下的制表位，跳过 clear / bar 这两类纯排版标记；时间：2026-10-30；作者：lq。 */
+function parseTabStops(tabs: Element): TabStop[] {
+  const stops: TabStop[] = [];
+  for (const child of Array.from(tabs.childNodes)) {
+    if (!(child instanceof Element) || localName(child) !== 'tab') continue;
+    const value = (attrValue(child, 'w:val') ?? 'left').toLowerCase();
+    if (value === 'clear' || value === 'bar') continue;
+    const pos = numericAttr(child, 'w:pos');
+    if (pos === undefined) continue;
+    const leader = attrValue(child, 'w:leader');
+    stops.push({
+      posPx: Math.max(0, twipsToPx(pos)),
+      alignment: TAB_ALIGNMENT_MAP[value] ?? 'left',
+      ...(leader && TAB_LEADER_MAP[leader] ? { leader: TAB_LEADER_MAP[leader] } : {}),
+    });
+  }
+  return stops.sort((a, b) => a.posPx - b.posPx);
 }
 
 function parseProjectedParagraphNumbering(pPr: Element | null): { numId?: string; ilvl?: number } {
@@ -578,7 +628,10 @@ function listInfoFor(ctx: ParseContext, numId: string, ilvl: number): ListInfo |
   return { numId, level: ilvl, marker, ordered: level.numFmt !== 'bullet' && level.numFmt !== 'none' };
 }
 
-function parseTableBorder(element: Element | null): TableBorderSide | undefined {
+function parseTableBorder(
+  element: Element | null,
+  theme: Record<string, string> = {},
+): TableBorderSide | undefined {
   if (!element) return undefined;
   const value = attrValue(element, 'w:val') ?? 'single';
   if (['nil', 'none'].includes(value)) {
@@ -586,10 +639,16 @@ function parseTableBorder(element: Element | null): TableBorderSide | undefined 
   }
   const size = numericAttr(element, 'w:sz', 4) ?? 4;
   const colorRaw = attrValue(element, 'w:color');
+  // 功能：框线颜色支持主题色（w:themeColor），主题配色表格的边框不再一律变黑；时间：2026-11-01；作者：lq。
   const color =
     colorRaw && colorRaw.toLowerCase() !== 'auto' && /^[0-9a-fA-F]{6}$/.test(colorRaw)
       ? `#${colorRaw.toUpperCase()}`
-      : '#000000';
+      : resolveThemeSlot(
+          attrValue(element, 'w:themeColor'),
+          theme,
+          attrValue(element, 'w:themeTint'),
+          attrValue(element, 'w:themeShade'),
+        ) ?? '#000000';
   const styleMap: Record<string, TableBorderSide['style']> = {
     single: 'single',
     double: 'double',
@@ -604,15 +663,18 @@ function parseTableBorder(element: Element | null): TableBorderSide | undefined 
   };
 }
 
-function parseTableBorders(element: Element | null): TableBorders {
+function parseTableBorders(
+  element: Element | null,
+  theme: Record<string, string> = {},
+): TableBorders {
   if (!element) return {};
   return {
-    top: parseTableBorder(firstChild(element, 'w:top')),
-    right: parseTableBorder(firstChild(element, 'w:right')),
-    bottom: parseTableBorder(firstChild(element, 'w:bottom')),
-    left: parseTableBorder(firstChild(element, 'w:left')),
-    insideH: parseTableBorder(firstChild(element, 'w:insideH')),
-    insideV: parseTableBorder(firstChild(element, 'w:insideV')),
+    top: parseTableBorder(firstChild(element, 'w:top'), theme),
+    right: parseTableBorder(firstChild(element, 'w:right'), theme),
+    bottom: parseTableBorder(firstChild(element, 'w:bottom'), theme),
+    left: parseTableBorder(firstChild(element, 'w:left'), theme),
+    insideH: parseTableBorder(firstChild(element, 'w:insideH'), theme),
+    insideV: parseTableBorder(firstChild(element, 'w:insideV'), theme),
   };
 }
 
@@ -653,6 +715,91 @@ function vmlStyleSize(style: string | undefined): { width: number; height: numbe
   return { width: convert(width), height: convert(height) };
 }
 
+/**
+ * 功能：读取 wp:positionH / wp:positionV 的基准与偏移；时间：2026-10-31；作者：lq。
+ *
+ * OOXML 把偏移写成子元素 wp:posOffset 的文本（EMU），对齐写成 wp:align，
+ * 二者只能取其一；这里统一转成 px，交给渲染层做定位。
+ */
+function readAnchorAxis(
+  anchor: Element,
+  tag: 'wp:positionH' | 'wp:positionV',
+): { relativeFrom?: string; offsetPx?: number; align?: string } {
+  const node = firstChild(anchor, tag);
+  if (!node) return {};
+  const offsetNode = firstChild(node, 'wp:posOffset');
+  const rawOffset = offsetNode ? Number((offsetNode.textContent ?? '').trim()) : Number.NaN;
+  const alignNode = firstChild(node, 'wp:align');
+  return {
+    relativeFrom: attrValue(node, 'relativeFrom'),
+    offsetPx: Number.isFinite(rawOffset) ? emuToPx(rawOffset) : undefined,
+    align: alignNode ? (alignNode.textContent ?? '').trim().toLowerCase() : undefined,
+  };
+}
+
+/**
+ * 功能：把 wp:anchor 解析成结构化锚定信息，保留环绕类型与四周距离；时间：2026-10-31；作者：lq。
+ *
+ * 旧实现只记录「左/右/上下」方向，丢掉了 distT/distB 等环绕距离，
+ * 渲染时又硬编码 8px 下边距，导致浮动图片把下一段文字挤出正常行宽。
+ */
+function readImageAnchor(drawing: Element): ImageAnchor | undefined {
+  const anchor = firstDescendant(drawing, 'wp:anchor');
+  if (!anchor) return undefined;
+  const distPx = (name: string) => emuToPx(numericAttr(anchor, name, 0) ?? 0);
+  const horizontal = readAnchorAxis(anchor, 'wp:positionH');
+  const vertical = readAnchorAxis(anchor, 'wp:positionV');
+
+  let wrapType: ImageAnchor['wrapType'] = 'none';
+  if (firstDescendant(anchor, 'wp:wrapTopAndBottom')) wrapType = 'topAndBottom';
+  else if (firstDescendant(anchor, 'wp:wrapSquare')) wrapType = 'square';
+  else if (firstDescendant(anchor, 'wp:wrapTight')) wrapType = 'tight';
+  else if (firstDescendant(anchor, 'wp:wrapThrough')) wrapType = 'through';
+
+  const wrapNode =
+    firstDescendant(anchor, 'wp:wrapSquare') ??
+    firstDescendant(anchor, 'wp:wrapTight') ??
+    firstDescendant(anchor, 'wp:wrapThrough');
+
+  return {
+    hRelative: horizontal.relativeFrom,
+    hOffsetPx: horizontal.offsetPx,
+    hAlign: horizontal.align as ImageAnchor['hAlign'],
+    vRelative: vertical.relativeFrom,
+    vOffsetPx: vertical.offsetPx,
+    vAlign: vertical.align as ImageAnchor['vAlign'],
+    wrapType,
+    wrapText: attrValue(wrapNode, 'wrapText'),
+    behindDoc: attrValue(anchor, 'behindDoc') === '1' || attrValue(anchor, 'behindDoc') === 'true',
+    distTopPx: distPx('distT'),
+    distBottomPx: distPx('distB'),
+    distLeftPx: distPx('distL'),
+    distRightPx: distPx('distR'),
+  };
+}
+
+/**
+ * 功能：由锚定信息推导环绕方向，方向以 positionH 为准而不是 wrapText；时间：2026-10-31；作者：lq。
+ *
+ * wrapText 只描述「允许文字出现在图片哪一侧」，真正决定图片贴在左还是右的是 positionH，
+ * 二者混用会让右对齐的下划线图片跑到左边，文字绕排方向也随之反转。
+ */
+function wrapKindFromAnchor(
+  anchor: ImageAnchor | undefined,
+  pageWidthPx: number,
+  imageWidthPx: number,
+): DocImage['wrap'] {
+  if (!anchor) return 'inline';
+  if (anchor.wrapType === 'topAndBottom') return 'top-bottom';
+  const alignRight = anchor.hAlign === 'right' || anchor.hAlign === 'outside';
+  const alignLeft = anchor.hAlign === 'left' || anchor.hAlign === 'inside';
+  if (alignRight) return 'square-right';
+  if (alignLeft) return 'square-left';
+  const offset = anchor.hOffsetPx ?? 0;
+  // 功能：无对齐声明时用偏移量推断贴边方向，超过半栏宽度视为右对齐；时间：2026-10-31；作者：lq。
+  return offset > 0 && offset + imageWidthPx / 2 > pageWidthPx / 2 ? 'square-right' : 'square-left';
+}
+
 async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun[]> {
   const blip = firstDescendant(drawing, 'a:blip');
   const rid = attrValue(blip, 'r:embed') ?? attrValue(blip, 'r:link');
@@ -668,6 +815,7 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
   const docPr = firstDescendant(drawing, 'wp:docPr');
   const alt = attrValue(docPr, 'descr') ?? attrValue(docPr, 'title');
   const name = attrValue(docPr, 'name');
+  const anchor = readImageAnchor(drawing);
   const image: DocImage = {
     id: uid('img'),
     src,
@@ -678,9 +826,8 @@ async function parseDrawing(drawing: Element, ctx: ParseContext): Promise<DocRun
     relId: rid,
     part,
     // 功能：识别 Word 图片的内嵌/浮动形态，重新打开后保持文字环绕；时间：2026-10-24；作者：lq。
-    wrap: drawing.getElementsByTagName('wp:anchor').length
-      ? (firstDescendant(drawing, 'wp:wrapTopAndBottom') ? 'top-bottom' : attrValue(firstDescendant(drawing, 'wp:wrapSquare'), 'wrapText') === 'right' ? 'square-right' : 'square-left')
-      : 'inline',
+    wrap: wrapKindFromAnchor(anchor, ctx.pageWidthPx, widthPx),
+    ...(anchor ? { anchor } : {}),
   };
   ctx.usedImages.set(rid, { src, part });
   return [{ text: '', style: {}, image }];
@@ -696,6 +843,9 @@ async function parseVmlPicture(pict: Element, ctx: ParseContext): Promise<DocRun
   const src = await loadImageUrl(ctx, part);
   if (!src) return [];
   const shape = firstDescendant(pict, 'v:shape');
+  // 功能：只把 VML 图片类型转成图片 run，避免把线条/装饰形状误判成可拖动的大图片框；时间：2026-10-31；作者：lq。
+  const shapeType = attrValue(shape, 'type');
+  if (shapeType && !/(?:t75|picture)/i.test(shapeType)) return [];
   const size = vmlStyleSize(attrValue(shape, 'style'));
   const image: DocImage = {
     id: uid('img'),
@@ -759,9 +909,15 @@ async function parseRunElement(
     if (!(child instanceof Element)) continue;
     switch (localName(child)) {
       case 't': {
-        const text = child.textContent ?? '';
-        if (text) {
-          const run: DocRun = { text, style };
+        const raw = child.textContent ?? '';
+        // 功能：按 OOXML 语义处理 w:t 空白——未声明 xml:space="preserve" 时首尾空白应被丢弃；时间：2026-10-31；作者：lq。
+        // 旧实现无条件保留首尾空格，行宽比 Word 宽，末尾多出的空格会把最后一个字挤到下一行。
+        const preserved = child.getAttribute('xml:space') === 'preserve';
+        const trimmed = preserved ? raw : raw.replace(/^[ \t\r\n]+/, '').replace(/[ \t\r\n]+$/, '');
+        // 功能：严格遵循 Word 语义，w:t 内的普通 CR/LF 只是空白；真正的段内换行由 w:br/w:cr 分支生成；时间：2026-10-31；作者：lq。
+        const normalizedText = trimmed.replace(/\r\n?|\n/g, ' ');
+        if (normalizedText) {
+          const run: DocRun = { text: normalizedText, style };
           const field = topField();
           if (field && field.phase === 'result') {
             // 功能：跨多个文本 run 的字段只生成一个原子占位符；时间：2026-10-24；作者：lq。
@@ -794,6 +950,7 @@ async function parseRunElement(
         break;
       }
       case 'tab':
+      case 'ptab':
         runs.push({ text: '', style, tab: true });
         break;
       case 'br': {
@@ -914,12 +1071,13 @@ async function parseInlineChildren(
         }
         const before = runs.length;
         runs.push(...(await parseInlineChildren(child, base, ctx, state)));
-        if (/\bPAGE\b/i.test(instr) && !/NUMPAGES/i.test(instr)) {
-          for (let index = before; index < runs.length; index += 1) runs[index].field = 'PAGE';
-        } else if (/NUMPAGES/i.test(instr)) {
-          for (let index = before; index < runs.length; index += 1) runs[index].field = 'NUMPAGES';
-        } else if (/SECTIONPAGES/i.test(instr)) {
-          for (let index = before; index < runs.length; index += 1) runs[index].field = 'SECTIONPAGES';
+        const field = /\bPAGE\b/i.test(instr) && !/NUMPAGES/i.test(instr)
+          ? 'PAGE'
+          : /NUMPAGES/i.test(instr) ? 'NUMPAGES' : /SECTIONPAGES/i.test(instr) ? 'SECTIONPAGES' : undefined;
+        if (field) {
+          for (let index = before; index < runs.length; index += 1) {
+            if (runs[index].field !== '__PAGE_BREAK__') runs[index].field = field;
+          }
         }
         break;
       }
@@ -932,8 +1090,18 @@ async function parseInlineChildren(
       case 'commentRangeEnd':
       case 'proofErr':
         break;
-      case 'br':
-        runs.push({ text: '', style: base, lineBreak: getAttr(child, 'w:type') !== 'page' });
+      case 'br': {
+        const type = attrValue(child, 'w:type');
+        runs.push({ text: '', style: base, field: type === 'page' ? '__PAGE_BREAK__' : undefined, lineBreak: type !== 'page' });
+        break;
+      }
+      // 功能：兼容 WPS/旧版 Word 将控制节点直接挂在段落或超链接下的写法；时间：2026-10-31；作者：lq。
+      case 'cr':
+        runs.push({ text: '', style: base, lineBreak: true });
+        break;
+      case 'tab':
+      case 'ptab':
+        runs.push({ text: '', style: base, tab: true });
         break;
       default:
         break;
@@ -946,7 +1114,7 @@ async function parseParagraph(
   element: Element,
   ctx: ParseContext,
   baseStyle?: { run: RunStyle; para: ParagraphStyle },
-): Promise<{ paragraph: DocParagraph; pageBreakAfter: boolean }> {
+): Promise<DocBlock[]> {
   const pPr = firstChild(element, 'w:pPr');
   const styleId = attrValue(firstChild(pPr, 'w:pStyle'), 'w:val');
   const styleFromId = styleId ? ctx.styles.styles.get(styleId) : undefined;
@@ -983,10 +1151,7 @@ async function parseParagraph(
     paragraphRun,
   );
   const state: ParseInlineState = { fieldStack: [] };
-  let runs = await parseInlineChildren(element, runBase, ctx, state);
-  const pageBreakAfter = runs.some((run) => run.field === '__PAGE_BREAK__');
-  runs = runs.filter((run) => run.field !== '__PAGE_BREAK__');
-  if (runs.length === 0) runs = [{ text: '', style: runBase }];
+  const runs = await parseInlineChildren(element, runBase, ctx, state);
 
   const paragraph: DocParagraph = {
     type: 'paragraph',
@@ -1006,7 +1171,46 @@ async function parseParagraph(
       footer: await parseHeaderFooter(section, ctx, 'footer', page.margins.footer),
     };
   }
-  return { paragraph, pageBreakAfter };
+  // 硬分页按 run 顺序拆块；lastRenderedPageBreak 不生成 run，因此不会变成硬分页。
+  const parts: DocRun[][] = [[]];
+  for (const run of runs) {
+    if (run.field === '__PAGE_BREAK__') parts.push([]);
+    else parts[parts.length - 1].push(run);
+  }
+  if (parts.length === 1) {
+    if (paragraph.runs.length === 0) paragraph.runs = [{ text: '', style: runBase }];
+    return [paragraph];
+  }
+
+  // 纯分页不补空段；分节必须由最后部分的段落承载，不能提前到分页之前。
+  const paragraphParts = parts.flatMap((part, index) =>
+    part.length > 0 || (index === parts.length - 1 && paragraph.sectionEnd) ? [index] : [],
+  );
+  const firstPart = paragraphParts[0];
+  const lastPart = paragraphParts.at(-1);
+  const blocks: DocBlock[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    if (paragraphParts.includes(index)) {
+      const first = index === firstPart;
+      const last = index === lastPart;
+      blocks.push({
+        ...paragraph,
+        id: first ? paragraph.id : uid('p'),
+        runs: parts[index].length > 0 ? parts[index] : [{ text: '', style: runBase }],
+        style: {
+          ...paragraphStyle,
+          ...(!first ? { spaceBeforePx: 0, pageBreakBefore: false, firstLineIndentPx: 0 } : {}),
+          ...(!last ? { spaceAfterPx: 0 } : {}),
+        },
+        list: first ? list : undefined,
+        // 续段已展开样式，不能再由样式 ID 恢复段前分页或编号。
+        styleId: first ? styleId : undefined,
+        sectionEnd: last ? paragraph.sectionEnd : undefined,
+      });
+    }
+    if (index < parts.length - 1) blocks.push({ type: 'pageBreak', id: uid('break') });
+  }
+  return blocks;
 }
 
 async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable> {
@@ -1018,7 +1222,7 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
     .filter((width) => width > 0);
 
   const styleId = attrValue(firstChild(tblPr, 'w:tblStyle'), 'w:val');
-  const borders = parseTableBorders(firstChild(tblPr, 'w:tblBorders'));
+  const borders = parseTableBorders(firstChild(tblPr, 'w:tblBorders'), ctx.themeColors);
   const hasAnyBorder = Object.values(borders).some((border) => border && border.style !== 'none');
   if (!hasAnyBorder && styleId && /grid/i.test(styleId)) {
     const single: TableBorderSide = { style: 'single', widthPx: 0.75, color: '#000000' };
@@ -1072,15 +1276,12 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
         : undefined;
       const cellWidthTwips = numericAttr(firstChild(tcPr, 'w:tcW'), 'w:w');
       const cellWidth = cellWidthTwips ? twipsToPx(cellWidthTwips) : undefined;
-      const backgroundRaw = attrValue(firstChild(tcPr, 'w:shd'), 'w:fill');
-      const backgroundColor =
-        backgroundRaw && /^[0-9a-fA-F]{6}$/.test(backgroundRaw)
-          ? `#${backgroundRaw.toUpperCase()}`
-          : undefined;
+      // 功能：单元格底纹支持主题色填充（Office 主题色表头常见写法）；时间：2026-11-01；作者：lq。
+      const backgroundColor = resolveWordShading(firstChild(tcPr, 'w:shd'), ctx.themeColors);
       const vAlignValue = attrValue(firstChild(tcPr, 'w:vAlign'), 'w:val');
       const verticalAlign =
         vAlignValue === 'center' ? 'middle' : vAlignValue === 'bottom' ? 'bottom' : 'top';
-      const cellBorders = parseTableBorders(firstChild(tcPr, 'w:tcBorders'));
+      const cellBorders = parseTableBorders(firstChild(tcPr, 'w:tcBorders'), ctx.themeColors);
       const mergedBorders: TableBorders = { ...borders, ...cellBorders };
       const blocks =
         vMerge === 'continue' ? [] : await parseBlockContainer(cellElement, ctx);
@@ -1170,17 +1371,75 @@ async function parseTable(element: Element, ctx: ParseContext): Promise<DocTable
   };
 }
 
+/**
+ * 功能：扫描段落内的域字符与域指令，用于识别跨段落的 TOC 域边界；时间：2026-10-30；作者：lq。
+ *
+ * Word 的目录域从第一个条目的段落开始、在最后一个条目段落结束，中间还嵌着 PAGEREF 等子域，
+ * 因此必须统计 begin/end 的净深度，而不能只看有没有出现 `w:fldChar`。
+ */
+function paragraphFieldScan(paragraph: Element): { begins: number; ends: number; instr: string } {
+  let begins = 0;
+  let ends = 0;
+  let instr = '';
+  const visit = (node: Element) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (!(child instanceof Element)) continue;
+      const name = localName(child);
+      if (name === 'instrText') instr += child.textContent ?? '';
+      else if (name === 'fldChar') {
+        const type = attrValue(child, 'w:fldCharType');
+        if (type === 'begin') begins += 1;
+        else if (type === 'end') ends += 1;
+      }
+      visit(child);
+    }
+  };
+  visit(paragraph);
+  return { begins, ends, instr };
+}
+
+/** 功能：从域指令中识别 TOC 域并取出标题级别上限（`\o "1-3"`），非 TOC 域返回 undefined；时间：2026-10-30；作者：lq。 */
+function tocLevelsFromInstruction(instr: string): number | undefined {
+  if (!/^\s*TOC\b/i.test(instr)) return undefined;
+  const range = /\\o\s+"(\d)\s*-\s*(\d)"/i.exec(instr);
+  if (range) return Math.min(9, Math.max(1, Number(range[2]) || 3));
+  const single = /\\o\s+"(\d)"/i.exec(instr);
+  if (single) return Math.min(9, Math.max(1, Number(single[1]) || 3));
+  return 3;
+}
+
 async function parseBlockContainer(element: Element, ctx: ParseContext): Promise<DocBlock[]> {
   const blocks: DocBlock[] = [];
   for (const child of Array.from(element.childNodes)) {
     if (!(child instanceof Element)) continue;
     switch (localName(child)) {
       case 'p': {
-        const { paragraph, pageBreakAfter } = await parseParagraph(child, ctx);
-        // 功能：纯分页标记不额外占用一行，避免长表格重开后插入空白页；时间：2026-10-24；作者：lq。
-        const breakOnly = pageBreakAfter && !paragraph.sectionEnd && paragraph.runs.every((run) => !run.text && !run.image && !run.tab && !run.lineBreak);
-        if (!breakOnly) blocks.push(paragraph);
-        if (pageBreakAfter) blocks.push({ type: 'pageBreak', id: uid('break') });
+        // 功能：把 TOC 域的缓存结果换成可动态重算的目录段落，避免打开后仍显示过期条目；时间：2026-10-30；作者：lq。
+        const field = paragraphFieldScan(child);
+        if (ctx.toc) {
+          ctx.toc.depth += field.begins - field.ends;
+          if (ctx.toc.depth <= 0) ctx.toc = undefined;
+          break;
+        }
+        const tocLevels = tocLevelsFromInstruction(field.instr);
+        if (tocLevels !== undefined) {
+          const depth = field.begins - field.ends;
+          if (depth > 0) ctx.toc = { levels: tocLevels, depth };
+          blocks.push({
+            type: 'paragraph',
+            id: uid('p'),
+            runs: [{ text: '', style: {} }],
+            // 功能：目录段落带一个右对齐点线制表位，写回 DOCX 时页码才能对齐右边界；时间：2026-10-30；作者：lq。
+            style: {
+              tabStops: [
+                { posPx: Math.max(120, ctx.pageWidthPx - 192), alignment: 'right', leader: 'dot' },
+              ],
+            },
+            toc: { levels: tocLevels },
+          });
+          break;
+        }
+        blocks.push(...(await parseParagraph(child, ctx)));
         break;
       }
       case 'tbl':
@@ -1381,9 +1640,16 @@ export async function parseDocxPackage(
   const documentStyles = collectDocumentStyles(blocks, header, footer, provisional.styles);
 
   // 功能：读回模板里保存的邮件合并面板状态，供打开时恢复面板；时间：2026-10-29；作者：lq。
+  let defaultTabStopPx: number | undefined;
   if (pkg.has('word/settings.xml')) {
     try {
       const settingsDocument = parseXmlDom(await pkg.text('word/settings.xml'));
+      // 功能：读取文档默认制表位间距，Tab 在无自定义制表位时按它等距推进；时间：2026-10-30；作者：lq。
+      const tabStopElement = settingsDocument.getElementsByTagName('w:defaultTabStop')[0];
+      const tabStopTwips = tabStopElement ? Number(tabStopElement.getAttribute('w:val')) : NaN;
+      if (Number.isFinite(tabStopTwips) && tabStopTwips > 0) {
+        defaultTabStopPx = twipsToPx(tabStopTwips);
+      }
       const docVars = settingsDocument.getElementsByTagName('w:docVar');
       for (const docVar of Array.from(docVars)) {
         if (docVar.getAttribute('w:name') === 'mailMergePanelState') {
@@ -1414,6 +1680,7 @@ export async function parseDocxPackage(
     hasContentControls: provisional.hasContentControls,
     stats: { words, characters },
     ...(documentStyles.length > 0 ? { styles: documentStyles } : {}),
+    ...(defaultTabStopPx ? { defaultTabStopPx } : {}),
   };
 }
 

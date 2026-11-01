@@ -1,5 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkForUpdates, fetchLatestRelease, useUpdateStore } from '../packages/editor-shell/src/update-check';
+
+// 功能：把被测版本固定成预览版，用例才能覆盖「预览版用户可见 beta」的分支；时间：2026-10-30；作者：lq。
+// 说明：正式版发版后根包 version 不含 "-"，ALLOW_PRERELEASE 会变为 false，
+// 这些用例原本会因预览版 tag 被过滤而全部拿到 null，与实际逻辑无关。
+vi.mock('@mini-office/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../packages/shared/src/index')>();
+  return { ...actual, APP_VERSION: '0.1.5-preview.9' };
+});
+
+const { checkForUpdates, fetchLatestRelease, useUpdateStore } = await import(
+  '../packages/editor-shell/src/update-check'
+);
 
 const LATEST_KEY = 'mini-office.update.latest.v1';
 const DISMISSED_KEY = 'mini-office.update.dismissed.v1';

@@ -82,6 +82,18 @@ describe('theme accents', () => {
     expect(cssVar('--mo-accent')).toBe('#F0A892');
   });
 
+  // 功能：护眼模式只切换 data-eyecare，未传该字段时应回落为关闭；时间：2026-10-30；作者：lq。
+  it('toggles the eye-care flag on the root element', () => {
+    applyAppearance({ theme: 'light', accent: 'iris', customAccent: DEFAULT_ACCENT_HEX, eyeCare: true });
+    expect(document.documentElement.dataset.eyecare).toBe('on');
+
+    applyAppearance({ theme: 'light', accent: 'iris', customAccent: DEFAULT_ACCENT_HEX, eyeCare: false });
+    expect(document.documentElement.dataset.eyecare).toBe('off');
+
+    applyAppearance({ theme: 'light', accent: 'iris', customAccent: DEFAULT_ACCENT_HEX });
+    expect(document.documentElement.dataset.eyecare).toBe('off');
+  });
+
   it('defaults new settings to mist and native vibrancy off', () => {
     expect(DEFAULT_SETTINGS.accent).toBe('mist');
     expect(DEFAULT_SETTINGS.customAccent).toBe(DEFAULT_ACCENT_HEX);

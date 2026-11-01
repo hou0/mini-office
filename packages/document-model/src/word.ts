@@ -15,6 +15,38 @@ export interface RunStyle {
   smallCaps?: boolean;
 }
 
+/**
+ * 功能：记录 wp:anchor 的锚定与环绕参数，让浮动图片按 Word 语义定位而不是简单 float；
+ * 时间：2026-10-31；作者：lq。
+ *
+ * Word 的浮动图片是「锚点段落 + 相对基准偏移 + 环绕距离」三部分决定位置的，
+ * 只保存 wrap 方向会让图片挤占后续段落的行盒，造成正文莫名换行。
+ */
+export interface ImageAnchor {
+  /** 水平基准：column（栏）/ margin（页边距）/ page（页面）/ character（字符）。 */
+  hRelative?: string;
+  /** 水平偏移，px；负值表示向左越界。 */
+  hOffsetPx?: number;
+  /** 水平对齐（与偏移二选一）。 */
+  hAlign?: 'left' | 'center' | 'right' | 'inside' | 'outside';
+  /** 垂直基准：paragraph（段落）/ line（行）/ margin / page。 */
+  vRelative?: string;
+  /** 垂直偏移，px。 */
+  vOffsetPx?: number;
+  vAlign?: 'top' | 'center' | 'bottom' | 'inside' | 'outside';
+  /** 环绕类型，none 表示浮于文字上/下方不占位。 */
+  wrapType?: 'none' | 'square' | 'tight' | 'through' | 'topAndBottom';
+  /** 环绕侧：both / left / right / largest。 */
+  wrapText?: string;
+  /** 衬于文字下方。 */
+  behindDoc?: boolean;
+  /** 四周环绕距离（EMU 转 px）。 */
+  distTopPx?: number;
+  distBottomPx?: number;
+  distLeftPx?: number;
+  distRightPx?: number;
+}
+
 export interface DocImage {
   id?: string;
   src: string;
@@ -29,6 +61,8 @@ export interface DocImage {
   dataUrl?: string;
   /** 功能：保存图片的文字环绕方式，支持嵌入、左右环绕和上下型；时间：2026-10-24；作者：lq。 */
   wrap?: 'inline' | 'square-left' | 'square-right' | 'top-bottom';
+  /** 功能：浮动图片的锚定参数，保存时原样写回；时间：2026-10-31；作者：lq。 */
+  anchor?: ImageAnchor;
 }
 
 export interface MergeFieldFormat {
@@ -59,6 +93,22 @@ export interface DocRun {
   mergeSeq?: boolean;          // MERGESEQ
 }
 
+/**
+ * 功能：Word 制表位（w:tabs/w:tab），标尺与正文 Tab 定位共用同一份数据；时间：2026-10-30；作者：lq。
+ *
+ * `posPx` 相对段落左边界（即正文内容框左沿，不含缩进），与 OOXML 的 `w:pos` 语义一致，
+ * 因此解析后可直接与浏览器实测位置比较，不需要再做一次坐标换算。
+ */
+export type TabAlignment = 'left' | 'center' | 'right' | 'decimal';
+
+export type TabLeader = 'none' | 'dot' | 'hyphen' | 'underscore' | 'middleDot' | 'heavy';
+
+export interface TabStop {
+  posPx: number;
+  alignment: TabAlignment;
+  leader?: TabLeader;
+}
+
 export interface ParagraphStyle {
   alignment?: WordAlignment;
   indentLeftPx?: number;
@@ -78,6 +128,8 @@ export interface ParagraphStyle {
   backgroundColor?: string;
   /** 功能：保留段落上下左右边框，用于兼容 Word 横线与签名栏；时间：2026-10-27；作者：lq。 */
   borders?: TableBorders;
+  /** 功能：段落自定义制表位，为空时按文档默认制表位（defaultTabStopPx）等距推进；时间：2026-10-30；作者：lq。 */
+  tabStops?: TabStop[];
 }
 
 export interface ListInfo {
@@ -121,6 +173,13 @@ export interface DocParagraph {
   sourceIndex?: number;
   /** 功能：保留段尾分节信息，让批量报告重新打开后仍独立编号；时间：2026-10-24；作者：lq。 */
   sectionEnd?: DocSection;
+  /**
+   * 功能：标记该段落是目录域（TOC），渲染时按文档标题实时生成条目；时间：2026-10-30；作者：lq。
+   *
+   * 目录用「一个段落承载全部条目」而不是新增块类型，原因是分页、测量、撤销、查找替换等
+   * 现有流程都以段落为最小单位，这样改造面最小且不会漏掉某个分支。
+   */
+  toc?: { levels: number };
 }
 
 export interface TableBorderSide {
@@ -251,6 +310,8 @@ export interface DocModel {
   sectionPageCount?: number;
   /** 功能：本文档自定义/导入的样式，与内置预设合并后供样式库使用；时间：2026-10-29；作者：lq。 */
   styles?: DocStyleDefinition[];
+  /** 功能：文档默认制表位间距（settings.xml 的 w:defaultTabStop），未设置时按 0.5 英寸处理；时间：2026-10-30；作者：lq。 */
+  defaultTabStopPx?: number;
 }
 
 export const A4_PAGE: PageSetup = {

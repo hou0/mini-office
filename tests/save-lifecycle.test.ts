@@ -33,6 +33,28 @@ function seed(id: string) {
 }
 
 describe('安全保存生命周期', () => {
+  // 功能：快捷保存及另存为共享现有保存链路，不绕过路径选择策略；时间：2026-10-30；作者：lq。
+  it.each([
+    { id: 'quick-save-existing', newDocument: false, asNew: false, forcePicker: false },
+    { id: 'quick-save-new', newDocument: true, asNew: false, forcePicker: true },
+    { id: 'quick-save-as', newDocument: false, asNew: true, forcePicker: true },
+  ])('快捷保存遵循原位保存/新建/另存为策略：$id', async ({ id, newDocument, asNew, forcePicker }) => {
+    const platform = adapter();
+    platform.saveBytes.mockResolvedValue({ displayName: '合同.docx', path: `/tmp/${id}-saved.docx`, location: 'in-place' });
+    setPlatformAdapter(platform);
+    const session = seed(id);
+    if (newDocument) {
+      useWorkspaceStore.setState({ sessions: { [id]: { ...session, path: undefined } } });
+    }
+    expect(await useWorkspaceStore.getState().saveActive(asNew ? { asNew: true } : undefined)).toBe(true);
+    expect(platform.saveBytes).toHaveBeenCalledOnce();
+    expect(platform.saveBytes.mock.calls[0][1]).toMatchObject({
+      suggestedName: '合同.docx', path: newDocument ? undefined : session.path, forcePicker,
+    });
+    expect(useWorkspaceStore.getState().sessions[id].state).toBe('SAVED');
+    expect(useWorkspaceStore.getState().sessions[id].dirty).toBe(false);
+  });
+
   it('写盘等待期间新增内容，写盘结束仍保持未保存', async () => {
     const platform = adapter();
     let finish!: (value: SaveOutcome) => void;

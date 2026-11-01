@@ -99,6 +99,27 @@ describe('xlsx round trip', () => {
     }
   });
 
+  it('keeps styled empty cells, default dimensions and the workbook theme font', async () => {
+    const original = demoWorkbook();
+    original.defaultFont = '宋体';
+    original.styles.default.fontFamily = '宋体';
+    original.sheets[0].defaultRowHeight = 32;
+    original.sheets[0].defaultColWidth = 110;
+    original.styles.frame = { borders: { bottom: { style: 'thick', color: '#000000' } } };
+    original.sheets[0].cells['8:1'] = { value: null, styleId: 'frame' };
+    const bytes = await serializeXlsx(original, { name: '格式.xlsx' });
+    const pkg = await loadOoxmlPackage(bytes);
+    try {
+      const parsed = await parseWorkbookPackage(pkg, '格式.xlsx');
+      const sheet = parsed.sheets[0];
+      expect(parsed.styles[sheet.cells['8:1']?.styleId ?? '']?.borders?.bottom?.style).toBe('thick');
+      expect(sheet.defaultRowHeight).toBe(32);
+      expect(sheet.defaultColWidth).toBeGreaterThanOrEqual(100);
+      expect(parsed.defaultFont).toBe('宋体');
+      expect(parsed.styles[sheet.cells['0:0']?.styleId ?? 's0']?.fontFamily).toBe('宋体');
+    } finally { pkg.dispose(); }
+  });
+
   it('can round trip a serialized package twice', async () => {
     const first = await serializeXlsx(recalculateWorkbook(demoWorkbook()), { name: 'demo.xlsx' });
     const pkg = await loadOoxmlPackage(first);
