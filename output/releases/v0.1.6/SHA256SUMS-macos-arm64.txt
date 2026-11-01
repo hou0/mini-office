@@ -1,0 +1,2 @@
+ffdc58b6d76955f24924d299b96ceb23b56925adaadaed7a0cde5481be17bd5c  Mini-Office_0.1.6_macos-arm64.dmg
+aa0549dfb216d4899327d8056cd1ce3c1925cd4354b4fb51ab3415f08ac6295d  Mini-Office_0.1.6_macos-arm64.zip

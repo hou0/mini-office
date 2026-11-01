@@ -1,0 +1,2 @@
+cd3973b801f14d13beefb132dbb415898cb07d586255b05e77342b25fb640bd8  Mini-Office_0.1.6_windows-x64-setup.exe
+0d069f20f9a9420c352f6a7fad1971259f04ca197ccefd0f4d39bead123106a9  Mini-Office_0.1.6_windows-x64.zip

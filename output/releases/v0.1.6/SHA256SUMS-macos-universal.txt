@@ -1,0 +1,2 @@
+530b28506f2c76ed30fc079a6bf1b89d89a0857b48e8ad9ec38d1ce18b2ad5ba  Mini-Office_0.1.6_macos-universal.dmg
+f4350eb34683ee8b36a34711c14a4f9fc3ec1dc6c2ae31b6108cbceac9897ec2  Mini-Office_0.1.6_macos-universal.zip
