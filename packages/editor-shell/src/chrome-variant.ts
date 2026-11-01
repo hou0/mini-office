@@ -9,9 +9,9 @@ import { useMemo } from 'react';
 import { BUILTIN_THEME_PACK, type ChromeVariant } from '@mini-office/plugin-api';
 import { usePluginRegistry } from '@mini-office/plugin-host';
 
-/** 未启用任何主题插件时的外壳形态，等同于当前版本的外观。 */
+/** 未启用任何主题插件时的外壳形态——默认启用 WPS 风格功能区；时间：2026-10-31。 */
 export const DEFAULT_CHROME: Required<ChromeVariant> = {
-  toolbar: 'modern',
+  toolbar: 'ribbon',
   controlShape: 'flat',
   density: 'default',
   titlebar: 'flat',

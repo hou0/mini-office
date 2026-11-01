@@ -139,7 +139,7 @@ interface ExportState {
   busy: boolean;
 }
 
-export function SheetEditor({ session }: { session: SheetSession }) {
+export function SheetEditor({ session, chromeToolbar }: { session: SheetSession; chromeToolbar?: 'modern' | 'classic-two-row' | 'ribbon' }) {
   const workbook = session.data as WorkbookModel;
   const readonly = session.readonly;
   const updateData = useWorkspaceStore((state) => state.updateData);
@@ -1035,7 +1035,11 @@ export function SheetEditor({ session }: { session: SheetSession }) {
           onZoom={setZoom}
           onUndo={undo}
           onRedo={redo}
+          onCopy={() => void copySelection(false)}
+          onCut={() => void copySelection(true)}
+          onPaste={() => void pasteSelection()}
           onAddSheet={addNewSheet}
+          chromeToolbar={chromeToolbar}
         />
         ) : null}
 

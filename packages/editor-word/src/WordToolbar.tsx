@@ -44,6 +44,8 @@ import { FontSizePicker } from './FontSizePicker';
 import { LineSpacingPicker } from './LineSpacingPicker';
 import { charWidthPx } from './typography';
 import { StylePicker, type StylePickerProps } from './StylePicker';
+// 功能：WPS 风格 Ribbon 布局——主题插件声明 chrome.toolbar='ribbon' 时启用；时间：2026-10-31；作者：lq。
+import { WordRibbon } from './WordRibbon';
 
 export interface WordToolbarProps {
   doc: DocModel;
@@ -59,7 +61,17 @@ export interface WordToolbarProps {
   currentPage: number;
   findOpen: boolean;
   propertiesOpen: boolean;
-  onInlineCommand: (command: 'bold' | 'italic' | 'underline' | 'strikeThrough') => void;
+  onInlineCommand: (command: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'superscript' | 'subscript') => void;
+  /** 功能：清除选中文字/段落的全部格式（回到文档默认字体）；时间：2026-10-31；作者：lq。 */
+  onClearFormat?: () => void;
+  /** 功能：剪贴板——复制/剪切/粘贴（浏览器 execCommand，粘贴受安全限制）；时间：2026-10-31；作者：lq。 */
+  onCopy?: () => void;
+  onCut?: () => void;
+  onPaste?: () => void;
+  /** 功能：页面设置（方向/页边距/纸张大小/分栏）提交 doc.page 补丁；时间：2026-10-31；作者：lq。 */
+  onPageChange?: (patch: Partial<DocModel['page']>) => void;
+  /** 功能：在光标处插入符号字符；时间：2026-10-31；作者：lq。 */
+  onInsertSymbol?: (character: string) => void;
   onColorFormat: (patch: Partial<RunStyle>, kind: 'color' | 'highlight') => void;
   onFontFormat: (patch: Partial<RunStyle>) => void;
   onParagraphFormat: (patch: Partial<ParagraphStyle>) => void;
@@ -97,6 +109,8 @@ export interface WordToolbarProps {
   /** 功能：样式库入口的完整配置，由编辑器组装，工具栏只负责摆放位置；时间：2026-10-29；作者：lq。 */
   stylePicker?: StylePickerProps;
   onBeforeInteraction?: () => void;
+  /** 功能：外壳变体——主题插件声明 ribbon 时切到功能区布局；时间：2026-10-31；作者：lq。 */
+  chromeToolbar?: 'modern' | 'classic-two-row' | 'ribbon';
 }
 
 function Divider() {
@@ -104,6 +118,8 @@ function Divider() {
 }
 
 export function WordToolbar(props: WordToolbarProps) {
+  // 功能：主题插件声明 ribbon 时，整条工具栏改为功能区布局；时间：2026-10-31；作者：lq。
+  if (props.chromeToolbar === 'ribbon') return <WordRibbon {...props} />;
   const { readonly, activeStyle, activeParagraph } = props;
   const paragraphStyle = activeParagraph?.style ?? {};
   const moreItems: MenuItem[] = [

@@ -1,4 +1,5 @@
 export * from './primitives';
+export * from './Ribbon';
 export * from './dialog';
 export * from './menu';
 export * from './toast';

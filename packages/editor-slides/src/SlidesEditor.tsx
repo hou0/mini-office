@@ -46,8 +46,10 @@ import { exportElementsToPdf, exportElementsToZip, type ExportProgress } from '@
 import { stripExtension, uid } from '@mini-office/shared';
 import { SlideRenderer, SlideSurface } from './SlideRenderer';
 import { copySlide, replaceParagraphText, updateElementTree } from './editing';
+// 功能：WPS 风格 Ribbon 布局——主题插件声明 chrome.toolbar='ribbon' 时启用；时间：2026-10-31；作者：lq。
+import { SlidesRibbon } from './SlidesRibbon';
 
-export function SlidesEditor({ session }: { session: SlidesSession }) {
+export function SlidesEditor({ session, chromeToolbar }: { session: SlidesSession; chromeToolbar?: 'modern' | 'classic-two-row' | 'ribbon' }) {
   const deck = session.data as SlideDeck;
   const updateView = useWorkspaceStore((state) => state.updateView);
   const updateData = useWorkspaceStore((state) => state.updateData);
@@ -451,6 +453,33 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       {settings.showToolbar ? (
+        chromeToolbar === 'ribbon' ? (
+          <SlidesRibbon
+            readonly={session.readonly}
+            canUndo={!historyRef.current.past.length}
+            canRedo={!historyRef.current.future.length}
+            thumbnailsOpen={thumbnailsOpen}
+            notesOpen={notesOpen}
+            selectedId={selectedId}
+            slideIndex={index}
+            slideCount={deck.slides.length}
+            onToggleThumbnails={() => setThumbnailsOpen((value) => !value)}
+            onToggleNotes={() => setNotesOpen((value) => !value)}
+            onPrev={prev}
+            onNext={next}
+            onBold={() => toggleTextStyle('bold')}
+            onItalic={() => toggleTextStyle('italic')}
+            onUndo={undo}
+            onRedo={redo}
+            onAddText={addText}
+            onDuplicate={duplicateSlide}
+            onAddSlide={addSlide}
+            onDeleteSlide={deleteSlide}
+            onPresent={() => void startPresentation()}
+            onExport={() => openExport(setExportOpen, setExportKind, setProgress, setExportName, session.displayName)}
+            onCompatibility={() => openDialog({ type: 'compatibility', sessionId: session.id })}
+          />
+        ) : (
       <div className="mo-glass mo-no-print flex h-11 shrink-0 items-center gap-1 border-b border-[var(--mo-line)] bg-[var(--mo-surface)] px-2">
         <IconButton label={thumbnailsOpen ? '隐藏缩略图' : '显示缩略图'} onClick={() => setThumbnailsOpen((value) => !value)}>
           {thumbnailsOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
@@ -509,6 +538,7 @@ export function SlidesEditor({ session }: { session: SlidesSession }) {
           <FileWarning size={15} className="text-[var(--mo-warning)]" />
         </IconButton>
       </div>
+        )
       ) : null}
 
       <div className="flex min-h-0 flex-1">

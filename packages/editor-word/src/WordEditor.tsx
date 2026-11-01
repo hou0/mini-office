@@ -1131,7 +1131,7 @@ interface ImageMenuState {
   imageId: string;
 }
 
-export function WordEditor({ session }: { session: WordSession }) {
+export function WordEditor({ session, chromeToolbar }: { session: WordSession; chromeToolbar?: 'modern' | 'classic-two-row' | 'ribbon' }) {
   const doc = session.data as DocModel;
   const readonly = session.readonly;
   const updateData = useWorkspaceStore((state) => state.updateData);
@@ -1925,7 +1925,7 @@ export function WordEditor({ session }: { session: WordSession }) {
   }, []);
 
   const applyInlineCommand = useCallback(
-    (command: 'bold' | 'italic' | 'underline' | 'strikeThrough') => {
+    (command: 'bold' | 'italic' | 'underline' | 'strikeThrough' | 'superscript' | 'subscript') => {
       if (readonly) return;
       if (!restoreSelection()) {
         notify('info', '请先选择文本', '在文档中选择要设置格式的文字。');
@@ -1944,9 +1944,63 @@ export function WordEditor({ session }: { session: WordSession }) {
         ...(command === 'italic' ? { italic: document.queryCommandState('italic') } : {}),
         ...(command === 'underline' ? { underline: document.queryCommandState('underline') } : {}),
         ...(command === 'strikeThrough' ? { strike: document.queryCommandState('strikeThrough') } : {}),
+        ...(command === 'superscript'
+          ? {
+              verticalAlign: document.queryCommandState('superscript')
+                ? 'super'
+                : document.queryCommandState('subscript')
+                  ? 'sub'
+                  : 'baseline',
+            }
+          : {}),
+        ...(command === 'subscript'
+          ? {
+              verticalAlign: document.queryCommandState('subscript')
+                ? 'sub'
+                : document.queryCommandState('superscript')
+                  ? 'super'
+                  : 'baseline',
+            }
+          : {}),
       }));
     },
     [execCommand, notify, readonly, restoreSelection, triggerSelectionInput],
+  );
+
+  // 功能：工具栏剪贴板按钮——复用浏览器 execCommand，引擎已接管 onCopy/onCut/onPaste；时间：2026-10-31；作者：lq。
+  const triggerCopy = useCallback(() => {
+    if (!restoreSelection()) return;
+    try {
+      document.execCommand('copy');
+    } catch {
+      notify('warning', '复制失败', '请改用 Ctrl+C / ⌘C。');
+    }
+  }, [restoreSelection, notify]);
+  const triggerCut = useCallback(() => {
+    if (!restoreSelection()) return;
+    try {
+      document.execCommand('cut');
+    } catch {
+      notify('warning', '剪切失败', '请改用 Ctrl+X / ⌘X。');
+    }
+  }, [restoreSelection, notify]);
+  const triggerPaste = useCallback(() => {
+    if (!restoreSelection()) return;
+    try {
+      document.execCommand('paste');
+    } catch {
+      notify('info', '请使用 Ctrl+V 粘贴', '浏览器出于安全限制，按钮触发粘贴不可用。');
+    }
+  }, [restoreSelection, notify]);
+
+  // 功能：页面设置（方向/页边距/纸张大小/分栏）统一走 doc.page 提交；时间：2026-10-31；作者：lq。
+  const applyPage = useCallback(
+    (patch: Partial<DocModel['page']>) => {
+      if (readonly) return;
+      const current = latestDoc();
+      commit({ ...current, page: { ...current.page, ...patch } }, { reflow: true, key: 'page-setup' });
+    },
+    [commit, latestDoc, readonly],
   );
 
   const applyFontFormat = useCallback(
@@ -2210,6 +2264,20 @@ export function WordEditor({ session }: { session: WordSession }) {
     setSyncToken((value) => value + 1);
     return true;
   }, [commit, latestDoc, readonly]);
+
+  // 功能：插入符号——在光标处写入字符（replaceCrossSelection 处理选区替换/插入）；时间：2026-10-31；作者：lq。
+  const insertSymbol = useCallback(
+    (character: string) => {
+      if (readonly) return;
+      if (!restoreSelection()) {
+        notify('info', '请先定位光标', '在文档中点击要插入符号的位置。');
+        return;
+      }
+      replaceCrossSelection(character);
+    },
+    [readonly, restoreSelection, replaceCrossSelection, notify],
+  );
+
 const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     const text = event.clipboardData.getData('text/plain');
     if (!text) return;
@@ -3321,6 +3389,12 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
           findOpen={findOpen}
           propertiesOpen={settings.showProperties}
           onInlineCommand={applyInlineCommand}
+          onClearFormat={clearFormatting}
+          onCopy={triggerCopy}
+          onCut={triggerCut}
+          onPaste={triggerPaste}
+          onPageChange={applyPage}
+          onInsertSymbol={insertSymbol}
           onColorFormat={applyColorFormat}
           onFontFormat={applyFontFormat}
           onParagraphFormat={applyParagraphFormat}
@@ -3379,6 +3453,7 @@ const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) =>
             onBeforeInteraction: captureSelection,
           }}
           onBeforeInteraction={captureSelection}
+          chromeToolbar={chromeToolbar}
         />
         ) : null}
         {mailMerge.previewOn ? <MergePreviewBar controller={mailMerge} /> : null}

@@ -315,6 +315,7 @@ describe('插件仓库中的官方主题', () => {
       'mini-office.theme-office-2003',
       'mini-office.theme-office-365',
       'mini-office.theme-wps',
+      'mini-office.theme-wps-ribbon',
     ]);
     for (const entry of index?.plugins ?? []) {
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);

@@ -56,7 +56,7 @@ export function FontSizePicker({
           onClick={toggle}
           title="字号：支持中文字号与自定义磅值"
           className={cn(
-            'flex h-7 w-[92px] shrink-0 items-center justify-between gap-1 rounded border border-transparent px-2 text-[12px] text-[var(--mo-text-primary)] hover:bg-[var(--mo-surface-2)] disabled:opacity-40',
+            'flex h-7 w-[92px] shrink-0 items-center justify-between gap-1 rounded-md border border-[var(--mo-line)] bg-[var(--mo-surface)] px-2 text-[12px] text-[var(--mo-text-primary)] hover:bg-[var(--mo-surface-2)] disabled:opacity-40',
             open && 'bg-[var(--mo-surface-2)]',
           )}
         >

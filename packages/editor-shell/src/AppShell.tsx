@@ -336,12 +336,12 @@ export function AppShell() {
       return <EditorLoading title={activeSession.displayName} />;
     }
     if (activeSession.kind === 'docx') {
-      return <WordEditor key={activeSession.id} session={activeSession as WordSession} />;
+      return <WordEditor key={activeSession.id} session={activeSession as WordSession} chromeToolbar={chrome.toolbar} />;
     }
     if (activeSession.kind === 'xlsx') {
-      return <SheetEditor key={activeSession.id} session={activeSession as SheetSession} />;
+      return <SheetEditor key={activeSession.id} session={activeSession as SheetSession} chromeToolbar={chrome.toolbar} />;
     }
-    return <SlidesEditor key={activeSession.id} session={activeSession as SlidesSession} />;
+    return <SlidesEditor key={activeSession.id} session={activeSession as SlidesSession} chromeToolbar={chrome.toolbar} />;
   })();
 
   return (

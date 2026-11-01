@@ -42,6 +42,8 @@ import { cellAt, cellStyle } from './sheet-utils';
 import { FormulaInput } from './FormulaInput';
 // 功能：接入完整边框菜单及预设类型；时间：2026-10-24；作者：lq。
 import { BorderMenu } from './BorderMenu';
+// 功能：WPS 风格 Ribbon 布局——主题插件声明 chrome.toolbar='ribbon' 时启用；时间：2026-10-31；作者：lq。
+import { SheetRibbon } from './SheetRibbon';
 import type { BorderPreset } from './sheet-utils';
 export type { BorderPreset } from './sheet-utils';
 import { SHEET_ZOOM_MAX, SHEET_ZOOM_MIN } from './zoom-shortcuts';
@@ -114,7 +116,12 @@ export interface SheetToolbarProps {
   onZoom: (zoom: number) => void;
   onUndo: () => void;
   onRedo: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
   onAddSheet: () => void;
+  /** 功能：外壳变体——主题插件声明 ribbon 时切到功能区布局；时间：2026-10-31；作者：lq。 */
+  chromeToolbar?: 'modern' | 'classic-two-row' | 'ribbon';
 }
 
 export function SheetToolbar(props: SheetToolbarProps) {
@@ -154,6 +161,15 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
   const formatValue = style.numFmt ?? 'General';
 
+  // 功能：主题插件声明 ribbon 时，整条工具栏改为功能区布局（公式栏仍保留）；时间：2026-10-31；作者：lq。
+  if (props.chromeToolbar === 'ribbon') {
+    return (
+      <>
+        <SheetRibbon {...props} />
+        <SheetFormulaBar rangeLabel={rangeLabel} {...props} />
+      </>
+    );
+  }
 
   return (
     <div className="mo-glass mo-no-print shrink-0 border-b border-[var(--mo-line)] bg-[var(--mo-surface)]">
@@ -324,40 +340,48 @@ export function SheetToolbar(props: SheetToolbarProps) {
         </div>
       </div>
 
-      <div className="flex h-9 items-center gap-2 border-t border-[var(--mo-line)] px-2">
-        <Input
-          aria-label="名称框"
-          className="h-6 w-[92px] shrink-0 text-center font-mono text-[11px]"
-          defaultValue={rangeLabel}
-          key={`${range.c1}-${range.r1}-${range.c2}-${range.r2}`}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              props.onJump(event.currentTarget.value);
-              event.currentTarget.blur();
-            }
-          }}
-        />
-        <span className="shrink-0 font-serif text-[12px] italic text-[var(--mo-text-muted)]">fx</span>
-        <FormulaInput
-          aria-label="公式栏"
-          className="h-6 min-w-0 flex-1 font-mono text-[12px]"
-          value={props.formulaText}
-          disabled={readonly}
-          onValueChange={props.onFormulaChange}
-          onFocus={props.onFormulaFocus}
-          onBlur={(event) => { if (!(event.relatedTarget as HTMLElement | null)?.hasAttribute('data-sheet-formula-input')) props.onFormulaCommit(); }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              props.onFormulaCommit();
-            } else if (event.key === 'Escape') {
-              event.preventDefault(); props.onFormulaCancel();
-            }
-          }}
-          placeholder="输入值或公式，例如 =SUM(A1:A3)"
-        />
-      </div>
+      <SheetFormulaBar rangeLabel={rangeLabel} {...props} />
+    </div>
+  );
+}
+
+/** 功能：公式栏（名称框 + fx + 公式输入），扁平工具栏与 Ribbon 共用；时间：2026-10-31；作者：lq。 */
+function SheetFormulaBar(props: SheetToolbarProps & { rangeLabel: string }) {
+  const { rangeLabel, readonly } = props;
+  return (
+    <div className="flex h-9 items-center gap-2 border-t border-[var(--mo-line)] px-2">
+      <Input
+        aria-label="名称框"
+        className="h-6 w-[92px] shrink-0 text-center font-mono text-[11px]"
+        defaultValue={rangeLabel}
+        key={`${props.range.c1}-${props.range.r1}-${props.range.c2}-${props.range.r2}`}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            props.onJump(event.currentTarget.value);
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      <span className="shrink-0 font-serif text-[12px] italic text-[var(--mo-text-muted)]">fx</span>
+      <FormulaInput
+        aria-label="公式栏"
+        className="h-6 min-w-0 flex-1 font-mono text-[12px]"
+        value={props.formulaText}
+        disabled={readonly}
+        onValueChange={props.onFormulaChange}
+        onFocus={props.onFormulaFocus}
+        onBlur={(event) => { if (!(event.relatedTarget as HTMLElement | null)?.hasAttribute('data-sheet-formula-input')) props.onFormulaCommit(); }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            props.onFormulaCommit();
+          } else if (event.key === 'Escape') {
+            event.preventDefault(); props.onFormulaCancel();
+          }
+        }}
+        placeholder="输入值或公式，例如 =SUM(A1:A3)"
+      />
     </div>
   );
 }
