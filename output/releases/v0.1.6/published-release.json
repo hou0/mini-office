@@ -1,0 +1,19 @@
+{
+  "url": "https://github.com/lq0910/mini-office/releases/tag/v0.1.6",
+  "tag": "v0.1.6",
+  "published": "2026-11-01T00:56:54Z",
+  "assets": [
+    {
+      "name": "Mini-Office_0.1.6_macos-arm64.zip",
+      "url": "https://github.com/lq0910/mini-office/releases/download/v0.1.6/Mini-Office_0.1.6_macos-arm64.zip",
+      "size": 7584889,
+      "digest": "sha256:934ebe3e4e30f4674f02a7757c43de78b5cf9e46281741ba8befad8135319ea9"
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "url": "https://github.com/lq0910/mini-office/releases/download/v0.1.6/SHA256SUMS.txt",
+      "size": 100,
+      "digest": "sha256:bf462cdb1466d03957e7780c0d8a93751e617b0661936b713d9bda77d55542a2"
+    }
+  ]
+}
